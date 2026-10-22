@@ -17,6 +17,7 @@ from backend.app.ocr_adapter import OCRDocumentResult, OCRField, parse_iso_date_
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_IMAGE_PIXELS = 30_000_000
+MAX_OCR_TEXT_CHARS = 100_000
 SUPPORTED_FORMATS = {"JPEG", "PNG", "TIFF", "WEBP"}
 
 
@@ -91,6 +92,10 @@ def extract_institution_fields(
     left unresolved rather than guessing day/month order. Personal identity
     fields are deliberately outside this extractor's scope.
     """
+    if not isinstance(text, str):
+        raise TypeError("text must be a string")
+    if len(text) > MAX_OCR_TEXT_CHARS:
+        raise ValueError(f"OCR text exceeds the {MAX_OCR_TEXT_CHARS}-character processing limit")
     if not text or not text.strip():
         return {}
     if page_number < 1:
@@ -121,7 +126,11 @@ def extract_institution_fields(
                     continue
                 raw_value = parsed_date.isoformat()
             elif field_name == "academic_year":
-                raw_value = re.sub(r"\s+", "", raw_value).replace("/", "-")
+                normalized_year = re.sub(r"\s+", "", raw_value).replace("/", "-")
+                start_year, end_year = (int(part) for part in normalized_year.split("-"))
+                if end_year <= start_year:
+                    continue
+                raw_value = normalized_year
             fields[field_name] = OCRField(
                 value=raw_value,
                 confidence=confidence,
@@ -216,6 +225,10 @@ def process_institution_document(
     raw = engine.recognize(image_bytes)
     if not raw.engine.strip():
         raise ValueError("OCR engine must return a non-empty name.")
+
+    total_text_chars = sum(len(word.text) + 1 for word in raw.words)
+    if total_text_chars > MAX_OCR_TEXT_CHARS:
+        raise ValueError(f"OCR output exceeds the {MAX_OCR_TEXT_CHARS}-character processing limit")
 
     grouped: dict[tuple[int, int], list[OCRWord]] = {}
     for word in raw.words:

@@ -6,3 +6,5 @@
 {"case_id":"SYNTH-006","text":"संस्थान का नाम: उदाहरण तकनीकी संस्थान","expected_fields":{"institution_name":"उदाहरण तकनीकी संस्थान"}}
 {"case_id":"SYNTH-007","text":"Valid Until: 30/04/2027","expected_fields":{}}
 {"case_id":"SYNTH-008","text":"Name: Example Person; DOB: 2000-01-01; Student ID: 1234567890","expected_fields":{}}
+{"case_id":"SYNTH-009","text":"Academic Year: 2027-2026","expected_fields":{}}
+{"case_id":"SYNTH-010","text":"Institution Name: First Example College\nInstitution Name: Second Example College","expected_fields":{"institution_name":"First Example College"}}
