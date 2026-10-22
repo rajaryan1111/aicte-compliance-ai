@@ -130,3 +130,29 @@ def test_empty_engine_name_is_rejected():
 
     with pytest.raises(ValueError, match="non-empty"):
         process_institution_document(image_bytes(), UnnamedEngine())
+
+
+@pytest.mark.parametrize("academic_year", ["2027-2026", "2026-2026"])
+def test_reversed_or_zero_length_academic_year_is_not_extracted(academic_year):
+    fields = extract_institution_fields(f"Academic Year: {academic_year}")
+    assert "academic_year" not in fields
+
+
+def test_duplicate_field_labels_keep_first_value_deterministically():
+    fields = extract_institution_fields(
+        "Institution Name: First Example College\n"
+        "Institution Name: Second Example College"
+    )
+    assert fields["institution_name"].value == "First Example College"
+
+
+def test_oversized_ocr_text_is_rejected_before_regex_extraction():
+    from backend.app.ocr_pipeline import MAX_OCR_TEXT_CHARS
+
+    with pytest.raises(ValueError, match="processing limit"):
+        extract_institution_fields("x" * (MAX_OCR_TEXT_CHARS + 1))
+
+
+def test_non_string_ocr_text_is_rejected_explicitly():
+    with pytest.raises(TypeError, match="must be a string"):
+        extract_institution_fields(None)
