@@ -226,6 +226,10 @@ def process_institution_document(
     if not raw.engine.strip():
         raise ValueError("OCR engine must return a non-empty name.")
 
+    total_text_chars = sum(len(word.text) + 1 for word in raw.words)
+    if total_text_chars > MAX_OCR_TEXT_CHARS:
+        raise ValueError(f"OCR output exceeds the {MAX_OCR_TEXT_CHARS}-character processing limit")
+
     grouped: dict[tuple[int, int], list[OCRWord]] = {}
     for word in raw.words:
         if not word.text.strip() or word.confidence < 0:
