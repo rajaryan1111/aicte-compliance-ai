@@ -109,7 +109,7 @@ The catalogue is currently metadata/schema groundwork; do not describe it as a d
 
 ### Current blockers remain
 
-- Verify the official SIH26118/SIH26261 identifier as applicable to the project and the exact official problem statement/stage/deadline; do not silently conflate identifiers.
+- Verify the official SIH26261 problem statement, stage and deadline against the official source. Do not mix in SIH26118, which is a separate project identifier and is not established as relevant to this AICTE compliance project.
 - Verify the authoritative AICTE documents and amendments applicable to the target academic year before encoding or activating regulatory requirements.
 - Complete license/authorship/provenance checks before copying code, datasets or assets from the reference repository.
 - Keep public document upload blocked until authentication, authorization/RBAC, tenant isolation, private storage, malware scanning, audit persistence and retention/deletion controls are implemented and tested.
