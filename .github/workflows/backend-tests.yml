@@ -4,7 +4,7 @@ on:
   push:
     branches: ["main", "research/grounded-foundation"]
   pull_request:
-    branches: ["main"]
+    branches: ["main", "research/grounded-foundation"]
 
 permissions:
   contents: read
