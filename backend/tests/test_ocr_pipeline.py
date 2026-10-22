@@ -156,3 +156,14 @@ def test_oversized_ocr_text_is_rejected_before_regex_extraction():
 def test_non_string_ocr_text_is_rejected_explicitly():
     with pytest.raises(TypeError, match="must be a string"):
         extract_institution_fields(None)
+
+
+def test_pipeline_rejects_total_ocr_output_over_limit_across_short_lines():
+    from backend.app.ocr_pipeline import MAX_OCR_TEXT_CHARS
+
+    engine = FakeEngine((
+        OCRWord("x" * 60_000, 0.9, 1, 1),
+        OCRWord("y" * 60_000, 0.9, 1, 2),
+    ))
+    with pytest.raises(ValueError, match="OCR output exceeds.*processing limit"):
+        process_institution_document(image_bytes(), engine)
