@@ -1,40 +1,49 @@
 # Three-person technical work split
 
-**Status:** Proposed work allocation; implementation must stay in isolated workstream folders until integration review.
-**Baseline:** `research/grounded-foundation` (PR #1 is still open and unmerged).
-**Goal:** Three contributors can work in parallel without editing each other's deliverables.
+**Structure:** Frontend / Backend / AI  
+**Status:** Folder ownership plan; not a claim that all three applications are implemented.  
+**Base:** `research/grounded-foundation` (still unmerged into `main`).
 
-## Folder ownership
+## Repository layout
 
-| Workstream | Folder | Primary responsibility |
+```text
+aicte-compliance-ai/
+├── frontend/             # Contributor 1 — UI and user workflows
+├── backend/              # Contributor 2 — API, validation, persistence and security
+├── ai/                   # Contributor 3 — OCR, extraction and AI/evaluation
+├── docs/                 # Shared project and research documentation
+├── .github/              # Shared CI/workflow configuration
+└── WORKSTREAMS.md        # Ownership and integration rules
+```
+
+The `backend/` folder already exists and contains the current FastAPI prototype. This PR does not move or rewrite existing application code. `frontend/` and `ai/` start with ownership/readme files; implementation can be added there independently.
+
+## Ownership
+
+| Person | Owns | Main deliverables |
 |---|---|---|
-| Part 1 | [`workstreams/part-1-rules/`](workstreams/part-1-rules/README.md) | Regulatory-source provenance, rule lifecycle, rule validation and tests |
-| Part 2 | [`workstreams/part-2-ocr/`](workstreams/part-2-ocr/README.md) | Document intake design, OCR extraction, normalization, evidence and OCR tests |
-| Part 3 | [`workstreams/part-3-platform/`](workstreams/part-3-platform/README.md) | API contracts, access control, tenant isolation, audit, storage/retention and integration readiness |
+| Contributor 1 | `frontend/` | Applicant/reviewer UI, forms, status/evidence views, accessibility and frontend tests |
+| Contributor 2 | `backend/` | API contracts/implementation, validation, authorization, tenant isolation, persistence and audit controls |
+| Contributor 3 | `ai/` | OCR adapters/pipeline, field extraction, normalization, confidence/evidence, synthetic corpus and evaluation |
 
-## Non-overlap contract
+Assign the three actual names before work starts. The folders are boundaries for independent work; they do not by themselves establish production readiness.
 
-1. Each contributor edits only their assigned `workstreams/part-N-*/` folder while working independently.
-2. Do not edit another workstream's folder, even for a small fix. Open an issue or request the owner to change it.
-3. Do not edit shared root files, `.github/workflows/`, dependency manifests, or existing `backend/` code during isolated work. Such changes must be proposed separately as integration changes and reviewed by all three owners.
-4. Keep each workstream's code, tests, decisions, and acceptance evidence in its own folder. Do not import another workstream's private implementation. Agree on documented interfaces first.
-5. Use separate feature branches and pull requests. Do not commit directly to `main`, do not merge your own PR, and do not claim CI passed unless the exact head SHA has a successful run.
-6. Never use real institutional personal data or unverified regulatory claims in fixtures. Use synthetic examples. OCR findings remain advisory and human-reviewed.
-7. No production/public upload, rule activation, deployment, or release until required security, source-verification, testing and human-approval gates are satisfied.
+## Strict non-overlap rules
 
-## Integration protocol
+1. Each person edits only their owned folder during independent work.
+2. Do not edit another person's folder. Open an issue or ask its owner to make the change.
+3. `docs/`, `.github/`, root files, dependency manifests and shared contracts are shared surfaces: propose changes separately and obtain agreement from all three owners.
+4. Do not move existing backend OCR code into `ai/` as part of this folder setup. Contributor 3 develops in `ai/`; a separate integration PR can later migrate/adapt components after interfaces and tests are agreed.
+5. Work on separate branches and submit separate PRs. Never push directly to `main` or merge your own PR.
+6. Define API/schema contracts and synthetic examples before cross-folder integration. No contributor should import another contributor's private implementation before the interface is agreed.
+7. Use synthetic test data only. OCR output is advisory and requires human review. Unverified regulations must not be encoded as active rules.
+8. No public upload, production rule activation or deployment until authentication, authorization, tenant isolation, private storage, malware scanning, audit, retention/deletion and official-source review gates are met.
 
-- Each part first publishes its interface/schema and acceptance tests inside its folder.
-- Integration happens only after all three owners review the interface contract.
-- A designated integrator prepares a separate integration PR; it must not silently rewrite a workstream's implementation.
-- Resolve changes through owner-to-owner review, not by editing another person's folder.
-- Record dependencies and decisions in the relevant workstream README. If workstream boundaries need to change, agree before changing files.
+## Integration process
 
-## Suggested sequence
+1. Each owner commits only within their folder and opens a PR.
+2. All three review the shared contracts and dependency assumptions.
+3. A separate integration PR handles cross-folder wiring, root configs and CI.
+4. Run tests on the exact integration head SHA and record the evidence before any merge.
 
-1. All three owners inspect this contract and their own README.
-2. Work independently in isolated folders.
-3. Each PR includes tests, limitations, and exact verification evidence.
-4. Review interfaces together; only then prepare a separate integration PR.
-
-This split creates ownership boundaries; it does not mean the existing prototype is production-ready or that regulatory rules have been verified.
+This plan creates a clear frontend/backend/AI split while preserving the existing prototype.
