@@ -76,3 +76,45 @@ The target does not need a second OCR engine added immediately. The useful next 
 - This review is source-level against the refs stated above; no local runtime execution or new OCR accuracy experiment was performed in this review.
 - No code was copied from fake-id-screening.
 - PR #1 remains open and draft. `main` was not modified or merged, and no deployment was performed.
+
+## Follow-up review — 2026-10-23
+
+This section records a subsequent read-only review of the proposed foundation and stacked OCR hardening changes. It does not supersede the refs and evidence above.
+
+### Pull-request dependency reconciliation
+
+- PR #1 (`research/grounded-foundation`) is the foundation change set.
+- Comparing `research/grounded-foundation` to `review/cross-repo-integration-audit` returned exactly one additional commit and one changed file: this audit document.
+- Therefore PR #2 should target `research/grounded-foundation`, not `main`, so its review diff shows only this document rather than repeating the entire foundation. Retargeting is a review-structure change only; it does not merge either PR.
+- PR #3 (`feature/ocr-regression-hardening`) is stacked on the foundation branch. Its current changes cover OCR output limits, academic-year validation, duplicate-field behavior, regression tests and workflow branch triggers. Recheck its base and rerun CI after the foundation's disposition is known.
+
+### Follow-up OCR review
+
+The inspected OCR implementation enforces a 10 MiB upload cap, a 30-million-pixel cap, supported image formats, image verification and a 100,000-character OCR output cap. The extractor rejects non-string text, leaves ambiguous non-ISO dates unresolved, skips equal/reversed academic years and keeps the first matching field. The OCR result remains advisory and requires human review.
+
+The regression test suite and optional Tesseract smoke test passed on the inspected PR #3 head `184d678790f3c7442cb158d36a2f909a22188af2` in workflow run https://github.com/rajaryan1111/aicte-compliance-ai/actions/runs/39865712934. This validates configured synthetic tests only; it is not evidence of real-world field accuracy or production readiness.
+
+### Rule catalogue activation gap
+
+The rule schema currently checks that an `ACTIVE` rule has an effective-from date and positive, negative, boundary and exception test categories. It does not, by itself, require recorded reviewer identity, an approval decision or a verified source-status field before activation.
+
+This is a design gap to close before implementing a rule-publication workflow, not evidence that an unverified official AICTE rule is currently active. Before any production rule can become executable, require:
+1. explicit source verification status and provenance (issuer, exact document/version, clause/page, retrieval date and effective interval);
+2. a recorded reviewer identity and approval decision;
+3. tests covering applicability, boundaries, exceptions and unresolved inputs;
+4. a server-enforced transition gate so draft/unresolved rules cannot execute; and
+5. an audit event for activation, supersession and retirement.
+
+The catalogue is currently metadata/schema groundwork; do not describe it as a deployed regulatory rules engine.
+
+### Current blockers remain
+
+- Verify the official SIH26118/SIH26261 identifier as applicable to the project and the exact official problem statement/stage/deadline; do not silently conflate identifiers.
+- Verify the authoritative AICTE documents and amendments applicable to the target academic year before encoding or activating regulatory requirements.
+- Complete license/authorship/provenance checks before copying code, datasets or assets from the reference repository.
+- Keep public document upload blocked until authentication, authorization/RBAC, tenant isolation, private storage, malware scanning, audit persistence and retention/deletion controls are implemented and tested.
+- Do not claim real-world OCR accuracy from a synthetic regression corpus; establish a labelled, held-out evaluation and report per-field precision/recall first.
+
+### Scope of this follow-up
+
+This was a GitHub source/patch review; no local execution or new OCR benchmark was performed. No application code was changed by this follow-up review. The document update is intended to preserve review findings and clarify the PR dependency structure.
