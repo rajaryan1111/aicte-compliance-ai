@@ -18,14 +18,17 @@ Phase 0 gate — research snapshot 2026-10-23".
 Phase 0 has six canonical gates. This pass made **verifiable progress on four of them** and
 **closed one**:
 
-| # | Gate | Status | Change in this pass |
+| # | Gate | Status | Evidence |
 |---|---|---|---|
-| 1 | 1 April 2024 scrutiny document | `BLOCKED_EXTERNAL_EVIDENCE` | Title, date and publication timestamp **confirmed from the official AICTE site listing**; PDF body still unreachable |
-| 2 | 2026–27 addendum publication/finality/effective date | `BLOCKED_EXTERNAL_EVIDENCE` | Official **draft → final** publication pattern for the 2025–26 addendum established from the official site; 2026–27 addendum existence corroborated only by press |
-| 3 | Annexure-2 §2.1 pagination and Clause 7.17 | `OPEN` | **The official handbook is now retrievable in full text** via a government CDN (previously recorded as inaccessible); clause-level verification not completed |
-| 4 | NBA validity through 30 April 2025 for AY 2026–27 | `BLOCKED_EXTERNAL_EVIDENCE` | Not located in retrieved text; no change |
-| 5 | Official SIH26261 statement and deadline | `BLOCKED_EXTERNAL_EVIDENCE` | `sih.gov.in` returns **HTTP 403** to this environment on every path tried; mirror data only |
+| 1 | 1 April 2024 scrutiny document | **`CLOSED`** (pass 2) | **Complete 5-page document retrieved in full text** — all 21 categories. Identity, authority, date and publication timestamp confirmed. Decisive reconciliation finding: **it contains no "Extension of Approval" category**. Limitations recorded (§14.1) |
+| 2 | 2026–27 addendum publication/finality/effective date | `BLOCKED_EXTERNAL_EVIDENCE` | Official **draft → final** publication pattern for the 2025–26 addendum established; 2026–27 notice not retrieved from any official host (all AICTE hosts geo-blocked/502) |
+| 3 | Annexure-2 §2.1 pagination and Clause 7.17 | `OPEN` | Official handbook retrievable in full text via government CDN; Chapters I–II read and quoted. **The pagination question is not answerable by text extraction** — no printed folios in the extracted stream (§14.3) |
+| 4 | NBA validity through 30 April 2025 for AY 2026–27 | `OPEN` (pass 2) | **Clause 2.1.a(iii) retrieved verbatim.** Misinterpretation risk eliminated; residual question is whether a later addendum amends it — depends on Gate 2 (§14.4) |
+| 5 | Official SIH26261 statement and deadline | **`CLOSED`** (pass 2) | **Official SIH portal** confirms PS number, title, organisation (AICTE), category, theme (Smart Automation) and deadline field **28 October 2026**. One deadline ambiguity recorded (§14.5) |
 | 6 | Reuse licensing/authorship/data-history | **`CLOSED`** | Licence absence, multi-author history and **committed personal data** verified directly; reuse explicitly excluded, which satisfies the gate's second closure branch |
+
+Pass 1 statuses are preserved in the sections below; §14 supersedes them. **Gate 2 and Gate 3
+remain open, so Phase 0 remains `BLOCKED`.**
 
 Two additional results:
 
@@ -353,3 +356,221 @@ Gates 1–5 need **access**, not opinion. An owner decision is required only for
 
 **Do not treat anything in this file as an approved compliance checklist.** No rule may be
 activated on the basis of this document.
+
+---
+
+# Pass 2 — 2026-24 research continuation
+
+**Research date:** 2026-10-24. Supersedes the gate statuses in §1; all pass-1 sections are
+preserved unchanged above.
+
+## 14.1 Gate 1 — `CLOSED`: complete scrutiny document retrieved and reconciled
+
+### Retrieval (the pass-1 gap is closed)
+
+| Item | Value |
+|---|---|
+| Exact title (document header) | "Revised set of Documents for scrutiny for various categories under chapter I &II" |
+| Issuing authority | All India Council for Technical Education (AICTE) |
+| Document date | **01 April 2024** (per the official title on the AICTE listing) |
+| Official publication timestamp | 8 April 2024, 4:29 pm (AICTE site listing) |
+| Retrieved from | `https://web.archive.org/web/20240723180809id_/https://aicte-india.org/sites/default/files/Revised%20set%20of%20Documents.pdf` |
+| Nature of capture | Wayback capture, **23 July 2024**, HTTP 200, of a file hosted on AICTE's own domain (`aicte-india.org`) |
+| Also captured | 3 total captures, 28 May 2024 – 23 Jul 2024 |
+| Live authoritative URL | `https://www.aicte.gov.in/sites/default/files/Revised%20set%20of%20Documents.pdf` — still `Access Forbidden - GeoLocation mismatch` from this environment |
+| Page count | **5** (confirmed by the PDF viewer; both text chunks exhausted → complete) |
+| SHA-256 | **Not computed.** The sandbox cannot open a TLS connection to `web.archive.org` from the shell (`URLError … TLS/SSL connection has been closed`), so the file bytes could not be hashed locally. The reproducible identifier is the Wayback capture timestamp + URL above |
+
+### Document structure (verified content, complete)
+
+A single table: `Sr No | Category Name | Document Name`, covering **21 categories**:
+
+1 Bank Name Change · 2 Change of Site/Location · 3 Closure of Institution · 4 Conversion of
+Co-ed → Women's · 5 Conversion of Diploma ↔ Degree · 6 Conversion into Deemed to be/State Private
+University · 7 Course Name Change · 8 (Increase in Intake or New Course) · 9 Institution Name
+Change · 10 Twinning & Collaboration Program · 11 Introduction of OCI · 12 Management Fellowship ·
+13 Merger of Course · 14 Merger of Institution · 15 Minority Status Change · 16 New Institution ·
+17 New Level/New Programme · 18 New Regional Course · 19 Reduction in Intake or Closure of Course ·
+20 Reduction/Closure in ODL · 21 Trust/Society/Company Name Change.
+
+Representative rows (faithful transcription): category 2 includes "Approved building plan",
+"Ownership or Government/Private Lease (Sale deed / lease deed)", "Proof of Latitude and
+Longitude", "Occupancy/ Completion/ Structural Stability Certificate (more than 30 years old
+building)", "Fire and safety Certificate".
+
+### Decisive reconciliation finding
+
+**There is no "Extension of Approval" category in this document**, despite its title referring to
+Chapter I *and II*. Chapter II is titled "Grant of Extension of Approval for Existing
+Institutions" (verified in the APH, §14.4), but this scrutiny table contains no EOA row: its
+categories are the Chapter-I and ancillary application types (New Institution, New Level/Programme,
+Closure, Change of Site, conversion and housekeeping categories).
+
+**Consequences:**
+
+- The pass-1 open question — "whether it amends Annexure-2 §2.1 / whether it can be treated as the
+  current EOA checklist" — is answered: **it does not supply an EOA document checklist.** The
+  candidate EOA checklist in the verification report must be sourced from APH Chapter II and
+  Annexure-2, not from this circular.
+- This removes a latent error risk: a checklist derived from this document would have contained
+  New-Institution and Change-of-Site documents that are not EOA scrutiny requirements.
+
+### Limitations
+
+- The capture is a Wayback copy of AICTE's own file, not a live download; it is dated 23 Jul 2024,
+  i.e. after the 01 Apr 2024 document date, which is consistent but does not itself prove the file
+  was unchanged since April.
+- No SHA-256 (see above).
+- Whether any later instruction supersedes individual entries is **not** established by this
+  document and remains a research question for the owner's source register.
+
+## 14.2 Gate 2 — `BLOCKED_EXTERNAL_EVIDENCE`: no official 2026–27 addendum retrieved
+
+Every official host remains unreachable from this environment:
+
+| Attempt | Result |
+|---|---|
+| `www.aicte.gov.in/sites/default/files/Revised set of Documents.pdf` | `Access Forbidden - GeoLocation mismatch` |
+| `aicte.gov.in/sites/default/files/Revised set of Documents.pdf` | `502 Bad Gateway` |
+| `www.aicte-india.org/content/revised-set-documents-…` | redirected → `502 Bad Gateway` |
+| `www.aicte.gov.in/bureaus/approval/approval-process-2025-26` | `502 Bad Gateway` |
+
+**Pass-1 finding retained and strengthened:** AICTE's own homepage distinguishes "**Draft**
+Addendum/Corrigendum 2025-26" (published 1 November 2024) from the **published** version
+(5 November 2024). That is direct official evidence that AICTE itself treats draft and final
+addenda as different artefacts — the canonical caution is well founded.
+
+**2026–27 addendum:** corroborated only by secondary press (a 21-page addendum/corrigendum
+reported on 4 December 2025 covering supernumerary seats, BCA/BBA/BMS scope, monitoring committees
+and diploma minor specialisation) and by third-party commentary citing "Addendum/Corrigendum
+2026-27 of APH 2024-27 — amended clause 2.9". **No official publication record, issue date,
+reference number or effective date has been verified.** Gate stays open.
+
+## 14.3 Gate 3 — `OPEN`: pagination question is not answerable by text extraction
+
+Newly verified this pass from the official handbook (see source table): the document is genuine
+and complete, with Chapter I ending at clause 1.12 and Chapter II beginning immediately after.
+
+**The blocking issue is methodological, not access.** The PDF→text extraction exposes **no printed
+page folios**, so the canonical question — whether "p.79" vs "p.81" for Annexure-2 §2.1 arises
+from *PDF page index vs printed page number* — cannot be answered from the extracted stream. Even
+with the full document in hand, a text pipeline cannot report a printed page number that is not in
+the text layer.
+
+Clause 7.17 was also not reached: the retrieval is delivered in 11 chunks, and chunks read so far
+cover front matter, Chapter I and the start of Chapter II. Chapter VII and the Annexures lie in
+later chunks and were not examined in this pass.
+
+**Smallest owner action to close:** open the handbook PDF in a viewer, go to Annexure-2 §2.1 and
+Clause 7.17, and record **both** the viewer page index and the printed folio for each, plus
+surrounding context showing whether 7.17 exists (the third-party rendering suggests Chapter VII
+ends at 7.13). This takes minutes for a human and is not automatable here.
+
+## 14.4 Gate 4 — `OPEN`: Clause 2.1.a(iii) retrieved verbatim; misinterpretation risk removed
+
+Retrieved from the official handbook, Chapter II, clause 2.1:
+
+> **2.1 Introduction**
+> a. Existing institutions shall be eligible for getting 3 years' Extension of Approval (EoA)
+> from the AY-2024-25 by remitting 3 years' TER Charges (Table 2.1) by meeting **ANYONE** of the
+> following criteria:
+> i. Figured in 8th Edition of NIRF ranked Institutions (announcement made on 5th June 2023).
+> ii. Figured in QS World Ranking Asia-2024 (announcement made on 8th Nov 2023).
+> iii. Institutions having minimum of 30% eligible courses with NBA accreditation having validity
+> till 30th April 2025. (The institutions should continue to get accreditation of their programs)
+> iv. Institutions with valid NAAC score of 3.01 and above on scale of 4.0.
+> v. Institutions having conferred 'Autonomous Status' by UGC/A…
+
+**Resolution of the canonical question.** The 30 April 2025 reference is *not* a standalone rule
+governing AY 2026–27 approvals. It is the date-threshold inside **one of five alternative
+eligibility criteria** for the **three-year EoA window that begins at AY 2024–25**. An institution
+qualifies for that window by meeting *any one* of NIRF, QS, NBA, NAAC or Autonomous-Status
+conditions. Reading it as "institutions must have NBA validity through 30 Apr 2025 to be approved
+for AY 2026–27" would be a misreading of the clause, and the project must not encode it as such.
+
+Also verified in the same chapter: Chapter II governs EoA for existing institutions across 17
+listed activities, including xii ("Extension of Approval … after a break in the preceding Academic
+Year(s)/ Hibernation/Restoration of Intake") and xvii ("Closure of the Institution").
+
+**Why the gate stays `OPEN`:** the canonical wording also asks whether this is the *operative*
+rule for AY 2026–27. That requires the 2026–27 addendum/corrigendum, which is exactly what Gate 2
+cannot retrieve. If the addendum amends clause 2.1 (plausible — press reports changes to clause
+2.9), the threshold may have moved. The residual question is therefore narrow and precisely
+stated: *has the 2026–27 addendum amended clause 2.1(a)(iii)?*
+
+## 14.5 Gate 5 — `CLOSED`: official SIH listing verified
+
+The portal is reachable at the **`www.` host**; the bare host returns 403:
+
+| Attempt | Result |
+|---|---|
+| `https://sih.gov.in/` and `/sih2026PS` | **403 Forbidden** (Azure Application Gateway) |
+| `https://www.sih.gov.in/sih2026PS` | **Retrieved — official problem-statement table** |
+| `https://www.sih.gov.in/` | Retrieved — official homepage |
+| Wayback captures of the PS page | All 403 (captured failures only) |
+
+**Official row for the project's problem statement** (verbatim fields):
+
+| Field | Official value |
+|---|---|
+| PS Number | **SIH26261** |
+| Organization | **AICTE** |
+| Problem Statement Title | **AI-Powered Application Validation, Document Authentication and Regulatory Compliance Verification** |
+| Category | software |
+| Theme | **Smart Automation** |
+| Submitted Idea(s) Count | 28/500 |
+| Deadline for Idea Submission | **28 October 2026** |
+
+**Prior-record corrections this establishes:**
+
+- The earlier report's doubt about the problem-statement title and sponsoring organisation is
+  **resolved in the affirmative** — the project's title and AICTE ownership are confirmed officially.
+- The earlier flag that the theme "Travel & Tourism" looked mis-assigned is **resolved**: the
+  official theme is **Smart Automation**. No main listing anomaly remains.
+
+**Deadline ambiguity — recorded, not hidden.** The official homepage carries a banner: *"Team
+Nomination & Idea Submission deadline extended to 09 Oct 2026"* and a second notice about editing
+team details 02–09 Oct 2026. The per-PS table nonetheless shows **28 October 2026** for the AICTE
+statements (SIH26261–26265) while other organisations' statements show 20 October 2026 and are
+marked "Idea Submissions Closed". The consistent reading — stated here as an **inference, not a
+verified fact** — is that the AICTE batch was added later ("New PS Added" banner) with its own
+later deadline, and that the per-PS field is the operative date for SIH26261. The project should
+treat **28 October 2026** as the operative deadline while noting the banner conflict.
+
+**What is still not retrieved:** the detailed problem-statement body (Background / Problem
+Description / Expected Solution) and the formal eligibility rules. The listing publishes the title
+and metadata but not the narrative body, and no detail endpoint was found at the URL patterns
+tried (`/psDetails?id=`, `/sih2026PS?problem-id=` → 404). A signed-in/SPOC-restricted view may be
+the only route to the body. This gap does **not** affect the canonical acceptance criteria (which
+require the statement's identity and the applicable deadline), both of which are verified.
+
+**Time-sensitivity:** the operative deadline is **four days** from this research date.
+
+## 14.6 Pass-2 source table (verification date 2026-10-24)
+
+| ID | URL | Status | Supports |
+|---|---|---|---|
+| SIH-PS-OFFICIAL | `https://www.sih.gov.in/sih2026PS` | **Retrieved, official** | Gate 5: SIH26261 title, AICTE, Smart Automation, 28 Oct 2026 |
+| SIH-HOME-OFFICIAL | `https://www.sih.gov.in/` | **Retrieved, official** | Gate 5: extension banner (09 Oct 2026) — conflict recorded |
+| SCRUTINY-WB | `https://web.archive.org/web/20240723180809id_/https://aicte-india.org/sites/default/files/Revised%20set%20of%20Documents.pdf` | **Retrieved, complete (5 pp., 21 categories)** | Gate 1 closure; no EOA category |
+| SCRUTINY-LIVE | `https://www.aicte.gov.in/sites/default/files/Revised%20set%20of%20Documents.pdf` | Geo-blocked / 502 | Authoritative URL (unverified from here) |
+| APH-CDN | `https://cdnbbsr.s3waas.gov.in/s35938b4d054136e5d59ada6ec9c295d7a/uploads/2025/03/2025031399.pdf` | **Retrieved (front matter, Ch. I 1.8–1.12, Ch. II 2.1)** | Gates 3, 4: verbatim clause 2.1.a(iii); Chapter II scope |
+| AICTE-HOSTS | various `aicte.gov.in` / `aicte-india.org` paths | **All 403-geo / 502** | Gate 2 blocker |
+| PRESS-2026-27 | Careers360, 2025-12-04 | Retrieved, **secondary** | Corroboration only for the 2026–27 addendum's existence |
+
+## 14.7 Pass-2 verdict
+
+**Phase 0: `BLOCKED`.** Gates **1, 5 and 6 are `CLOSED`** with evidence. Gates **2 and 3 remain
+open**, and **Gate 4 is narrowed to a single answerable question** pending Gate 2.
+
+Three of six gates closed, and — materially — two serious miscalculation risks were eliminated:
+the scrutiny circular does **not** define an EOA checklist, and clause 2.1.a(iii) is **not** a
+standalone AY 2026–27 NBA rule. No regulatory rule is activated by any of this.
+
+**Highest-value next actions (both need a network inside India or a human with a browser):**
+
+1. Retrieve the official **2026–27 addendum/corrigendum** and record its issue date, reference
+   number and whether it amends clause 2.1 → closes Gates 2 and 4.
+2. Open the handbook PDF and record the **printed folio vs PDF index** for Annexure-2 §2.1 and
+   confirm whether **Clause 7.17** exists → closes Gate 3.
+
