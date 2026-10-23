@@ -8,8 +8,9 @@ the repository owner** to move into `docs/research/` via a separate PR.
 **Canonical source:** [`docs/canonical/phases.md`](../../docs/canonical/phases.md), "Updated
 Phase 0 gate — research snapshot 2026-10-23".
 
-> **Verdict: `BLOCKED`. Phase 0 is not complete.** One of the six gates can be closed; five
-> cannot, for reasons stated per gate below. Nothing here activates a regulatory rule.
+> **Verdict: `BLOCKED`. Phase 0 is not complete.** Three of the six gates (`1`, `5`, `6`) are
+> closed with evidence; three (`2`, `3`, `4`) are not, for reasons stated per gate below. Nothing
+> here activates a regulatory rule. Current status is in the table in §1 and in §15.7.
 
 ---
 
@@ -22,13 +23,13 @@ Phase 0 has six canonical gates. This pass made **verifiable progress on four of
 |---|---|---|---|
 | 1 | 1 April 2024 scrutiny document | **`CLOSED`** (pass 2) | **Complete 5-page document retrieved in full text** — all 21 categories. Identity, authority, date and publication timestamp confirmed. Decisive reconciliation finding: **it contains no "Extension of Approval" category**. Limitations recorded (§14.1) |
 | 2 | 2026–27 addendum publication/finality/effective date | `BLOCKED_EXTERNAL_EVIDENCE` | Official **draft → final** publication pattern for the 2025–26 addendum established; 2026–27 notice not retrieved from any official host (all AICTE hosts geo-blocked/502) |
-| 3 | Annexure-2 §2.1 pagination and Clause 7.17 | `OPEN` | Official handbook retrievable in full text via government CDN; Chapters I–II read and quoted. **The pagination question is not answerable by text extraction** — no printed folios in the extracted stream (§14.3) |
+| 3 | Annexure-2 §2.1 pagination and Clause 7.17 | `OPEN` | Official handbook retrievable via government CDN; Chapters I–II read and quoted. **Root-caused in pass 3: the retrieval channel stops around PDF page 30, so Chapter VII (printed p.70) and the Annexures (p.77+) are unreachable at any chunk index**; printed folios now anchored from the official index. Annexure-2 §2.1 narrowed to printed 80/81, not decided (§15.1) |
 | 4 | NBA validity through 30 April 2025 for AY 2026–27 | `OPEN` (pass 2) | **Clause 2.1.a(iii) retrieved verbatim.** Misinterpretation risk eliminated; residual question is whether a later addendum amends it — depends on Gate 2 (§14.4) |
-| 5 | Official SIH26261 statement and deadline | **`CLOSED`** (pass 2) | **Official SIH portal** confirms PS number, title, organisation (AICTE), category, theme (Smart Automation) and deadline field **28 October 2026**. One deadline ambiguity recorded (§14.5) |
+| 5 | Official SIH26261 statement and deadline | **`CLOSED`** (pass 2) | **Official SIH portal** confirms PS number, title, organisation (AICTE), category, theme (Smart Automation) and deadline field **28 October 2026**. Banner-vs-row conflict narrowed in pass 3 — banner treated as stale, date still **provisional** (§15.4) |
 | 6 | Reuse licensing/authorship/data-history | **`CLOSED`** | Licence absence, multi-author history and **committed personal data** verified directly; reuse explicitly excluded, which satisfies the gate's second closure branch |
 
-Pass 1 statuses are preserved in the sections below; §14 supersedes them. **Gate 2 and Gate 3
-remain open, so Phase 0 remains `BLOCKED`.**
+Pass 1 statuses are preserved in the sections below; §14 (pass 2) and §15 (pass 3) supersede
+them. **Gates 2, 3 and 4 remain open, so Phase 0 remains `BLOCKED`.**
 
 Two additional results:
 
@@ -573,4 +574,222 @@ standalone AY 2026–27 NBA rule. No regulatory rule is activated by any of this
    number and whether it amends clause 2.1 → closes Gates 2 and 4.
 2. Open the handbook PDF and record the **printed folio vs PDF index** for Annexure-2 §2.1 and
    confirm whether **Clause 7.17** exists → closes Gate 3.
+
+---
+
+# Pass 3 — 2026-10-24 evidence closure attempt
+
+Pass-3 scope: resolve Gates 2, 3 and 4, clarify the SIH26261 deadline, and finish all remaining
+authorised Phase 0 work. **Outcome: no new gate closed.** Gate 3's blocker is now root-caused and
+numerically narrowed; Gate 2 gained a named candidate artefact and an exact retrieval recipe; the
+Gate 5 deadline conflict is materially narrowed. Phase 0 remains `BLOCKED`.
+
+## 15.1 Gate 3 — root cause found: the retrieval channel stops around PDF page 30
+
+**Finding (supersedes §14.3, which is preserved below unaltered).** Pass 2 recorded that "Chapter
+VII and the Annexures lie in later chunks". That is now known to be **wrong**, and the correction
+matters because it changes the owner action from "read more chunks" to "use a page-addressable
+reader".
+
+This pass retrieved the **official index of contents, with printed page numbers**, verbatim from
+the government CDN copy:
+
+| Entry | Printed page |
+|---|---|
+| Foreword | i |
+| Abbreviations | vi |
+| Definitions | viii |
+| Preamble | xii |
+| Chapter-I Grant of Approval for New Institution | 1 |
+| Chapter-II Grant of Extension of Approval for Existing Institutions | 11 |
+| Chapter-III Collaboration & Twinning Programmes | 33 |
+| Chapter-IV Grant of Approval for Universities | 37 |
+| Chapter-V Approval for ODL / Online Learning | 45 |
+| Chapter-VI Standard Norms and Requirements | 53 |
+| Chapter-VII Penal Action on Violation of Norms | 70 |
+| Chapter-VIII DOS and DON'Ts | 75 |
+| Annexures | 77 |
+
+Chunk-contents mapping across all three passes now covers: front matter, Chapter I (to 1.12),
+Chapter II §2.1, §2.2, §2.3.1, **§2.3.2 including Table 2.1 (TER charges)** in chunk 9, and §2.3.3
+in chunk 10. Every one of those clauses belongs to **printed pages 11–15**. The retrieval surface
+reports **11 chunks** for the whole file yet exhausts itself inside Chapter II. Therefore the chunk
+count is an artefact of the extraction layer, **not** a pagination of the handbook, and **chunk
+index cannot be used to target a later chapter**. Chapter VI (p.53), Chapter VII (p.70) and the
+Annexures (p.77+) are unreachable through this channel at *any* chunk index. The documented
+behaviour of the PDF reader used here (text parsed up to roughly the first 30 PDF pages) is
+consistent with this and is the operative cause.
+
+**What this does establish (useful, and previously unknown):**
+
+- The handbook **does print folios**, and printed folios are the citation convention — corroborated
+  independently by AICTE Extension-of-Approval corrigenda that cite "APH 2024-27 (**Annexure-18,
+  page180**)" and "**(Chapter-VI)**". Printed page 180 therefore exists, i.e. the document has at
+  least 180 printed pages.
+- Front matter is roman-numbered (i–xii and beyond), so a **PDF-index ↔ printed-folio offset is
+  structurally certain**. The reported p.79 / p.81 discrepancy is therefore at least *consistent
+  with* the PDF-index-vs-folio explanation. Consistent is not confirmed.
+
+**Annexure-2 §2.1 — narrowed, not decided.** A flattened-text rendering of the official document
+places the running folio `80` immediately adjacent to the heading
+`ANNEXURE-2 — Documents to be uploaded/submitted by Existing Institutions — 2.1 Documents to be
+uploaded for the issuance of EoA based on Self-Disclosure…`. This handbook prints the folio
+sometimes *before* and sometimes *after* the running title ("`53 Approval Process Handbook
+2024-2027`" vs "`Approval Process Handbook 2024-2027 28`"), so a folio adjacent to a heading is
+consistent with **both** §2.1 opening on printed p.80 and §2.1 opening on p.81 after p.80's footer.
+The question is narrowed to an 80/81 neighbourhood. **No page number is asserted.** Guessing here
+would be exactly the fabrication the canonical criteria forbid.
+
+**Clause 7.17 — still unverified.** Not retrieved. Its existence is neither confirmed nor denied,
+and the pass-2 hint that Chapter VII may end near 7.13 remains a hypothesis. One arithmetic
+constraint is recorded as a *test*, not a conclusion: Chapter VII spans printed pp.70–74 (five
+pages, since Chapter VIII begins at 75), so any clause numbered 7.17 must lie within those five
+pages.
+
+**Why this cannot be finished from here.** Closing Gate 3 needs page-addressable access (a local
+PDF plus a viewer, or `pdftotext -f/-l`). This sandbox's outbound network is restricted to a small
+host allowlist (GitHub, npm, PyPI); the AICTE CDN, the Rajasthan HTE host and the Internet Archive
+are not reachable from a shell. No document can be downloaded, so nothing can be rendered locally
+and no hash can be computed (§15.5).
+
+**Exact missing step — one sitting, for any person or environment with unrestricted network:**
+
+1. Download `https://cdnbbsr.s3waas.gov.in/s35938b4d054136e5d59ada6ec9c295d7a/uploads/2025/03/2025031399.pdf`.
+2. Record `sha256sum` of the file.
+3. For **Annexure-2 §2.1** and for **Clause 7.17**, record: (a) viewer / PDF page index, (b) the
+   printed folio printed on that page, (c) the heading and its first and last text lines, (d) for
+   7.17, whether the clause exists at all and what the highest clause number in Chapter VII is.
+4. State the viewer's page-numbering convention (1-based PDF index including or excluding cover).
+
+## 15.2 Gate 2 — candidate official-adjacent artefact found; finality still unverified
+
+**New lead.** A search index surfaces a document hosted by the Government of Rajasthan, Department
+of Technical Education at
+`https://hte.rajasthan.gov.in/oldhte/hteCircular/AICTE%20Approval.pdf`, headed
+"**MORATORIUM OPTION — ADDENDUM/ CORRIGENDUM 2026-27 Of APH 2024-27**", containing two-column
+"**Existing**" clause vs "**Proposed Modification**" tables for Chapter-I (including clause
+1.1(g)), Chapter-II, Chapter-III and Annexure-8 (PG exit treated as PG certificate).
+
+**Retrieval attempts this pass — all failed:**
+
+| Attempt | Result |
+|---|---|
+| `https://hte.rajasthan.gov.in/oldhte/hteCircular/AICTE%20Approval.pdf` | host error page: "This page can't be displayed" |
+| `http://` variant of the same path | identical error page |
+| Internet Archive availability API for that URL | `{"archived_snapshots": {}}` — **no capture exists** |
+
+So the **body of this document was not obtained**; only an index snippet was. Under the standing
+rule, a snippet is not evidence, and the snippet supplies **no** title page, reference number,
+issue date, effective date or statement of finality. **Gate 2 status is unchanged.**
+
+Two observations that are recorded but prove nothing on their own:
+
+- The document's "**Proposed** Modification" column is again consistent with proposal-stage
+  material, matching the officially observed draft→final publication pattern (AICTE posted a
+  *Draft* Addendum/Corrigendum 2025-26 on 1 November 2024 and the published version on 5 November
+  2024). Consistency is not proof of stage.
+- independent corroboration that corrigenda to this handbook were **operative in the AY 2026–27
+  cycle**: Extension-of-Approval letters issued March–June 2026 are headed "APPROVAL PROCESS
+  2026-27" and reference "Approval Process Handbook 2024-27 **and corrigendum thereof**". One is
+  titled "Extended Extension of Approval for the Academic Year **2025-26 to 2027-28**". This
+  establishes that corrigenda existed and that the multi-year extended-EoA mechanism operated in
+  practice. It does **not** establish what any corrigendum says about clause 2.1, so it closes
+  neither Gate 2 nor Gate 4.
+
+**Precise missing evidence:** an official artefact (AICTE-hosted, or a government host carrying the
+AICTE notice) giving the 2026–27 addendum/corrigendum's **title, reference number, issue date,
+publication URL and the list of clauses amended** — specifically whether clause 2.1 is touched.
+**Decision-maker:** AICTE Approval Bureau. Until that exists, Gate 2 stays `BLOCKED_EXTERNAL_EVIDENCE`.
+
+## 15.3 Gate 4 — unchanged, and the two questions are now kept strictly apart
+
+| Question | Status |
+|---|---|
+| What does Clause 2.1.a(iii) say? | **Verified verbatim** (pass 2): among five alternatives for the **3-year EoA from AY 2024-25**, one is ≥30% eligible courses with NBA accreditation valid till 30 April 2025 |
+| Is that threshold an AY 2026–27 eligibility rule? | **Not established.** It is a clause of a multi-year handbook read in the context of the AY 2024–25 window |
+| Did the 2026–27 addendum amend clause 2.1, or extend/replace the 30 April 2025 date? | **Not established — depends entirely on Gate 2** |
+
+Gate 4 closes only when the third row is answered from an official source. Two specific claims
+remain **unsupported and must not be written into any rule**: (i) "NBA 30% valid till 30 Apr 2025 is
+an AY 2026–27 eligibility rule"; (ii) "the 30 April 2025 date has been extended". Neither has
+evidence.
+
+## 15.4 Gate 5 — the deadline conflict is materially narrowed (still not officially reconciled)
+
+Re-checked both official surfaces on 2026-10-24:
+
+- **Per-PS table** (`/sih2026PS`): AICTE SIH26261–SIH26265 each show a **live submission counter**
+  (SIH26261 at 28/500) and deadline **28 October 2026**.
+- **Same table, other organisations**: Ministry of Jal Shakti, Ministry of Defence and MSDE rows
+  show the status string "**Idea Submissions Closed**" with deadline **20 October 2026**. The table
+  therefore *does* carry an explicit per-row open/closed state, and it is closed for those rows.
+- **Homepage banner** still reads "Team Nomination & Idea Submission deadline extended to
+  **09 Oct 2026**", alongside "SPOCs and Team Leaders can edit/update … from **02–09 Oct 2026**".
+
+**Inference (labelled as inference):** the 09 Oct banner is a **stale, already-elapsed** extension
+notice — both dates it cites have passed, while the row-level state for AICTE's PSs is still open
+with an explicit 28 October 2026 deadline. On that reading the operative deadline for SIH26261 is
+**28 October 2026**. This is derived from the portal's own row-level state; **SIH has published no
+statement reconciling the banner and the rows**, so it is **not an official determination** and the
+date stays **provisional**.
+
+Gate 5 remains `CLOSED` on the evidence already recorded (PS number, exact title, AICTE as
+organisation, software category, Smart Automation theme, and the deadline field). The unresolved
+item is only the banner-vs-row reconciliation.
+
+**Time-critical:** as of today, 28 October 2026 is **four days away**.
+
+## 15.5 Hash and provenance status — limitation restated, no hashes recorded
+
+No SHA-256 could be computed for any source in this record. The sandbox's outbound network is
+restricted to a small host allowlist (GitHub, npm, PyPI), so documents on the AICTE CDN, the
+Rajasthan HTE host and the Internet Archive cannot be downloaded; a direct TLS fetch attempt from a
+shell failed earlier. **Therefore this record cites no hashes for any document**, and provenance
+rests on URL + retrieval date + verbatim quotation. This is a recorded limitation and does **not**
+satisfy the canonical Gate 2 requirement to record a document hash; whoever downloads these files
+should add `sha256sum` values via an appended correction.
+
+## 15.6 Pass-3 source table (verification date 2026-10-24)
+
+| ID | URL | Status | Supports |
+|---|---|---|---|
+| APH-CDN-INDEX | `https://cdnbbsr.s3waas.gov.in/…/2025031399.pdf` (index of contents) | **Retrieved, official** | Gate 3: printed folios Ch II=11, III=33, IV=37, V=45, VI=53, VII=70, VIII=75, Annexures=77 |
+| APH-CDN-CH2 | same file, chunk 9 | **Retrieved, official** | Gate 3: §2.1(a)(v)–(vi), §2.2, §2.3.1, §2.3.2 + Table 2.1 TER charges — all printed pp.11–15 |
+| RJ-HTE-ADDENDUM | `https://hte.rajasthan.gov.in/oldhte/hteCircular/AICTE%20Approval.pdf` | **NOT retrieved** — host error page; no Wayback capture | Gate 2 lead only: "ADDENDUM/CORRIGENDUM 2026-27 Of APH 2024-27", existing-vs-proposed tables, Ch I–III + Annexure-8 |
+| EOA-2026-27-LETTERS | e.g. `https://engineering.lingayasvidyapeeth.edu.in/docs/AICTE_2026.pdf`, `https://www.nitttrc.ac.in/uploads/EoA%202026-2027.pdf` | Retrieved, **institutional EoA letters** | Gate 2 context: AY 2026–27 process ran on "APH 2024-27 and corrigendum thereof"; "Extended EoA 2025-26 to 2027-28" |
+| EOA-CORRIGENDUM-CITE | e.g. `https://rgicdn.s3.ap-south-1.amazonaws.com/ghrcenagpur/pdf/accreditation/corrigendum-report-26-27.PDF` | Retrieved, institutional | Gate 3: citation convention "(Annexure-18, page180)" ⇒ ≥180 printed pages |
+| SIH-PS-OFFICIAL-3 | `https://www.sih.gov.in/sih2026PS` | **Retrieved, official** | Gate 5: AICTE rows open with counters + 28 Oct 2026; other ministries "Idea Submissions Closed" @ 20 Oct 2026 |
+| SIH-HOME-OFFICIAL-3 | `https://www.sih.gov.in/` | **Retrieved, official** | Gate 5: 09 Oct 2026 banner and 02–09 Oct SPOC window — both elapsed |
+| FLIPBOOK-P81 | `https://fliphtml5.com/jpimb/zwqi/AICTE_Approval_Process_Handbook_2024-27/81/` | Retrieved, **unofficial mirror**, nav/description only | **Nothing.** No page text exposed; not usable as evidence |
+
+## 15.7 Pass-3 verdict
+
+**Phase 0: `BLOCKED`.**
+
+| Gate | Status after pass 3 | Remaining requirement |
+|---|---|---|
+| 1 | `CLOSED` | — |
+| 2 | `BLOCKED_EXTERNAL_EVIDENCE` | Official title, reference number, issue date, finality, effective date for the 2026–27 addendum/corrigendum |
+| 3 | `OPEN` | Printed folio for Annexure-2 §2.1 (narrowed to 80/81) and existence + folio of Clause 7.17; needs a page-addressable reader |
+| 4 | `OPEN` | Whether clause 2.1 / the 30 April 2025 NBA date was amended for AY 2026–27 (depends on Gate 2) |
+| 5 | `CLOSED` | Banner-vs-row reconciliation only; date **provisional**; ~4 days remaining |
+| 6 | `CLOSED` | — |
+
+No regulatory rule is activated by anything in this pass. Three of six gates remain unsatisfied and
+are all blocked on the same external dependency: **page-level and official-portal access from
+outside the restricted sandbox.**
+
+## 15.8 Single highest-priority next action
+
+**Download the official handbook, hash it, and read two pages.** One sitting, one person or
+environment with unrestricted network:
+
+1. `2025031399.pdf` → `sha256sum` → open **Annexure-2 §2.1** and **Clause 7.17**, record PDF index +
+   printed folio + heading + whether 7.17 exists → **closes Gate 3**.
+2. Then open the Rajasthan HTE "ADDENDUM/CORRIGENDUM 2026-27 Of APH 2024-27" PDF, record title
+   page, reference number, issue date and which clauses it amends, and `sha256sum` it → **decides
+   Gates 2 and 4**.
+
+Operational aside, not a gate: if SIH26261 is intended to be submitted, the provisional deadline is
+**28 October 2026 — four days away**.
 
