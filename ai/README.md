@@ -48,6 +48,7 @@ external AI provider is introduced by this work.
 | [`EVALUATION.md`](EVALUATION.md) | What the evaluation measures, its limitations, and how to run it. |
 | [`BACKEND_HANDOFF.md`](BACKEND_HANDOFF.md) | 17 documented extraction defects owned by the backend workstream. |
 | [`WORKSTREAM_HANDOFF.md`](WORKSTREAM_HANDOFF.md) | Review-only handoff: PR/branch delivery, backend extraction evidence, Phase 6 (accessibility, demo, deployment) and the six Phase 0 research gates, with owners. |
+| [`research/phase-0-closure-record.md`](research/phase-0-closure-record.md) | Phase 0 research closure record (2026-10-24): gate-by-gate status, official evidence, access blockers and owner decisions. Proposal for `docs/research/`. |
 
 ## OCR benchmark: metric definitions
 
