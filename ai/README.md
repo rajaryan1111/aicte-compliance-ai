@@ -13,8 +13,11 @@ preprocessing diagnosis built on the conservative normalization library
 ([`ai/ocr_benchmark.py`](ocr_benchmark.py)) provides the engine adapter contract,
 transcription metrics (CER, WER, exact match), structured-field scoring,
 deterministic synthetic data generation, held-out partitioning, and mock-based
-engine contract tests. The working OCR implementation is still in `backend/`
-(see the OCR placement rule); no model or external provider is introduced by this work.
+engine contract tests. The raster benchmark has now been executed against a **real
+Tesseract 5.5.2** engine (eng + hin packs) on synthetic pages, and the report is committed
+under [`reports/`](reports/README.md) with its provenance and verification record. The
+working OCR implementation is still in `backend/` (see the OCR placement rule); no model or
+external AI provider is introduced by this work.
 
 ## Scope
 
@@ -40,7 +43,8 @@ engine contract tests. The working OCR implementation is still in `backend/`
 | [`corpus/ocr_corruption_cases.jsonl`](corpus/ocr_corruption_cases.jsonl) | 30 OCR corruption cases (15 scored, 15 documented known gaps). |
 | [`tests/test_evaluate.py`](tests/test_evaluate.py) | Tests for the extraction evaluator, corpus validation, and scoring semantics. |
 | [`tests/test_ocr_benchmark.py`](tests/test_ocr_benchmark.py) | Tests for the OCR benchmark module: metrics, generation, scoring, contracts, corpus loading, partitioning. |
-| [`tests/test_raster_benchmark.py`](tests/test_raster_benchmark.py) | Tests for the raster benchmark module: pixel transforms, document rendering, paired scoring, engine availability, CLI. |
+| [`tests/test_raster_benchmark.py`](tests/test_raster_benchmark.py) | Tests for the raster benchmark module: pixel transforms, document rendering, paired scoring, engine availability, script/font coverage, language override, measurement honesty, CLI. |
+| [`reports/`](reports/README.md) | Committed benchmark reports (real Tesseract 5.5.2 on 24 synthetic pages) with provenance, reproduction steps and verification record. |
 | [`EVALUATION.md`](EVALUATION.md) | What the evaluation measures, its limitations, and how to run it. |
 | [`BACKEND_HANDOFF.md`](BACKEND_HANDOFF.md) | 17 documented extraction defects owned by the backend workstream. |
 
@@ -87,7 +91,7 @@ The workstream supports two levels of evaluation:
 ## Running tests and evaluations
 
 ```bash
-# All AI/OCR tests (189 tests: evaluator + benchmark + raster)
+# All AI/OCR tests (237: evaluator 66, benchmark module 105, raster 66)
 python -m pytest -q ai/tests
 
 # Extraction evaluation (human-readable)
@@ -106,8 +110,11 @@ python ai/evaluate_extraction.py --compare baseline.json
 python ai/raster_benchmark.py --count 16
 python ai/raster_benchmark.py --count 16 --json raster_report.json
 
-# Attempt real Tesseract raster evaluation (requires tesseract in PATH)
-python ai/raster_benchmark.py --real-engine
+# Real Tesseract raster evaluation (requires tesseract in PATH; Devanagari cases need
+# a Devanagari-capable font, auto-detected or set via AICTE_DEVANAGARI_FONT)
+AICTE_DEVANAGARI_FONT=/path/to/NotoSansDevanagari.ttf \
+  python ai/raster_benchmark.py --count 24 --seed 42 --real-engine \
+  --json ai/reports/real_tesseract_5.5.2_count24_seed42.json
 
 # Preprocessing diagnosis
 python ai/evaluate_extraction.py --corpus ai/corpus/ocr_corruption_cases.jsonl --normalize
@@ -133,8 +140,13 @@ ruff check ai/
 ## Known gaps and limitations
 
 - The 17 backend-owned extraction defects are documented in [`BACKEND_HANDOFF.md`](BACKEND_HANDOFF.md).
-- Real Tesseract engine execution requires the Tesseract system binary (`tesseract`) in PATH;
-  when absent, the raster benchmark explicitly reports the missing prerequisite.
+- Real Tesseract execution requires the `tesseract` binary in PATH; when absent, the raster
+  benchmark reports the missing prerequisite and refuses to fabricate a result.
+- Devanagari raster cases additionally require a Devanagari-capable font for rendering
+  (system fonts are auto-detected; `AICTE_DEVANAGARI_FONT` overrides). Without one, real-engine
+  runs mark those cases `unavailable` with the reason instead of scoring replacement boxes.
+- The recorded real-engine numbers (see [`EVALUATION.md`](EVALUATION.md#real-engine-raster-evaluation--tesseract-552-2026-10-23))
+  come from 24 synthetic, Pillow-rendered pages — not scans of real certificates.
 - The synthetic document images use programmatic layouts and font rendering; they are not
   photographed real-world paper documents.
 - No held-out split exists for the text extraction corpus (cases were written alongside patterns).

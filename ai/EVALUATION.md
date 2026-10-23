@@ -279,12 +279,109 @@ The workstream provides two distinct evaluation modules:
 ### Running benchmark tests and evaluations
 
 ```bash
-python -m pytest -q ai/tests/test_ocr_benchmark.py     # benchmark module tests (101 tests)
-python -m pytest -q ai/tests/test_raster_benchmark.py  # raster image tests (22 tests)
-python -m pytest -q ai/tests                            # all AI/OCR tests (189 tests)
+python -m pytest -q ai/tests/test_ocr_benchmark.py     # benchmark module tests (105 tests)
+python -m pytest -q ai/tests/test_raster_benchmark.py  # raster image tests (66 tests)
+python -m pytest -q ai/tests                            # all AI/OCR tests (237 tests)
 
 # Run raster image benchmark CLI (generates paired images and computes degradation delta)
 python ai/raster_benchmark.py --count 16 --json raster_report.json
 ```
 
+## Real-engine raster evaluation — Tesseract 5.5.2, 2026-10-23
+
+The raster benchmark was finally executed against the **real Tesseract binary**, not the
+mock. The machine-readable artefact is
+[`ai/reports/real_tesseract_5.5.2_count24_seed42.json`](reports/real_tesseract_5.5.2_count24_seed42.json);
+its provenance, reproduction command and verification record are in
+[`ai/reports/README.md`](reports/README.md).
+
+### Environment actually used
+
+| Item | Value |
+|---|---|
+| Engine | Tesseract `5.5.2-23-g397887`, Leptonica 1.88.0 |
+| Language data | `tessdata_fast` `eng` + `hin` |
+| Language settings | `en → eng`, `hi → hin+eng`, `bilingual → eng+hin` |
+| Render fonts | DejaVu Sans (Latin), Noto Sans Devanagari (Devanagari, via `AICTE_DEVANAGARI_FONT`) |
+| Dataset | `--count 24 --seed 42`: 3 languages × 2 layouts × 8 corruption types |
+| Scored / unavailable / errors | 24 / 0 / 0 |
+| Determinism | second run in a fresh process: byte-identical report except `duration_seconds` |
+
+### Measured results (synthetic pages, 24 paired cases)
+
+```
+CLEAN:      CER 0.203 | WER 0.355 | exact 0.167 | field micro-F1 0.286
+CORRUPTED:  CER 0.426 | WER 0.900 | exact 0.083 | field micro-F1 0.153
+DELTA:      +CER 0.224 | +WER 0.545 | -F1 0.133
+```
+
+Per language (CER, clean → corrupted):
+
+| Language | Clean CER | Corrupted CER | Clean WER | Corrupted WER |
+|---|---:|---:|---:|---:|
+| `en` | 0.067 | 0.323 | 0.167 | 0.897 |
+| `bilingual` | 0.226 | 0.424 | 0.367 | 0.713 |
+| `hi` | 0.315 | 0.532 | 0.532 | 1.089 |
+
+Per corruption (corrupted CER / WER, all languages pooled):
+
+| Corruption | CER | WER |
+|---|---:|---:|
+| `none` | 0.156 | 0.246 |
+| `jpeg_compression` | 0.074 | 0.200 |
+| `low_contrast` | 0.173 | 0.395 |
+| `skew` | 0.207 | 0.739 |
+| `low_resolution` | 0.396 | 0.743 |
+| `gaussian_blur` | 0.636 | 0.799 |
+| `noise` | 0.871 | 1.835 |
+| `rotation` (90°) | 0.899 | 2.240 |
+
+Structured-field extraction collapses on Devanagari pages: clean field micro-F1 is `0.667`
+for `en` and `0.000` for `hi` and `bilingual`, because the current extractor's label patterns
+are English/certificate-oriented — the documented backend-owned gap
+([`BACKEND_HANDOFF.md`](BACKEND_HANDOFF.md)). CER above 1.0 (rotation, noise WER) is a real
+metric value: the hypothesis can contain more edits than the reference has characters.
+
+### What changed in the module to make this measurement honest
+
+Four defects were found and fixed while producing this report; each has regression tests in
+[`tests/test_raster_benchmark.py`](tests/test_raster_benchmark.py):
+
+1. **Empty aggregates reported perfect scores.** A run where no case could be scored
+   returned `cer = wer = f1 = 0.0`, i.e. "perfect OCR" for a measurement that never
+   happened. Aggregates now carry `scored_cases` and return `null` plus
+   `metrics_available: false` when nothing was scored, and the CLI prints `n/a` and exits
+   `2` instead of `0`.
+2. **Hindi pages were rendered without Devanagari glyphs.** On a host with no
+   Devanagari-capable font the generator fell back to a Latin font, so the image contained
+   replacement boxes while the ground truth contained Hindi text — any CER from it measured
+   the renderer. Rendering now resolves a script-capable font (system paths, font
+   directories, or `AICTE_DEVANAGARI_FONT`) and records the font per language in the report;
+   real-engine runs mark Devanagari cases `unavailable` when no such font exists.
+3. **`hi` was scored with the Hindi pack alone.** These documents contain Latin values
+   (certificate numbers, institution names, ISO dates); with `-l hin` the Latin tokens are
+   destroyed (clean Hindi certificate: CER 0.220 with `hin` vs 0.115 with `hin+eng`). `hi`
+   now maps to `hin+eng`.
+4. **The two-column layout ignored the case language.** A case labelled `hi` rendered
+   English column headers, so its English ground truth was compared against Hindi-language
+   OCR output. The table layout now renders Hindi/bilingual headers for those languages.
+
+Also fixed: a `--language` override now actually overrides the per-case mapping (it
+previously only set a default that was always overwritten), the mock engine's substitution
+seed is a SHA-256 digest of the image bytes instead of the encoded length (so equal-length
+images no longer degrade identically), and a `None`/`None` field pair is no longer counted
+as a false negative.
+
+### Limits of these numbers
+
+- **Synthetic pages, not scans.** Pillow-rendered text at one font size, one grid, no
+  scanner, no skew from a real platen, no stamps, no handwriting, no multi-page PDFs.
+- **One Hindi font, one Latin font.** Different typefaces change CER substantially.
+- **Small sample.** 24 cases: each language has 8, each corruption has 3. The corruption
+  breakdown is indicative, not statistically stable.
+- **Not a vendor comparison.** Only Tesseract was run; no other engine or cloud OCR was
+  evaluated on the same corpus.
+- **Not real-world AICTE accuracy.** No real certificate was used or may be committed, so
+  this cannot be quoted as document accuracy for the programme.
+- Mock-engine numbers remain calibration only and are stored nowhere near this report.
 

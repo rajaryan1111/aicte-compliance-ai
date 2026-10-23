@@ -48,23 +48,35 @@ if str(REPO_ROOT) not in sys.path:
 # Language mapping: dataset language code → Tesseract language code
 # ---------------------------------------------------------------------------
 
+#: Dataset language → Tesseract language spec.
+#:
+#: ``hi`` documents are rendered with Hindi labels *and* Latin values
+#: (certificate numbers, institution names, ISO dates), so the Hindi pack alone
+#: destroys the Latin tokens: measured on the clean Hindi certificate,
+#: ``hin`` gives CER 0.220 against ``hin+eng`` CER 0.115. Both packs are
+#: therefore required for a fair Hindi measurement.
 DATASET_LANG_TO_TESSERACT: dict[str, str] = {
     "en": "eng",
-    "hi": "hin",
+    "hi": "hin+eng",
     "bilingual": "eng+hin",
 }
 
 # ---------------------------------------------------------------------------
-# Font selection with graceful fallback
+# Font selection, script coverage and graceful fallback
 # ---------------------------------------------------------------------------
 
-_SYSTEM_FONT_CANDIDATES: list[str] = [
+#: Languages whose rendered documents require Devanagari glyph coverage.
+DEVANAGARI_LANGUAGES: frozenset[str] = frozenset({"hi", "bilingual"})
+
+#: Environment variable pointing at a Devanagari-capable font file. Used to make
+#: real-engine Hindi evaluation reproducible on hosts without a system font.
+DEVANAGARI_FONT_ENV = "AICTE_DEVANAGARI_FONT"
+
+#: Latin-script fonts, in preference order.
+_LATIN_FONT_CANDIDATES: list[str] = [
     # macOS system / supplemental fonts
-    "/System/Library/Fonts/Supplemental/DevanagariMT.ttc",
-    "/System/Library/Fonts/Supplemental/Devanagari Sangam MN.ttc",
     "/System/Library/Fonts/Supplemental/Arial.ttf",
-    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-    "/System/Library/Fonts/Helvetica.ttc",
+    "/System/Library/Fonts/Supplemental/Helvetica.ttc",
     "/System/Library/Fonts/Geneva.ttf",
     # Linux font paths
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -72,19 +84,95 @@ _SYSTEM_FONT_CANDIDATES: list[str] = [
     "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
 ]
 
+#: Fonts known to carry Devanagari glyph coverage, in preference order.
+_DEVANAGARI_FONT_CANDIDATES: list[str] = [
+    # macOS system / supplemental fonts
+    "/System/Library/Fonts/Supplemental/DevanagariMT.ttc",
+    "/System/Library/Fonts/Supplemental/Devanagari Sangam MN.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    # Linux font paths
+    "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansDevanagari[wdth,wght].ttf",
+    "/usr/share/fonts/truetype/lohit-devanagari/Lohit-Devanagari.ttf",
+    "/usr/share/fonts/truetype/Gargi/Gargi.ttf",
+    "/usr/share/fonts/truetype/samyak/Samyak-Devanagari.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    # Windows
+    "C:/Windows/Fonts/mangal.ttf",
+    "C:/Windows/Fonts/Nirmala.ttf",
+]
+
+#: Directories scanned for a file whose name mentions Devanagari.
+_FONT_SEARCH_DIRS: tuple[str, ...] = (
+    "~/.fonts",
+    "~/.local/share/fonts",
+    "/usr/local/share/fonts",
+)
+
+#: Kept for backwards compatibility with earlier imports of this module.
+_SYSTEM_FONT_CANDIDATES: list[str] = _DEVANAGARI_FONT_CANDIDATES + _LATIN_FONT_CANDIDATES
+
+
+def _iter_font_files(directory: Path) -> list[Path]:
+    if not directory.is_dir():
+        return []
+    return sorted(
+        p
+        for p in directory.rglob("*")
+        if p.suffix.lower() in {".ttf", ".ttc", ".otf"} and p.is_file()
+    )
+
+
+def resolve_render_font(language: str = "en") -> Optional[str]:
+    """Return the font file used to render *language*, or ``None`` if none applies.
+
+    Latin-script documents fall back to Pillow's built-in font, so ``None`` is
+    normal there. For Devanagari languages ``None`` means the rendered image
+    would contain replacement boxes instead of the labelled text — callers must
+    treat that as "cannot measure", never as an OCR result.
+    """
+    if language in DEVANAGARI_LANGUAGES:
+        override = os.environ.get(DEVANAGARI_FONT_ENV)
+        if override and os.path.isfile(override):
+            return override
+        for path in _DEVANAGARI_FONT_CANDIDATES:
+            if os.path.isfile(path):
+                return path
+        for directory in _FONT_SEARCH_DIRS:
+            for candidate in _iter_font_files(Path(os.path.expanduser(directory))):
+                if "devanagari" in candidate.name.lower():
+                    return str(candidate)
+        return None
+
+    for path in _LATIN_FONT_CANDIDATES:
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def script_is_renderable(language: str = "en") -> bool:
+    """True when the document for *language* can be rendered with real glyphs."""
+    if language in DEVANAGARI_LANGUAGES:
+        return resolve_render_font(language) is not None
+    return True
+
 
 def _get_font(size: int = 20, language: str = "en") -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Return a usable FreeType font or fallback to Pillow default."""
-    if language in ("hi", "bilingual"):
-        # Prioritize Devanagari or Unicode fonts
-        for path in _SYSTEM_FONT_CANDIDATES:
-            if os.path.isfile(path) and any(k in path.lower() for k in ["deva", "unicode"]):
-                try:
-                    return ImageFont.truetype(path, size)
-                except Exception:
-                    continue
+    """Return a usable FreeType font or fallback to Pillow default.
 
-    for path in _SYSTEM_FONT_CANDIDATES:
+    A Devanagari-capable font is required for ``hi``/``bilingual`` documents;
+    when none is installed the Latin font (or Pillow's bitmap font) is returned
+    so that rendering still succeeds, and ``script_is_renderable`` reports the
+    loss of script coverage to the caller.
+    """
+    preferred: list[str] = []
+    if language in DEVANAGARI_LANGUAGES:
+        resolved = resolve_render_font(language)
+        if resolved:
+            preferred.append(resolved)
+    preferred.extend(_LATIN_FONT_CANDIDATES)
+
+    for path in preferred:
         if os.path.isfile(path):
             try:
                 return ImageFont.truetype(path, size)
@@ -281,6 +369,8 @@ class RasterDocumentGenerator:
 
         font_header = _get_font(26, language=language)
         font_body = _get_font(20, language=language)
+        render_font = resolve_render_font(language)
+        renderable = script_is_renderable(language)
 
         lines: list[str] = []
 
@@ -325,7 +415,30 @@ class RasterDocumentGenerator:
 
         elif layout == "two_column":
             draw.rectangle([(20, 20), (width - 20, height - 20)], outline="#333333", width=2)
-            title = "AICTE SUMMARY VERIFICATION TABLE"
+            # The table layout must honour the requested language: a case labelled
+            # ``hi`` that renders English labels would be scored against Hindi OCR
+            # output while its ground truth is English, which measures nothing.
+            if language == "hi":
+                title = "अखिल भारतीय तकनीकी शिक्षा परिषद - सारांश तालिका"
+                col1_lines = ["संस्थान", "प्रमाणपत्र संख्या", "शैक्षणिक सत्र", "मान्यता तक", "जारी करने की तिथि"]
+            elif language == "bilingual":
+                title = "AICTE SUMMARY VERIFICATION TABLE / सारांश तालिका"
+                col1_lines = [
+                    "Institution / संस्थान",
+                    "Certificate No / प्रमाणपत्र संख्या",
+                    "Academic Year / शैक्षणिक सत्र",
+                    "Valid Until / मान्यता तक",
+                    "Issue Date / जारी करने की तिथि",
+                ]
+            else:
+                title = "AICTE SUMMARY VERIFICATION TABLE"
+                col1_lines = [
+                    "Institution Name",
+                    "Certificate No",
+                    "Academic Year",
+                    "Valid Until",
+                    "Issue Date",
+                ]
             draw.text((50, 40), title, fill="black", font=font_header)
             lines.append(title)
             # Table grid lines
@@ -336,13 +449,6 @@ class RasterDocumentGenerator:
             draw.line([(50, 290), (width - 50, 290)], fill="black", width=1)
             draw.line([(450, 90), (450, 340)], fill="black", width=1)
 
-            col1_lines = [
-                "Institution Name",
-                "Certificate No",
-                "Academic Year",
-                "Valid Until",
-                "Issue Date",
-            ]
             col2_lines = [inst, cert, ay, vu, idate]
 
             y_pos = 105
@@ -359,6 +465,8 @@ class RasterDocumentGenerator:
             "ground_truth": ground_truth,
             "language": language,
             "layout": layout,
+            "render_font": render_font,
+            "script_renderable": renderable,
         }
 
     @classmethod
@@ -433,6 +541,8 @@ class RasterDocumentGenerator:
                     "corrupted_image": corrupted_img,
                     "ground_truth": doc["ground_truth"],
                     "transcription_ground_truth": doc["transcription_ground_truth"],
+                    "render_font": doc.get("render_font"),
+                    "script_renderable": doc.get("script_renderable", True),
                     "dataset_fingerprint": dataset_fp,
                 }
             )
@@ -479,8 +589,9 @@ class RealTesseractEngine(RasterOCREngine):
 
     engine_name = "tesseract"
 
-    def __init__(self, language: str = "eng"):
+    def __init__(self, language: str = "eng", *, override_language: bool = False):
         self.language = language
+        self.override_language = override_language
         self._available = shutil.which("tesseract") is not None
         self.engine_version: Optional[str] = None
         self._available_languages: set[str] = set()
@@ -597,9 +708,12 @@ class MockRasterOCREngine(RasterOCREngine):
         elif error_rate >= 0.9:
             pred_text = ""  # severe rotation/blur yields unreadable text
         else:
-            # Introduce character substitutions
+            # Introduce character substitutions. The seed is derived from a stable
+            # SHA-256 digest of the image bytes (not ``hash()`` or ``len()``) so the
+            # degradation is identical in every Python process and is sensitive to
+            # the actual pixels rather than the encoded size.
             chars = list(reference_text)
-            rng = random.Random(len(image_bytes))
+            rng = random.Random(int(hashlib.sha256(image_bytes).hexdigest()[:16], 16))
             for idx in range(len(chars)):
                 if rng.random() < error_rate:
                     chars[idx] = "X"
@@ -621,6 +735,23 @@ class MockRasterOCREngine(RasterOCREngine):
             "confidence": round(conf, 4),
             "engine": self.engine_name,
         }
+
+
+# ---------------------------------------------------------------------------
+# Engine language resolution
+# ---------------------------------------------------------------------------
+
+
+def tesseract_language_for(engine: "RealTesseractEngine", case_language: str) -> str:
+    """Resolve the Tesseract language spec for a case.
+
+    An explicit ``--language``/constructor override wins for every case (useful
+    for controlled comparisons); otherwise the dataset language is mapped through
+    :data:`DATASET_LANG_TO_TESSERACT`.
+    """
+    if getattr(engine, "override_language", False) and getattr(engine, "language", None):
+        return engine.language
+    return DATASET_LANG_TO_TESSERACT.get(case_language, "eng")
 
 
 # ---------------------------------------------------------------------------
@@ -652,6 +783,8 @@ class RasterBenchmarkScorer:
         for k in field_keys:
             ev = expected_fields.get(k)
             pv = predicted_fields.get(k)
+            if ev is None and pv is None:
+                continue
             if ev is not None and pv is not None and str(ev) == str(pv):
                 tp += 1
             elif ev is not None and pv is not None:
@@ -705,6 +838,8 @@ class RasterBenchmarkScorer:
         corrupted_results: list[dict[str, Any]] = []
         per_corruption: dict[str, list[dict[str, Any]]] = {}
         per_language: dict[str, list[dict[str, Any]]] = {}
+        clean_per_corruption: dict[str, list[dict[str, Any]]] = {}
+        clean_per_language: dict[str, list[dict[str, Any]]] = {}
         case_results: list[dict[str, Any]] = []
         unavailable_cases: list[dict[str, Any]] = []
 
@@ -717,7 +852,7 @@ class RasterBenchmarkScorer:
 
             # --- language availability check for real engines ---------------
             if isinstance(engine, RealTesseractEngine):
-                tesseract_lang = DATASET_LANG_TO_TESSERACT.get(lang, "eng")
+                tesseract_lang = tesseract_language_for(engine, lang)
                 if not engine.has_language(tesseract_lang):
                     missing = [
                         p
@@ -725,6 +860,33 @@ class RasterBenchmarkScorer:
                         if p not in engine._available_languages
                     ]
                     reason = f"Missing Tesseract language pack(s): {', '.join(missing)}"
+                    unavailable_cases.append({
+                        "case_id": case_id,
+                        "language": lang,
+                        "tesseract_language": tesseract_lang,
+                        "status": "unavailable",
+                        "reason": reason,
+                    })
+                    case_results.append({
+                        "case_id": case_id,
+                        "language": lang,
+                        "layout": case.get("layout", "unknown"),
+                        "corruption_type": corr_type,
+                        "status": "unavailable",
+                        "reason": reason,
+                    })
+                    continue
+
+                # --- script coverage check ---------------------------------
+                # Without a Devanagari-capable font the rendered image contains
+                # replacement boxes instead of the labelled Hindi text, so any
+                # CER/WER computed from it would measure the renderer, not OCR.
+                if lang in DEVANAGARI_LANGUAGES and resolve_render_font(lang) is None:
+                    reason = (
+                        "No Devanagari-capable font available for rendering: the "
+                        "document image does not contain the labelled text "
+                        f"(set {DEVANAGARI_FONT_ENV} to a Devanagari font file)"
+                    )
                     unavailable_cases.append({
                         "case_id": case_id,
                         "language": lang,
@@ -752,7 +914,7 @@ class RasterBenchmarkScorer:
                         corruption_type="none",
                     )
                 elif isinstance(engine, RealTesseractEngine):
-                    tesseract_lang = DATASET_LANG_TO_TESSERACT.get(lang, "eng")
+                    tesseract_lang = tesseract_language_for(engine, lang)
                     res_clean = engine.extract_from_bytes(
                         case["clean_image_bytes"],
                         language=tesseract_lang,
@@ -788,7 +950,7 @@ class RasterBenchmarkScorer:
                         corruption_type=corr_type,
                     )
                 elif isinstance(engine, RealTesseractEngine):
-                    tesseract_lang = DATASET_LANG_TO_TESSERACT.get(lang, "eng")
+                    tesseract_lang = tesseract_language_for(engine, lang)
                     res_corr = engine.extract_from_bytes(
                         case["corrupted_image_bytes"],
                         language=tesseract_lang,
@@ -816,6 +978,8 @@ class RasterBenchmarkScorer:
 
             per_corruption.setdefault(corr_type, []).append(eval_corr)
             per_language.setdefault(lang, []).append(eval_corr)
+            clean_per_corruption.setdefault(corr_type, []).append(eval_clean)
+            clean_per_language.setdefault(lang, []).append(eval_clean)
 
             # --- per-case detail -------------------------------------------
             case_results.append({
@@ -840,10 +1004,25 @@ class RasterBenchmarkScorer:
 
         elapsed = time.time() - start_time
         evaluated_count = len(clean_results)
+        corrupted_count = len(corrupted_results)
 
-        def _aggregate(res_list: list[dict[str, Any]]) -> dict[str, float]:
+        def _aggregate(res_list: list[dict[str, Any]]) -> dict[str, Any]:
+            """Aggregate per-case results.
+
+            When nothing was scored the metrics are ``None`` (JSON ``null``) and
+            ``scored_cases`` is 0 - never 0.0, which would read as a perfect score
+            for a measurement that did not happen.
+            """
             if not res_list:
-                return {"cer": 0.0, "wer": 0.0, "exact": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0}
+                return {
+                    "scored_cases": 0,
+                    "cer": None,
+                    "wer": None,
+                    "exact": None,
+                    "precision": None,
+                    "recall": None,
+                    "f1": None,
+                }
             tot_tp = sum(r["tp"] for r in res_list)
             tot_fp = sum(r["fp"] for r in res_list)
             tot_fn = sum(r["fn"] for r in res_list)
@@ -851,6 +1030,7 @@ class RasterBenchmarkScorer:
             r = tot_tp / (tot_tp + tot_fn) if (tot_tp + tot_fn) > 0 else 0.0
             f1 = 2 * p * r / (p + r) if (p + r) > 0 else 0.0
             return {
+                "scored_cases": len(res_list),
                 "cer": round(sum(r["cer"] for r in res_list) / len(res_list), 4),
                 "wer": round(sum(r["wer"] for r in res_list) / len(res_list), 4),
                 "exact": round(sum(r["exact_transcription"] for r in res_list) / len(res_list), 4),
@@ -859,13 +1039,25 @@ class RasterBenchmarkScorer:
                 "f1": round(f1, 4),
             }
 
+        def _delta(clean_value: Optional[float], corr_value: Optional[float], *, invert: bool = False) -> Optional[float]:
+            if clean_value is None or corr_value is None:
+                return None
+            value = clean_value - corr_value if invert else corr_value - clean_value
+            return round(value, 4)
+
         clean_agg = _aggregate(clean_results)
         corr_agg = _aggregate(corrupted_results)
 
         corr_breakdown = {k: _aggregate(v) for k, v in per_corruption.items()}
         lang_breakdown = {k: _aggregate(v) for k, v in per_language.items()}
+        clean_corr_breakdown = {k: _aggregate(v) for k, v in clean_per_corruption.items()}
+        clean_lang_breakdown = {k: _aggregate(v) for k, v in clean_per_language.items()}
 
         dataset_fp = cases[0].get("dataset_fingerprint", "unknown") if cases else "unknown"
+
+        render_fonts: dict[str, Optional[str]] = {}
+        for evaluated_lang in sorted({r.get("language", "en") for r in case_results if r.get("status") == "evaluated"}):
+            render_fonts[evaluated_lang] = resolve_render_font(evaluated_lang)
 
         report: dict[str, Any] = {
             "available": True,
@@ -875,18 +1067,23 @@ class RasterBenchmarkScorer:
             "dataset_fingerprint": dataset_fp,
             "total_cases": len(cases),
             "evaluated_count": evaluated_count,
+            "corrupted_count": corrupted_count,
             "unavailable_count": len(unavailable_cases),
             "sample_size": evaluated_count,
+            "metrics_available": evaluated_count > 0,
             "duration_seconds": round(elapsed, 3),
+            "render_fonts": render_fonts,
             "clean_baseline": clean_agg,
             "corrupted_evaluation": corr_agg,
             "degradation_delta": {
-                "cer_increase": round(corr_agg["cer"] - clean_agg["cer"], 4),
-                "wer_increase": round(corr_agg["wer"] - clean_agg["wer"], 4),
-                "f1_drop": round(clean_agg["f1"] - corr_agg["f1"], 4),
+                "cer_increase": _delta(clean_agg["cer"], corr_agg["cer"]),
+                "wer_increase": _delta(clean_agg["wer"], corr_agg["wer"]),
+                "f1_drop": _delta(clean_agg["f1"], corr_agg["f1"], invert=True),
             },
             "by_corruption_type": corr_breakdown,
             "by_language": lang_breakdown,
+            "clean_by_corruption_type": clean_corr_breakdown,
+            "clean_by_language": clean_lang_breakdown,
             "case_results": case_results,
         }
 
@@ -911,8 +1108,11 @@ def main() -> int:
     parser.add_argument(
         "--language",
         type=str,
-        default="eng",
-        help="Default Tesseract language code for real engine (e.g. eng, hin, eng+hin)",
+        default=None,
+        help=(
+            "Force this Tesseract language code for every case (e.g. eng, hin, eng+hin). "
+            "Omit to map each case's dataset language via DATASET_LANG_TO_TESSERACT."
+        ),
     )
     args = parser.parse_args()
 
@@ -935,7 +1135,10 @@ def main() -> int:
 
     engine: RasterOCREngine
     if args.real_engine:
-        engine = RealTesseractEngine(language=args.language)
+        if args.language:
+            engine = RealTesseractEngine(language=args.language, override_language=True)
+        else:
+            engine = RealTesseractEngine()
         if not engine.is_available():
             print("ERROR: Real Tesseract engine requested, but 'tesseract' was not found in PATH.")
             return 1
@@ -956,6 +1159,10 @@ def main() -> int:
     corr = report["corrupted_evaluation"]
     delta = report["degradation_delta"]
 
+    def _fmt(value: Optional[float]) -> str:
+        """Format a metric, printing ``n/a`` when nothing was measured."""
+        return "n/a" if value is None else f"{value:.3f}"
+
     print("\n================ RASTER OCR BENCHMARK REPORT ================")
     print(
         f"Engine: {report['engine']} ({report.get('engine_type', 'unknown')}) | "
@@ -965,29 +1172,44 @@ def main() -> int:
     if report.get("engine_version"):
         print(f"Engine Version: {report['engine_version']}")
     print("-------------------------------------------------------------")
-    print(f"CLEAN:     CER={clean['cer']:.3f} | WER={clean['wer']:.3f} | Exact={clean['exact']:.3f} | F1={clean['f1']:.3f}")
-    print(f"CORRUPTED: CER={corr['cer']:.3f} | WER={corr['wer']:.3f} | Exact={corr['exact']:.3f} | F1={corr['f1']:.3f}")
-    print(f"DELTA:     +CER={delta['cer_increase']:.3f} | +WER={delta['wer_increase']:.3f} | -F1={delta['f1_drop']:.3f}")
+    print(f"CLEAN:     CER={_fmt(clean['cer'])} | WER={_fmt(clean['wer'])} | Exact={_fmt(clean['exact'])} | F1={_fmt(clean['f1'])}")
+    print(f"CORRUPTED: CER={_fmt(corr['cer'])} | WER={_fmt(corr['wer'])} | Exact={_fmt(corr['exact'])} | F1={_fmt(corr['f1'])}")
+    print(f"DELTA:     +CER={_fmt(delta['cer_increase'])} | +WER={_fmt(delta['wer_increase'])} | -F1={_fmt(delta['f1_drop'])}")
     if report.get("unavailable_count", 0) > 0:
-        print(f"UNAVAILABLE: {report['unavailable_count']} case(s) excluded (missing language packs)")
+        print(f"UNAVAILABLE: {report['unavailable_count']} case(s) excluded (not measurable on this host)")
         for uc in report.get("unavailable_cases", []):
             print(f"  {uc['case_id']} ({uc['language']}): {uc['reason']}")
+    if report.get("render_fonts"):
+        print("Rendered with:")
+        for lang, font_path in sorted(report["render_fonts"].items()):
+            print(f"  {lang:18s} -> {font_path or 'Pillow default font'}")
     print("-------------------------------------------------------------")
     print("Performance by Corruption Type:")
     for corr_type, stats in sorted(report["by_corruption_type"].items()):
-        print(f"  {corr_type:18s} -> CER={stats['cer']:.3f} | WER={stats['wer']:.3f} | F1={stats['f1']:.3f}")
-    print("Performance by Language:")
+        print(f"  {corr_type:18s} -> CER={_fmt(stats['cer'])} | WER={_fmt(stats['wer'])} | F1={_fmt(stats['f1'])}")
+    print("Corrupted performance by Language:")
     for lang, stats in sorted(report["by_language"].items()):
-        print(f"  {lang:18s} -> CER={stats['cer']:.3f} | WER={stats['wer']:.3f} | F1={stats['f1']:.3f}")
+        print(f"  {lang:18s} -> CER={_fmt(stats['cer'])} | WER={_fmt(stats['wer'])} | F1={_fmt(stats['f1'])}")
+    print("Clean performance by Language:")
+    for lang, stats in sorted(report.get("clean_by_language", {}).items()):
+        print(f"  {lang:18s} -> CER={_fmt(stats['cer'])} | WER={_fmt(stats['wer'])} | F1={_fmt(stats['f1'])}")
     print("=============================================================")
+
+    if not report.get("metrics_available"):
+        print(
+            "ERROR: no case could be scored, so no OCR metric was measured. "
+            "This is not a zero-error result.",
+            file=sys.stderr,
+        )
 
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         report["seed"] = args.seed
+        report["count"] = args.count
         args.json.write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(f"Report written to {args.json}")
 
-    return 0
+    return 0 if report.get("metrics_available") else 2
 
 
 if __name__ == "__main__":

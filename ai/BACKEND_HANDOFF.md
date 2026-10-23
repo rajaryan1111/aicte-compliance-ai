@@ -91,3 +91,41 @@ them; the evaluator's two earlier diagnostic defects (gap-exception visibility
 in human output, `--check --help` wording) were fixed separately in commit
 `0d92cc0` and are not backend-owned. The corpora are synthetic, hand-written
 cases: they prove per-case behavior, not real-world OCR accuracy.
+
+## Real-engine evidence for the extractor gaps (2026-10-23)
+
+The raster benchmark was run against real Tesseract 5.5.2 (`eng` + `hin`) on 24 synthetic
+rendered pages (3 languages x 2 layouts x 8 corruption types, seed 42). Report:
+`ai/reports/real_tesseract_5.5.2_count24_seed42.json`.
+
+Aggregate structured-field results on **clean** pages, i.e. with no image corruption at all:
+
+| Language | Clean field micro-F1 | Corrupted field micro-F1 | Cases |
+|---|---:|---:|---:|
+| `en` | 0.667 | 0.400 | 8 |
+| `hi` | 0.000 | 0.000 | 8 |
+| `bilingual` | 0.000 | 0.000 | 8 |
+
+Reading: every Hindi-only and bilingual page loses **all** institutional fields even when the
+OCR text is clean, because `backend/app/ocr_pipeline.py` has no Hindi label coverage for
+these documents (`संस्थान`, `मान्यता तक`, `जारी करने की तिथि`) and no handling for
+`Label / लेबल:` bilingual lines. This is the same class as defects #2 and #11 in the table
+above and is covered by the acceptance criteria above - it is **not** a new defect id, it is
+the measured aggregate impact of the documented ones.
+
+Two AI-side defects were found and fixed while producing the measurement, so they are *not*
+backend work:
+
+- Hindi pages were rendered with a Latin font when no Devanagari font was installed, and
+  `hi` cases were OCR'd with `-l hin` alone, which destroyed the Latin certificate numbers
+  and institution names. `hi` now maps to `hin+eng`; the renderer resolves a
+  Devanagari-capable font or marks the case unavailable.
+- `--language` did not actually override the per-case language mapping.
+
+Reproduce (real engine, Devanagari font required):
+
+```bash
+AICTE_DEVANAGARI_FONT=/path/to/NotoSansDevanagari.ttf \
+  python ai/raster_benchmark.py --count 24 --seed 42 --real-engine \
+  --json ai/reports/real_tesseract_5.5.2_count24_seed42.json
+```

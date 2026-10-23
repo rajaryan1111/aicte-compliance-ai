@@ -25,6 +25,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from ai.raster_benchmark import (  # noqa: E402
     DATASET_LANG_TO_TESSERACT,
+    DEVANAGARI_FONT_ENV,
+    DEVANAGARI_LANGUAGES,
     MockRasterOCREngine,
     RasterBenchmarkScorer,
     RasterDocumentGenerator,
@@ -39,6 +41,9 @@ from ai.raster_benchmark import (  # noqa: E402
     apply_rotation,
     apply_skew,
     character_error_rate,
+    resolve_render_font,
+    script_is_renderable,
+    tesseract_language_for,
     word_error_rate,
 )
 
@@ -156,6 +161,23 @@ class TestRasterDocumentGeneration:
         assert "AICTE SUMMARY VERIFICATION TABLE" in doc["transcription_ground_truth"]
         assert "Institution Name:" in doc["transcription_ground_truth"]
         assert doc["layout"] == "two_column"
+
+    def test_two_column_layout_honours_language(self):
+        """A ``hi`` table case must render Hindi labels, not the English table."""
+        doc_hi = RasterDocumentGenerator.generate_document(
+            case_idx=4, language="hi", layout="two_column", seed=42
+        )
+        text = doc_hi["transcription_ground_truth"]
+        assert "Institution Name" not in text
+        assert "संस्थान" in text
+        assert "प्रमाणपत्र संख्या" in text
+
+        doc_bi = RasterDocumentGenerator.generate_document(
+            case_idx=4, language="bilingual", layout="two_column", seed=42
+        )
+        text_bi = doc_bi["transcription_ground_truth"]
+        assert "Institution / संस्थान" in text_bi
+        assert "Academic Year / शैक्षणिक सत्र" in text_bi
 
     def test_deterministic_generation_with_seed(self):
         doc1 = RasterDocumentGenerator.generate_document(case_idx=5, seed=100)
@@ -458,7 +480,9 @@ class TestLineBoundaryPreservation:
 class TestLanguageMapping:
     def test_dataset_lang_to_tesseract_mapping(self):
         assert DATASET_LANG_TO_TESSERACT["en"] == "eng"
-        assert DATASET_LANG_TO_TESSERACT["hi"] == "hin"
+        # Hindi documents also contain Latin values (certificate numbers,
+        # institution names, ISO dates), so both packs are required.
+        assert DATASET_LANG_TO_TESSERACT["hi"] == "hin+eng"
         assert DATASET_LANG_TO_TESSERACT["bilingual"] == "eng+hin"
 
     def test_has_language_single_pack(self):
@@ -793,3 +817,217 @@ class TestEngineErrorHandling:
         assert report["available"] is False
         assert "unavailable" in report["error"]
         assert report["total_cases"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Test measurement honesty, script coverage and language override
+# ---------------------------------------------------------------------------
+
+
+def _mock_available_engine(languages: set[str]) -> RealTesseractEngine:
+    """Build a RealTesseractEngine that reports the given installed packs."""
+    engine = RealTesseractEngine.__new__(RealTesseractEngine)
+    engine.language = "eng"
+    engine.override_language = False
+    engine._available = True
+    engine.engine_version = "test"
+    engine._available_languages = set(languages)
+    engine.engine_name = "tesseract"
+    return engine
+
+
+class TestMeasurementHonesty:
+    def test_no_scored_cases_yields_null_metrics_not_zero(self):
+        """A run that scored nothing must report null metrics, not 0.0 (a perfect score)."""
+        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=3, seed=42)
+        for c in cases:
+            c["language"] = "hi"
+        report = RasterBenchmarkScorer.run_benchmark(cases, _mock_available_engine({"eng"}))
+
+        assert report["evaluated_count"] == 0
+        assert report["metrics_available"] is False
+        for block in (report["clean_baseline"], report["corrupted_evaluation"]):
+            assert block["scored_cases"] == 0
+            assert block["cer"] is None
+            assert block["wer"] is None
+            assert block["f1"] is None
+        assert report["degradation_delta"] == {
+            "cer_increase": None,
+            "wer_increase": None,
+            "f1_drop": None,
+        }
+
+    def test_scored_aggregates_include_case_count(self):
+        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=3, seed=42)
+        report = RasterBenchmarkScorer.run_benchmark(cases, MockRasterOCREngine())
+        assert report["metrics_available"] is True
+        assert report["clean_baseline"]["scored_cases"] == 3
+        assert report["corrupted_evaluation"]["scored_cases"] == 3
+        assert report["corrupted_count"] == 3
+
+    def test_cli_exits_2_when_nothing_can_be_scored(self, tmp_path, monkeypatch):
+        """The CLI must not present an empty measurement as a successful report."""
+        import ai.raster_benchmark as rb
+
+        empty_block = {
+            "scored_cases": 0,
+            "cer": None,
+            "wer": None,
+            "exact": None,
+            "precision": None,
+            "recall": None,
+            "f1": None,
+        }
+        fake_report = {
+            "available": True,
+            "engine": "tesseract",
+            "engine_type": "real",
+            "engine_version": "test",
+            "evaluated_count": 0,
+            "total_cases": 3,
+            "duration_seconds": 0.0,
+            "metrics_available": False,
+            "render_fonts": {},
+            "clean_baseline": dict(empty_block),
+            "corrupted_evaluation": dict(empty_block),
+            "degradation_delta": {"cer_increase": None, "wer_increase": None, "f1_drop": None},
+            "by_corruption_type": {},
+            "by_language": {},
+            "case_results": [],
+        }
+
+        monkeypatch.setattr(rb.RasterBenchmarkScorer, "run_benchmark", classmethod(lambda cls, cases, engine: fake_report))
+        monkeypatch.setattr(rb, "MockRasterOCREngine", MockRasterOCREngine)
+        monkeypatch.setattr(sys, "argv", ["raster_benchmark.py", "--count", "3"])
+
+        rc = rb.main()
+        assert rc == 2
+
+
+class TestScriptCoverage:
+    def test_devanagari_languages_declared(self):
+        assert DEVANAGARI_LANGUAGES == {"hi", "bilingual"}
+
+    def test_english_is_always_renderable(self):
+        assert script_is_renderable("en") is True
+
+    def test_devanagari_renderability_follows_font_resolution(self, monkeypatch):
+        monkeypatch.delenv(DEVANAGARI_FONT_ENV, raising=False)
+        monkeypatch.setattr("ai.raster_benchmark._DEVANAGARI_FONT_CANDIDATES", [])
+        monkeypatch.setattr("ai.raster_benchmark._FONT_SEARCH_DIRS", ())
+        assert resolve_render_font("hi") is None
+        assert script_is_renderable("hi") is False
+
+    def test_env_override_font_is_used(self, monkeypatch, tmp_path):
+        from PIL import ImageFont
+
+        font_path = tmp_path / "NotoSansDevanagari.ttf"
+        source = None
+        for candidate in (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+        ):
+            if Path(candidate).is_file():
+                source = candidate
+                break
+        assert source is not None, "no usable font on this host to build the fixture"
+        font_path.write_bytes(Path(source).read_bytes())
+        # The copied file must still load as a font for the override to be usable.
+        ImageFont.truetype(str(font_path), 12)
+
+        monkeypatch.setenv(DEVANAGARI_FONT_ENV, str(font_path))
+        assert resolve_render_font("hi") == str(font_path)
+        assert script_is_renderable("bilingual") is True
+
+    def test_missing_font_marks_hindi_cases_unavailable(self, monkeypatch):
+        """With the language pack present but no Devanagari font, cases are excluded."""
+        monkeypatch.delenv(DEVANAGARI_FONT_ENV, raising=False)
+        monkeypatch.setattr("ai.raster_benchmark._DEVANAGARI_FONT_CANDIDATES", [])
+        monkeypatch.setattr("ai.raster_benchmark._FONT_SEARCH_DIRS", ())
+
+        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=3, seed=42)
+        for c in cases:
+            c["language"] = "hi"
+
+        report = RasterBenchmarkScorer.run_benchmark(cases, _mock_available_engine({"eng", "hin"}))
+        assert report["evaluated_count"] == 0
+        assert report["unavailable_count"] == 3
+        for uc in report["unavailable_cases"]:
+            assert "Devanagari" in uc["reason"]
+            assert DEVANAGARI_FONT_ENV in uc["reason"]
+
+    def test_generated_case_records_render_font_and_coverage(self):
+        doc_en = RasterDocumentGenerator.generate_document(case_idx=1, language="en", seed=7)
+        assert doc_en["script_renderable"] is True
+        doc_hi = RasterDocumentGenerator.generate_document(case_idx=2, language="hi", seed=7)
+        assert doc_hi["script_renderable"] is script_is_renderable("hi")
+        assert doc_hi["render_font"] == resolve_render_font("hi")
+
+    def test_report_records_render_fonts_per_language(self):
+        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=3, seed=42)
+        report = RasterBenchmarkScorer.run_benchmark(cases, MockRasterOCREngine())
+        assert set(report["render_fonts"]) == {"en", "bilingual", "hi"}
+
+
+class TestLanguageOverride:
+    def test_default_maps_each_case_by_dataset_language(self):
+        engine = _mock_available_engine({"eng", "hin"})
+        assert tesseract_language_for(engine, "en") == "eng"
+        assert tesseract_language_for(engine, "hi") == "hin+eng"
+        assert tesseract_language_for(engine, "bilingual") == "eng+hin"
+
+    def test_explicit_override_wins_for_every_case(self):
+        engine = _mock_available_engine({"eng", "hin"})
+        engine.language = "eng"
+        engine.override_language = True
+        assert tesseract_language_for(engine, "hi") == "eng"
+        assert tesseract_language_for(engine, "bilingual") == "eng"
+
+    def test_override_requires_explicit_flag(self):
+        engine = _mock_available_engine({"eng", "hin"})
+        engine.language = "hin"
+        assert tesseract_language_for(engine, "en") == "eng"
+
+
+class TestMockDeterminism:
+    def test_same_image_bytes_produce_identical_output(self):
+        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=3, seed=42)
+        engine = MockRasterOCREngine()
+        case = cases[1]
+        first = engine.extract_from_bytes(
+            case["corrupted_image_bytes"],
+            reference_text=case["transcription_ground_truth"],
+            reference_fields=case["ground_truth"],
+            corruption_type="skew",
+        )
+        second = engine.extract_from_bytes(
+            case["corrupted_image_bytes"],
+            reference_text=case["transcription_ground_truth"],
+            reference_fields=case["ground_truth"],
+            corruption_type="skew",
+        )
+        assert first == second
+
+    def test_seed_is_digest_derived_not_length_derived(self):
+        """Equal-length but different bytes must not produce identical degradations."""
+        engine = MockRasterOCREngine({"skew": 0.5})
+        reference = "Institution Name: Alpha Institute of Technology " * 8
+        bytes_a = b"\x89PNG" + b"A" * 200
+        bytes_b = b"\x89PNG" + b"B" * 200
+        assert len(bytes_a) == len(bytes_b)
+        out_a = engine.extract_from_bytes(bytes_a, reference_text=reference, corruption_type="skew")
+        out_b = engine.extract_from_bytes(bytes_b, reference_text=reference, corruption_type="skew")
+        assert out_a["transcription"] != out_b["transcription"]
+
+
+class TestFieldScoringNulls:
+    def test_null_expected_and_predicted_values_are_not_counted(self):
+        result = RasterBenchmarkScorer.evaluate_case(
+            predicted_text="text",
+            expected_text="text",
+            predicted_fields={"institution_name": None},
+            expected_fields={"institution_name": None},
+        )
+        assert result["tp"] == 0
+        assert result["fp"] == 0
+        assert result["fn"] == 0
