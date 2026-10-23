@@ -1,0 +1,11 @@
+{
+  "case_id": "health-ok",
+  "endpoint": "GET /health",
+  "expected_response": {
+    "service": "aicte-compliance-assistant",
+    "status": "ok"
+  },
+  "expected_status": 200,
+  "notes": "Liveness probe. No input, no side effects.",
+  "request": null
+}

@@ -49,6 +49,40 @@ This verifies the test suite and a basic English Tesseract smoke test. It does *
 
 **NO-GO for production, real institutional data, rule activation or external integrations.** The repository now has an optional OCR pipeline and local CLI, but regulatory reconciliation, licensing/provenance, representative OCR benchmarking, approved operational choices and production security are incomplete.
 
-## Historical CI confirmation — 2026-10-23
+## Correction — 2026-10-22 audit
 
-Earlier GitHub Actions run [#11](https://github.com/rajaryan1111/aicte-compliance-ai/actions/runs/39862501324) completed successfully with **22 passed in 0.53s**. The latest code-inclusive evidence is run #56 linked above.
+The run #56 evidence above executed on head `f160abc2f90b9f91409f52c4539ef4ec4ce1e396`,
+not on the branch head. Run
+[39868597925](https://github.com/rajaryan1111/aicte-compliance-ai/actions/runs/39868597925)
+(push) and run
+[39868604125](https://github.com/rajaryan1111/aicte-compliance-ai/actions/runs/39868604125)
+(pull request) cover the branch head `014403a36bb91eebf1ebca3fdc1733ee91082db2`, and
+both completed successfully. Test counts stated in this document describe the suite at
+`f160abc`. Later changes on the audit branch add regression tests; see
+[audit-2026-10-22.md](audit-2026-10-22.md) for the current evidence. Do not cite run #56
+as evidence for the branch head.
+
+## Historical CI confirmation — 2026-10-23 (historical only)
+
+Earlier GitHub Actions run [#11](https://github.com/rajaryan1111/aicte-compliance-ai/actions/runs/39862501324)
+completed successfully with **22 passed in 0.53s** on head
+`83795ccd9c832c598a928efc534f4f230b2988f4` (verified through the API; the 22-test
+suite of that era). It is retained as history and is **not** current evidence. Run #56 (`39864149659`) is also historical: its head was
+`f160abc`, not the branch head.
+
+## Current CI evidence — corrected 2026-10-23
+
+Current evidence must name the exact head SHA and be re-checked, because earlier
+sentences in this document referred to runs that executed on older commits.
+
+| Run | Trigger | Head SHA | Jobs | Status |
+|---|---|---|---|---|
+| [39868597925](https://github.com/rajaryan1111/aicte-compliance-ai/actions/runs/39868597925) | push to `research/grounded-foundation` | `014403a36bb91eebf1ebca3fdc1733ee91082db2` | `backend-tests`, `optional-ocr-integration` | success |
+| [39868604125](https://github.com/rajaryan1111/aicte-compliance-ai/actions/runs/39868604125) | pull request #1 (base `main`) | `014403a36bb91eebf1ebca3fdc1733ee91082db2` | `backend-tests`, `optional-ocr-integration` | success |
+| [39869707696](https://github.com/rajaryan1111/aicte-compliance-ai/actions/runs/39869707696) | pull request #5 (base `research/grounded-foundation`) | `b8e1643d4cf5dc79aaa626cf5c38c67a5047af2b` | `backend-tests`, `optional-ocr-integration` | success |
+
+The workflow file at `014403a` still ran pull-request checks only for `main`; the
+branch-trigger fix for pull requests targeting `research/grounded-foundation` lives on
+the audit branches (PR #3 and PR #5) and takes effect once either merges. For head SHAs
+after `b8e1643`, consult the run list rather than this table; every claim must cite the
+run that actually executed on that SHA.

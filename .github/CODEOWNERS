@@ -1,0 +1,34 @@
+# Code ownership hints for this repository.
+#
+# IMPORTANT — what this file can and cannot do:
+#   CODEOWNERS only requests reviewers. It does NOT block a merge unless branch
+#   protection is configured to "Require review from Code Owners" for the branch.
+#   This session could not read branch protection (the API returned 403), so treat
+#   these rules as advisory until an owner verifies the setting in
+#   GitHub -> Settings -> Branches.
+#
+# The three workstream contributors are not yet named (see WORKSTREAMS.md).
+# Add their GitHub handles below when the repository owner assigns them; using a
+# handle that has no write access to the repository makes the rule ineffective.
+
+# Default owner for anything not matched below.
+*                           @rajaryan1111
+
+# Shared surfaces: any change needs review from the other workstreams.
+/WORKSTREAMS.md             @rajaryan1111
+/README.md                  @rajaryan1111
+/pyproject.toml             @rajaryan1111
+/.gitignore                 @rajaryan1111
+/.env.example               @rajaryan1111
+/.python-version            @rajaryan1111
+/docs/                      @rajaryan1111
+/.github/                   @rajaryan1111
+
+# Backend / platform workstream (also currently owns the OCR implementation).
+/backend/                   @rajaryan1111
+
+# Frontend workstream placeholder — no implementation exists yet.
+# /frontend/                @frontend-owner
+
+# AI / OCR workstream placeholder — no implementation exists yet.
+# /ai/                      @ai-owner

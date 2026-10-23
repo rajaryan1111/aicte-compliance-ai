@@ -1,0 +1,12 @@
+# Tool configuration only: this project is not packaged or distributable.
+# Keeping it here lets `pytest` and `ruff` behave the same locally and in CI.
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["backend/tests"]
+# The suite imports `backend.app.*`, so the repository root must be importable
+# even when pytest is invoked directly instead of via `python -m pytest`.
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py311"

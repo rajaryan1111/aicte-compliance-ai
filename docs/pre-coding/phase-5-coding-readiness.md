@@ -93,3 +93,23 @@ Research remains blocked on official SIH statement verification, addendum finali
 ## CI evidence update — 2026-10-23
 
 The backend test workflow now has a completed successful run: [GitHub Actions run #11](https://github.com/rajaryan1111/aicte-compliance-ai/actions/runs/39862501324), job conclusion `success`, log result **22 passed in 0.53s** under Python 3.12.15. This closes the narrow test-execution evidence gap for the current API/rule-catalogue tests. It does not close the separate clean developer setup gate, security implementation gates, regulatory evidence gates or licensing review. Phase 5 remains **BLOCKED / NO-GO** for production or rule activation.
+
+
+## Correction — 2026-10-23 foundation audit
+
+The sentences above recording that "the repository's pinned dependencies / actual
+GitHub Actions run were not verified" and that a workflow run had not yet been observed
+are superseded by later evidence:
+
+- `.github/workflows/backend-tests.yml` has completed successful runs on the research
+  branch head `014403a36bb91eebf1ebca3fdc1733ee91082db2` (push run 39868597925) and on
+  pull-request heads, including `b8e1643d4cf5dc79aaa626cf5c38c67a5047af2b`
+  (run 39869707696) with both `backend-tests` and `optional-ocr-integration` green.
+- A clean virtual environment was created from `backend/requirements-dev.txt` with
+  `pip check` reporting no broken requirements, and the full suite passed.
+
+This narrows the test-execution and clean-setup evidence gaps only. It does **not**
+close G7/G8's security or regulatory requirements: authentication, RBAC, tenant
+isolation, private storage, malware scanning, audit persistence, retention/deletion,
+authenticated reviewer identity and official-source rule verification remain
+unimplemented. **Phase 5 stays BLOCKED / NO-GO**, as recorded above.

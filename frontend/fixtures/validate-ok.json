@@ -1,0 +1,30 @@
+{
+  "case_id": "validate-ok",
+  "endpoint": "POST /api/v1/validate",
+  "expected_response": {
+    "application_type": "eoa",
+    "checked_at": "<checked_at>",
+    "expired_documents": [],
+    "findings": [],
+    "institution_id": "SYNTH-INST-001",
+    "missing_documents": [],
+    "notice": "Preliminary validation only. This endpoint evaluates only the checklist and dates supplied in the request; it does not load an authoritative AICTE ruleset. A passing result does not establish regulatory compliance or document authenticity. Expiry checks use supplied dates and require appropriate review.",
+    "source": "synthetic_demo_input",
+    "status": "preliminary_checks_passed",
+    "validation_scope": "caller_supplied_checklist_only"
+  },
+  "expected_status": 200,
+  "notes": "All required documents supplied, no expiry dates given: the supplied lists agree.",
+  "request": {
+    "application_type": "eoa",
+    "institution_id": "SYNTH-INST-001",
+    "required_documents": [
+      "aicte_approval",
+      "mandatory_disclosure"
+    ],
+    "submitted_documents": [
+      "aicte_approval",
+      "mandatory_disclosure"
+    ]
+  }
+}

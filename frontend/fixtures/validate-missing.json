@@ -1,0 +1,41 @@
+{
+  "case_id": "validate-missing",
+  "endpoint": "POST /api/v1/validate",
+  "expected_response": {
+    "application_type": "eoa",
+    "checked_at": "<checked_at>",
+    "expired_documents": [],
+    "findings": [
+      {
+        "code": "MISSING_DOCUMENT",
+        "document_type": "mandatory_disclosure",
+        "evidence": {
+          "observed": "not_submitted",
+          "source": "submitted_document_list"
+        },
+        "message": "Required document 'mandatory_disclosure' was not submitted."
+      }
+    ],
+    "institution_id": "SYNTH-INST-001",
+    "missing_documents": [
+      "mandatory_disclosure"
+    ],
+    "notice": "Preliminary validation only. This endpoint evaluates only the checklist and dates supplied in the request; it does not load an authoritative AICTE ruleset. A passing result does not establish regulatory compliance or document authenticity. Expiry checks use supplied dates and require appropriate review.",
+    "source": "synthetic_demo_input",
+    "status": "attention_required",
+    "validation_scope": "caller_supplied_checklist_only"
+  },
+  "expected_status": 200,
+  "notes": "One required document not submitted: MISSING_DOCUMENT, attention_required.",
+  "request": {
+    "application_type": "eoa",
+    "institution_id": "SYNTH-INST-001",
+    "required_documents": [
+      "aicte_approval",
+      "mandatory_disclosure"
+    ],
+    "submitted_documents": [
+      "aicte_approval"
+    ]
+  }
+}

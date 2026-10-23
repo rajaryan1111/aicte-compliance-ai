@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Protocol, Sequence
+from typing import Protocol
 
 
 @dataclass(frozen=True)

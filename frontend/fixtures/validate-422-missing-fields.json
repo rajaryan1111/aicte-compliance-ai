@@ -1,0 +1,35 @@
+{
+  "case_id": "validate-422-missing-fields",
+  "endpoint": "POST /api/v1/validate",
+  "expected_response": {
+    "detail": [
+      {
+        "input": {
+          "institution_id": "SYNTH-INST-003"
+        },
+        "loc": [
+          "body",
+          "application_type"
+        ],
+        "msg": "Field required",
+        "type": "missing"
+      },
+      {
+        "input": {
+          "institution_id": "SYNTH-INST-003"
+        },
+        "loc": [
+          "body",
+          "required_documents"
+        ],
+        "msg": "Field required",
+        "type": "missing"
+      }
+    ]
+  },
+  "expected_status": 422,
+  "notes": "Framework validation error: required body fields absent. No project fields.",
+  "request": {
+    "institution_id": "SYNTH-INST-003"
+  }
+}

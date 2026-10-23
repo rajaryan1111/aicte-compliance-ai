@@ -6,6 +6,7 @@ import pytest
 from PIL import Image
 
 from backend.app.ocr_pipeline import (
+    MAX_OCR_TEXT_CHARS,
     OCRInputError,
     OCRRawResult,
     OCRWord,
@@ -130,3 +131,124 @@ def test_empty_engine_name_is_rejected():
 
     with pytest.raises(ValueError, match="non-empty"):
         process_institution_document(image_bytes(), UnnamedEngine())
+
+
+def words_for(text: str, page: int = 1, line: int = 1, confidence: float = 0.9):
+    return tuple(
+        OCRWord(token, confidence, page, line) for token in text.split(" ") if token
+    )
+
+
+@pytest.mark.parametrize("academic_year", ["2027-2026", "2026-2026", "2026-2030", "202523-2026"])
+def test_invalid_or_ambiguous_academic_years_are_not_extracted(academic_year):
+    fields = extract_institution_fields(f"Academic Year: {academic_year}")
+
+    assert "academic_year" not in fields
+
+
+@pytest.mark.parametrize("academic_year", ["2026-2027", "2026/2027", "2026 / 2027"])
+def test_single_year_academic_session_is_normalized(academic_year):
+    fields = extract_institution_fields(f"Academic Year: {academic_year}")
+
+    assert fields["academic_year"].value == "2026-2027"
+
+
+def test_duplicate_labels_keep_first_value_deterministically():
+    fields = extract_institution_fields(
+        "Institution Name: First Example College\n"
+        "Institution Name: Second Example College"
+    )
+
+    assert fields["institution_name"].value == "First Example College"
+
+
+def test_text_over_the_processing_limit_is_rejected():
+    with pytest.raises(ValueError, match="processing limit"):
+        extract_institution_fields("x" * (MAX_OCR_TEXT_CHARS + 1))
+
+
+def test_non_string_text_is_rejected_explicitly():
+    with pytest.raises(TypeError, match="must be a string"):
+        extract_institution_fields(None)
+
+
+@pytest.mark.parametrize("confidence", [float("nan"), float("inf"), -0.1, 1.1, True])
+def test_non_finite_or_out_of_range_confidence_is_rejected_not_clamped(confidence):
+    with pytest.raises((TypeError, ValueError), match="confidence"):
+        extract_institution_fields("Institution Name: Example College", confidence=confidence)
+
+
+@pytest.mark.parametrize("confidence", [float("nan"), float("inf"), 5.0, -0.5])
+def test_engine_word_confidence_outside_contract_is_rejected(confidence):
+    with pytest.raises((TypeError, ValueError), match="confidence"):
+        OCRWord("Institution", confidence, 1, 1)
+
+
+def test_engine_word_rejects_non_string_text():
+    with pytest.raises(TypeError, match="text"):
+        OCRWord(123, 0.5, 1, 1)
+
+
+@pytest.mark.parametrize("page_number", [0, -1, "1", True])
+def test_engine_word_rejects_invalid_page_numbers(page_number):
+    with pytest.raises(ValueError, match="page_number"):
+        OCRWord("Institution", 0.5, page_number, 1)
+
+
+def test_raw_result_requires_named_engine_and_coerces_sequences():
+    with pytest.raises(ValueError, match="non-empty"):
+        OCRRawResult([], " ")
+
+    result = OCRRawResult([OCRWord("Institution", 0.5, 1, 1)], "fake", warnings=["w"])
+
+    assert isinstance(result.words, tuple)
+    assert isinstance(result.warnings, tuple)
+
+
+def test_raw_result_rejects_non_word_entries():
+    with pytest.raises(TypeError, match="OCRWord"):
+        OCRRawResult(("Institution",), "fake")
+
+
+def test_pipeline_rejects_malformed_engine_result_object():
+    class DictEngine:
+        def recognize(self, image_bytes: bytes) -> OCRRawResult:
+            return {"words": (), "engine": "fake"}  # type: ignore[return-value]
+
+    with pytest.raises(TypeError, match="OCRRawResult"):
+        process_institution_document(image_bytes(), DictEngine())
+
+
+def test_pipeline_rejects_aggregate_ocr_output_over_limit():
+    engine = FakeEngine((
+        OCRWord("x" * 60_000, 0.9, 1, 1),
+        OCRWord("y" * 60_000, 0.9, 1, 2),
+    ))
+
+    with pytest.raises(ValueError, match="OCR output exceeds"):
+        process_institution_document(image_bytes(), engine)
+
+
+def test_pipeline_warns_when_valid_until_precedes_issue_date():
+    engine = FakeEngine((
+        *words_for("Issue Date: 2027-04-30", 1, 1),
+        *words_for("Valid Until: 2026-04-30", 1, 2),
+    ))
+
+    result = process_institution_document(image_bytes(), engine)
+
+    assert result.fields["issue_date"].value == "2027-04-30"
+    assert result.fields["valid_until"].value == "2026-04-30"
+    assert any("later than the valid-until date" in warning for warning in result.warnings)
+
+
+def test_pipeline_uses_page_and_line_order_deterministically():
+    engine = FakeEngine((
+        *words_for("Institution Name: Page Two College", 2, 1),
+        *words_for("Institution Name: Page One College", 1, 5),
+    ))
+
+    result = process_institution_document(image_bytes(), engine)
+
+    assert result.fields["institution_name"].value == "Page One College"
+    assert result.fields["institution_name"].page_number == 1

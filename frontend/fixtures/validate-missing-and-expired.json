@@ -1,0 +1,67 @@
+{
+  "case_id": "validate-missing-and-expired",
+  "endpoint": "POST /api/v1/validate",
+  "expected_response": {
+    "application_type": "new_program",
+    "checked_at": "<checked_at>",
+    "expired_documents": [
+      "land_record"
+    ],
+    "findings": [
+      {
+        "code": "MISSING_DOCUMENT",
+        "document_type": "aicte_approval",
+        "evidence": {
+          "observed": "not_submitted",
+          "source": "submitted_document_list"
+        },
+        "message": "Required document 'aicte_approval' was not submitted."
+      },
+      {
+        "code": "MISSING_DOCUMENT",
+        "document_type": "mandatory_disclosure",
+        "evidence": {
+          "observed": "not_submitted",
+          "source": "submitted_document_list"
+        },
+        "message": "Required document 'mandatory_disclosure' was not submitted."
+      },
+      {
+        "code": "DOCUMENT_EXPIRED",
+        "document_type": "land_record",
+        "evidence": {
+          "evaluation_date": "2026-10-23",
+          "expiry_date": "2019-12-31",
+          "source": "synthetic_demo_input"
+        },
+        "message": "Document expiry date 2019-12-31 is before the evaluation date 2026-10-23."
+      }
+    ],
+    "institution_id": "SYNTH-INST-002",
+    "missing_documents": [
+      "aicte_approval",
+      "mandatory_disclosure"
+    ],
+    "notice": "Preliminary validation only. This endpoint evaluates only the checklist and dates supplied in the request; it does not load an authoritative AICTE ruleset. A passing result does not establish regulatory compliance or document authenticity. Expiry checks use supplied dates and require appropriate review.",
+    "source": "synthetic_demo_input",
+    "status": "attention_required",
+    "validation_scope": "caller_supplied_checklist_only"
+  },
+  "expected_status": 200,
+  "notes": "Both problems at once: two findings, deterministic order (missing first).",
+  "request": {
+    "application_type": "new_program",
+    "expiry_dates": {
+      "land_record": "2019-12-31"
+    },
+    "institution_id": "SYNTH-INST-002",
+    "required_documents": [
+      "aicte_approval",
+      "mandatory_disclosure",
+      "land_record"
+    ],
+    "submitted_documents": [
+      "land_record"
+    ]
+  }
+}

@@ -6,7 +6,7 @@
 - Python FastAPI API under `backend/app/main.py`.
 - Pydantic request validation.
 - Current endpoint accepts caller-supplied document lists and expiry dates; it does not load an authoritative AICTE ruleset, persist applications or process uploaded files.
-- Current tests are in `backend/tests/test_validation.py`; test execution has not yet been confirmed in this work session.
+- Backend tests live in `backend/tests/` and run in the `Backend tests` GitHub Actions workflow for `main`, `research/grounded-foundation` and pull requests targeting either branch.
 
 ## Technical requirements
 1. API requests and responses use documented schemas and consistent error structures.

@@ -1,6 +1,24 @@
+# Python
 .venv/
+venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Local configuration and secrets
 .env
+.env.*
+!.env.example
+
+# OS / editor noise
 .DS_Store
+.idea/
+.vscode/

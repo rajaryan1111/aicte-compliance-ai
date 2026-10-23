@@ -4,7 +4,7 @@ on:
   push:
     branches: ["main", "research/grounded-foundation"]
   pull_request:
-    branches: ["main"]
+    branches: ["main", "research/grounded-foundation"]
 
 permissions:
   contents: read
@@ -26,6 +26,10 @@ jobs:
         run: python -m pip install -r backend/requirements-dev.txt
       - name: Run backend tests
         run: python -m pytest -q
+      - name: Run AI extraction evaluation tests
+        run: python -m pytest -q ai/tests
+      - name: Verify frontend fixtures against the running API
+        run: python frontend/tools/verify_fixtures.py
 
   optional-ocr-integration:
     runs-on: ubuntu-latest

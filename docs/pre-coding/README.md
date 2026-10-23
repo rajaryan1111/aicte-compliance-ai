@@ -18,6 +18,14 @@
 | 4 — Security and testing preparation | [Phase 4](phase-4-security-testing.md) | Threat model, controls and test plan documented; not implemented or verified |
 | 5 — Coding-readiness gate | [Phase 5](phase-5-coding-readiness.md) | Assessed; BLOCKED pending required evidence and approvals |
 
+## Audit and readiness records
+
+- [Cross-verification audit — 2026-10-22](audit-2026-10-22.md) — rule governance, OCR
+  robustness and PR/CI verification of the foundation branch.
+- [Foundation readiness audit — 2026-10-23](foundation-readiness-2026-10-23.md) —
+  current state, residual fixes, environment reproducibility and workstream readiness.
+- [Workstream boundaries and integration contracts](../integration/workstream-contracts.md)
+
 ## Canonical existing artifacts
 
 - Product requirements: [docs/canonical/prd.md](../canonical/prd.md)

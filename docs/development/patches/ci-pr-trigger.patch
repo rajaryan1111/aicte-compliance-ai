@@ -1,0 +1,137 @@
+From 41f9fdebf957392f175233266a09b99847d504bf Mon Sep 17 00:00:00 2001
+From: Integration Audit <audit@example.invalid>
+Date: Fri, 23 Oct 2026 05:31:17 +0000
+Subject: [PATCH] ci: run checks for pull requests targeting the research base
+
+The pull_request.branches filter is matched against the PR's base branch, not
+its head. It listed only main, so every PR opened against
+research/grounded-foundation was filtered out and received no checks at all
+(see PRs #2 and #4).
+
+This widens the filter to both long-lived branches and adds a dependency-free
+test that fails if either branch loses coverage, if pull_request_target
+appears, if workflow permissions gain write access, or if the full suite stops
+running in CI.
+
+Verified on 014403a: guard tests 6 passed; full base suite 60 passed,
+1 skipped (Tesseract absent). Reverting only the workflow line makes the new
+test fail. permissions stays contents: read.
+---
+ .github/workflows/backend-tests.yml    |  2 +-
+ backend/tests/test_ci_configuration.py | 91 ++++++++++++++++++++++++++
+ 2 files changed, 92 insertions(+), 1 deletion(-)
+ create mode 100644 backend/tests/test_ci_configuration.py
+
+diff --git a/.github/workflows/backend-tests.yml b/.github/workflows/backend-tests.yml
+index 0f1668c..162dd6b 100644
+--- a/.github/workflows/backend-tests.yml
++++ b/.github/workflows/backend-tests.yml
+@@ -4,7 +4,7 @@ on:
+   push:
+     branches: ["main", "research/grounded-foundation"]
+   pull_request:
+-    branches: ["main"]
++    branches: ["main", "research/grounded-foundation"]
+ 
+ permissions:
+   contents: read
+diff --git a/backend/tests/test_ci_configuration.py b/backend/tests/test_ci_configuration.py
+new file mode 100644
+index 0000000..b5c6dcf
+--- /dev/null
++++ b/backend/tests/test_ci_configuration.py
+@@ -0,0 +1,91 @@
++"""Regression tests for the CI trigger configuration.
++
++These exist because of a real defect: the workflow's ``pull_request`` branch
++filter listed only ``main``. GitHub evaluates that filter against the pull
++request's **base** branch, so every PR targeting ``research/grounded-foundation``
++was silently skipped and had no checks on its head commit (PRs #2 and #4).
++
++The repository avoids adding a YAML parser just for this, so the workflow is read
++as text and only the few keys that matter are inspected. A failure here means the
++CI contract changed, not that the YAML is invalid.
++"""
++
++import re
++from pathlib import Path
++
++WORKFLOW_PATH = (
++    Path(__file__).resolve().parents[2] / ".github" / "workflows" / "backend-tests.yml"
++)
++
++LONG_LIVED_BRANCHES = {"main", "research/grounded-foundation"}
++
++
++def _workflow_lines() -> list[str]:
++    assert WORKFLOW_PATH.is_file(), f"missing workflow file: {WORKFLOW_PATH}"
++    lines = [
++        line.rstrip()
++        for line in WORKFLOW_PATH.read_text(encoding="utf-8").splitlines()
++        if line.strip() and not line.lstrip().startswith("#")
++    ]
++    assert lines, "workflow file is empty"
++    return lines
++
++
++def _find_block(lines: list[str], key: str) -> tuple[str, list[str]]:
++    """Return the inline value and the nested lines for a ``key:`` mapping key."""
++    pattern = re.compile(r"^(\s*)" + re.escape(key) + r":\s*(.*)$")
++    for index, line in enumerate(lines):
++        match = pattern.match(line)
++        if match is None:
++            continue
++        indent = len(match.group(1))
++        nested: list[str] = []
++        for candidate in lines[index + 1 :]:
++            current = len(candidate) - len(candidate.lstrip())
++            if current <= indent:
++                break
++            nested.append(candidate)
++        return match.group(2).strip(), nested
++    raise AssertionError(f"workflow has no {key!r} key")
++
++
++def _trigger_branches(trigger: str) -> set[str]:
++    _, on_block = _find_block(_workflow_lines(), "on")
++    _, trigger_block = _find_block(on_block, trigger)
++    inline, nested = _find_block(trigger_block, "branches")
++    # Supports both `branches: ["main", "x"]` and a nested `- main` list.
++    text = inline + " " + " ".join(
++        line.strip().lstrip("-").strip() for line in nested
++    )
++    return {value.strip('"').strip("'") for value in re.findall(r"[\w./-]+", text)}
++
++
++def test_workflow_file_is_present():
++    assert WORKFLOW_PATH.is_file()
++
++
++def test_pull_requests_targeting_either_base_branch_are_checked():
++    # The integration base is where all three workstreams open PRs. If it is
++    # missing here, those PRs get no checks at all.
++    assert _trigger_branches("pull_request") == LONG_LIVED_BRANCHES
++
++
++def test_pushes_to_long_lived_branches_are_checked():
++    assert _trigger_branches("push") == LONG_LIVED_BRANCHES
++
++
++def test_workflow_never_uses_pull_request_target():
++    # pull_request_target runs with repository secrets on untrusted code.
++    text = WORKFLOW_PATH.read_text(encoding="utf-8")
++    assert "pull_request_target" not in text
++
++
++def test_workflow_permissions_are_read_only():
++    _, permissions = _find_block(_workflow_lines(), "permissions")
++    assert "  contents: read" in permissions
++    assert not any("write" in line for line in permissions), permissions
++
++
++def test_full_suite_runs_in_ci():
++    text = WORKFLOW_PATH.read_text(encoding="utf-8")
++    assert "python -m pytest -q" in text
+-- 
+2.39.5
+

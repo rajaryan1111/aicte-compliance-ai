@@ -62,16 +62,54 @@ class ValidationRequest(BaseModel):
         return normalized
 
 
-@app.get("/health")
-def health_check() -> dict[str, str]:
-    return {
-        "status": "ok",
-        "service": "aicte-compliance-assistant",
-    }
+class HealthResponse(BaseModel):
+    """Response of ``GET /health``. Both values are fixed."""
+
+    status: Literal["ok"]
+    service: Literal["aicte-compliance-assistant"]
 
 
-@app.post("/api/v1/validate")
-def validate_application(request: ValidationRequest) -> dict:
+class Finding(BaseModel):
+    """One preliminary-check finding.
+
+    ``evidence`` is code-specific: ``MISSING_DOCUMENT`` carries
+    ``{source, observed}``; ``DOCUMENT_EXPIRED`` carries
+    ``{source, expiry_date, evaluation_date}``.
+    """
+
+    code: Literal["MISSING_DOCUMENT", "DOCUMENT_EXPIRED"]
+    document_type: str
+    message: str
+    evidence: dict[str, str]
+
+
+class ValidationResponse(BaseModel):
+    """Response of ``POST /api/v1/validate`` — a preliminary checklist result.
+
+    ``preliminary_checks_passed`` means the caller-supplied document lists agree.
+    It is **not** a compliance, eligibility or authenticity finding: this service
+    loads no AICTE checklist and no rule set.
+    """
+
+    institution_id: str
+    application_type: Literal["eoa", "new_program", "intake_change"]
+    status: Literal["attention_required", "preliminary_checks_passed"]
+    validation_scope: Literal["caller_supplied_checklist_only"]
+    missing_documents: list[str]
+    expired_documents: list[str]
+    findings: list[Finding]
+    checked_at: str
+    source: Literal["synthetic_demo_input"]
+    notice: str
+
+
+@app.get("/health", response_model=HealthResponse)
+def health_check() -> HealthResponse:
+    return HealthResponse(status="ok", service="aicte-compliance-assistant")
+
+
+@app.post("/api/v1/validate", response_model=ValidationResponse)
+def validate_application(request: ValidationRequest) -> ValidationResponse:
     required = set(request.required_documents)
     submitted = set(request.submitted_documents)
 
@@ -116,25 +154,23 @@ def validate_application(request: ValidationRequest) -> dict:
 
     needs_attention = bool(missing or expired)
 
-    return {
-        "institution_id": request.institution_id,
-        "application_type": request.application_type,
-        "status": (
-            "attention_required"
-            if needs_attention
-            else "preliminary_checks_passed"
+    return ValidationResponse(
+        institution_id=request.institution_id,
+        application_type=request.application_type,
+        status=(
+            "attention_required" if needs_attention else "preliminary_checks_passed"
         ),
-        "validation_scope": "caller_supplied_checklist_only",
-        "missing_documents": missing,
-        "expired_documents": expired,
-        "findings": findings,
-        "checked_at": datetime.now(timezone.utc).isoformat(),
-        "source": "synthetic_demo_input",
-        "notice": (
+        validation_scope="caller_supplied_checklist_only",
+        missing_documents=missing,
+        expired_documents=expired,
+        findings=[Finding(**finding) for finding in findings],
+        checked_at=datetime.now(timezone.utc).isoformat(),
+        source="synthetic_demo_input",
+        notice=(
             "Preliminary validation only. This endpoint evaluates only the "
             "checklist and dates supplied in the request; it does not load an "
             "authoritative AICTE ruleset. A passing result does not establish "
             "regulatory compliance or document authenticity. Expiry checks "
             "use supplied dates and require appropriate review."
         ),
-    }
+    )

@@ -1,0 +1,46 @@
+{
+  "case_id": "validate-expired",
+  "endpoint": "POST /api/v1/validate",
+  "expected_response": {
+    "application_type": "eoa",
+    "checked_at": "<checked_at>",
+    "expired_documents": [
+      "aicte_approval"
+    ],
+    "findings": [
+      {
+        "code": "DOCUMENT_EXPIRED",
+        "document_type": "aicte_approval",
+        "evidence": {
+          "evaluation_date": "2026-10-23",
+          "expiry_date": "2020-01-01",
+          "source": "synthetic_demo_input"
+        },
+        "message": "Document expiry date 2020-01-01 is before the evaluation date 2026-10-23."
+      }
+    ],
+    "institution_id": "SYNTH-INST-001",
+    "missing_documents": [],
+    "notice": "Preliminary validation only. This endpoint evaluates only the checklist and dates supplied in the request; it does not load an authoritative AICTE ruleset. A passing result does not establish regulatory compliance or document authenticity. Expiry checks use supplied dates and require appropriate review.",
+    "source": "synthetic_demo_input",
+    "status": "attention_required",
+    "validation_scope": "caller_supplied_checklist_only"
+  },
+  "expected_status": 200,
+  "notes": "All documents supplied but one expired: DOCUMENT_EXPIRED, attention_required.",
+  "request": {
+    "application_type": "eoa",
+    "expiry_dates": {
+      "aicte_approval": "2020-01-01"
+    },
+    "institution_id": "SYNTH-INST-001",
+    "required_documents": [
+      "aicte_approval",
+      "mandatory_disclosure"
+    ],
+    "submitted_documents": [
+      "aicte_approval",
+      "mandatory_disclosure"
+    ]
+  }
+}

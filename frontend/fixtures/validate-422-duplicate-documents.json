@@ -1,0 +1,36 @@
+{
+  "case_id": "validate-422-duplicate-documents",
+  "endpoint": "POST /api/v1/validate",
+  "expected_response": {
+    "detail": [
+      {
+        "ctx": {
+          "error": {}
+        },
+        "input": [
+          "aicte_approval",
+          " aicte_approval "
+        ],
+        "loc": [
+          "body",
+          "required_documents"
+        ],
+        "msg": "Value error, Document names must not contain duplicates.",
+        "type": "value_error"
+      }
+    ]
+  },
+  "expected_status": 422,
+  "notes": "Model validator rejects duplicate document names after trimming.",
+  "request": {
+    "application_type": "eoa",
+    "institution_id": "SYNTH-INST-001",
+    "required_documents": [
+      "aicte_approval",
+      " aicte_approval "
+    ],
+    "submitted_documents": [
+      "aicte_approval"
+    ]
+  }
+}
