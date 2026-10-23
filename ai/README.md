@@ -47,6 +47,7 @@ external AI provider is introduced by this work.
 | [`reports/`](reports/README.md) | Committed benchmark reports (real Tesseract 5.5.2 on 24 synthetic pages) with provenance, reproduction steps and verification record. |
 | [`EVALUATION.md`](EVALUATION.md) | What the evaluation measures, its limitations, and how to run it. |
 | [`BACKEND_HANDOFF.md`](BACKEND_HANDOFF.md) | 17 documented extraction defects owned by the backend workstream. |
+| [`WORKSTREAM_HANDOFF.md`](WORKSTREAM_HANDOFF.md) | Review-only handoff: PR/branch delivery, backend extraction evidence, Phase 6 (accessibility, demo, deployment) and the six Phase 0 research gates, with owners. |
 
 ## OCR benchmark: metric definitions
 
