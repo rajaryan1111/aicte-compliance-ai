@@ -23,13 +23,17 @@ Phase 0 has six canonical gates. This pass made **verifiable progress on four of
 |---|---|---|---|
 | 1 | 1 April 2024 scrutiny document | **`CLOSED`** (pass 2) | **Complete 5-page document retrieved in full text** — all 21 categories. Identity, authority, date and publication timestamp confirmed. Decisive reconciliation finding: **it contains no "Extension of Approval" category**. Limitations recorded (§14.1) |
 | 2 | 2026–27 addendum publication/finality/effective date | `BLOCKED_EXTERNAL_EVIDENCE` | Official **draft → final** publication pattern for the 2025–26 addendum established; 2026–27 notice not retrieved from any official host (all AICTE hosts geo-blocked/502) |
-| 3 | Annexure-2 §2.1 pagination and Clause 7.17 | `OPEN` | Official handbook retrievable via government CDN; Chapters I–II read and quoted. **Root-caused in pass 3: the retrieval channel stops around PDF page 30, so Chapter VII (printed p.70) and the Annexures (p.77+) are unreachable at any chunk index**; printed folios now anchored from the official index. Annexure-2 §2.1 narrowed to printed 80/81, not decided (§15.1) |
-| 4 | NBA validity through 30 April 2025 for AY 2026–27 | `OPEN` (pass 2) | **Clause 2.1.a(iii) retrieved verbatim.** Misinterpretation risk eliminated; residual question is whether a later addendum amends it — depends on Gate 2 (§14.4) |
+| 3 | Annexure-2 §2.1 pagination and Clause 7.17 | `OPEN` | Handbook copy retrievable — but pass 4 established it is a **Gujarat ACPC mirror, not an AICTE-hosted file** (§16.2); Chapters I–II read and quoted. **Root-caused in pass 3: the retrieval channel stops around PDF page 30**, so Chapter VII (printed p.70) and the Annexures (p.77+) are unreachable at any chunk index. Annexure-2 §2.1 narrowed to printed 80/81, not decided (§15.1) |
+| 4 | NBA validity through 30 April 2025 for AY 2026–27 | `OPEN` (pass 2) | **Clause 2.1.a(iii) retrieved verbatim** (via the state mirror §16.2; wording agrees across four independent copies). Misinterpretation risk eliminated; residual question is whether a later addendum amends it — depends on Gate 2 (§14.4) |
 | 5 | Official SIH26261 statement and deadline | **`CLOSED`** (pass 2) | **Official SIH portal** confirms PS number, title, organisation (AICTE), category, theme (Smart Automation) and deadline field **28 October 2026**. Banner-vs-row conflict narrowed in pass 3 — banner treated as stale, date still **provisional** (§15.4) |
 | 6 | Reuse licensing/authorship/data-history | **`CLOSED`** | Licence absence, multi-author history and **committed personal data** verified directly; reuse explicitly excluded, which satisfies the gate's second closure branch |
 
-Pass 1 statuses are preserved in the sections below; §14 (pass 2) and §15 (pass 3) supersede
-them. **Gates 2, 3 and 4 remain open, so Phase 0 remains `BLOCKED`.**
+Pass 1 statuses are preserved in the sections below; §14 (pass 2), §15 (pass 3) and §16 (pass 4)
+supersede them. **Gates 2, 3 and 4 remain open, so Phase 0 remains `BLOCKED`.**
+
+> **Provenance correction (pass 4).** The URL used in §14–§15 for the handbook is a **Gujarat ACPC
+> state mirror**, not an AICTE-hosted file. See §16.2 before reusing any quotation from it as
+> evidence of AICTE publication.
 
 Two additional results:
 
@@ -792,4 +796,180 @@ environment with unrestricted network:
 
 Operational aside, not a gate: if SIH26261 is intended to be submitted, the provisional deadline is
 **28 October 2026 — four days away**.
+
+---
+
+# Pass 4 — 2026-10-24 document retrieval and provenance verification
+
+Pass-4 scope: obtain the two missing originals through any accessible route, verify the reported
+filenames and URLs rather than assuming them, and re-check every gate against its canonical
+criterion. **Outcome: no gate closed; one material provenance correction made.** The reported
+filename and host for the handbook were found to be **wrong as stated**, which is a real finding
+and changes *how* Gate 3 must be closed, not whether it is closed.
+
+## 16.1 Retrieval attempts this pass
+
+| Attempt | Type | Result |
+|---|---|---|
+| S3 listing of the handbook's bucket prefix (`?list-type=2`) | official CDN, enumeration | `NoSuchBucket` — the prefix is a key prefix, not a bucket |
+| Bucket-root listing (`cdnbbsr.s3waas.gov.in/?list-type=2&prefix=…/uploads/2026/`) | official CDN, enumeration | body returned only `anonymous` — listing denied |
+| Wayback **CDX prefix query** on the handbook's CDN prefix | archive enumeration | **Works** — ~300 objects enumerated (2021→2026). The pass-2 "CDX is dead" conclusion was caused by the regex `filter=` parameter, **not** by CDX; a plain prefix query succeeds |
+| CDX prefix `…/uploads/2025/11*`, `…/uploads/2025/12*` | archive enumeration | no captures in the addendum's likely upload window |
+| CDX prefix `…/uploads/2026/02*`, `…/uploads/2026*` | archive enumeration | 2 PDFs (Feb 2026), 4 PDFs (Apr 2026), 3 images (Jun 2026) — complete list |
+| Fetch `…/uploads/2026/02/202602061048018796.pdf` | official CDN, direct | **Retrieved** — a Gujarati **DDCET-2026** admission notice. **Not the addendum** |
+| `https://dteapengg.in/Documents/NOTIFICATIONS/` | state DTE directory | fetch failed — no directory listing |
+| `https://gujacpc.admissions.nic.in/document/aicte-approval-process-handbook-…/` | state admission authority page | fetch failed; **no** Wayback capture |
+| CDX `aicte.gov.in/bulletins/annoucement*` | archive, official AICTE page | exactly **one** capture: `20250213160949` (13 Feb 2025) — too early for the 2026–27 cycle |
+| CDX `www.aicte-india.org/bulletins/annoucement*` | archive, official AICTE page | captures run 2018 → mid-2021 only; nothing from the 2026–27 period |
+| `hte.rajasthan.gov.in/oldhte/hteCircular/AICTE Approval.pdf` (http + https, re-tested) | state DTE, direct | host error page; **no** Wayback capture (§15.2) |
+
+**Conclusion:** the 2026–27 addendum/corrigendum is **not present in any archive-reachable,
+officially hosted copy** this environment can open, and the AICTE announcements page — which *is*
+the official publication record — has no capture covering the relevant period. This route is now
+exhausted rather than merely blocked.
+
+## 16.2 Material correction — the handbook copy is a **state mirror**, not an AICTE-hosted file
+
+**Finding.** The bucket prefix used in §14 and §15 —
+`cdnbbsr.s3waas.gov.in/s35938b4d054136e5d59ada6ec9c295d7a/` — does **not** belong to AICTE. Every
+indexed document under that prefix is material of the **Admission Committee for Professional
+Courses (ACPC), Gujarat** / Directorate of Technical Education, Gujarat:
+
+| Object under the prefix | Identity |
+|---|---|
+| `uploads/2026/02/202602061048018796.pdf` | Gujarati **DDCET-2026** admission notice (retrieved verbatim this pass) |
+| `uploads/2026/05/202605301879131412.pdf` | "ADMISSION COMMITTEE FOR PROFESSIONAL COURSES — PROVISIONAL KEY DATES", AY 2026-27 |
+| `uploads/2026/07/20260708753609967.pdf` | D-to-D engineering branch-wise opening/closing ranks, "Gujarat Board", GUJCET |
+| `uploads/2026/08/202608011871011656.pdf` | GUJCET last-admitted ranks, L.D. College of Engineering, Ahmedabad |
+| `uploads/2026/08/20260811696158862.pdf` | "Directorate of Technical Education, Gujarat", admission activity dates 2026-27 |
+| `uploads/2024/07/2024071654.pdf` | "ADMISSION PROCESS … Online Registration on www.gujacpc.nic.in" |
+| `uploads/2025/03/2025031399.pdf` | **the AICTE APH copy** — among ~50 ACPC PDFs uploaded in the same March-2025 batch |
+
+**Therefore, three corrections to this record:**
+
+1. `…/2025031399.pdf` is a **Gujarat ACPC-hosted mirror of the AICTE handbook**, not an
+   AICTE-hosted or AICTE-published URL. Passes 2–3 described it as "the government CDN copy" and
+   labelled it "official"; that attribution was **too strong** and is corrected here.
+2. `2025031399.pdf` is the **mirror's object key**, not AICTE's filename. The task brief's
+   "reportedly `2025031399.pdf`" is therefore correct only as a mirror URL; the original AICTE
+   filename is **unknown and must not be assumed**.
+3. This matters directly for canonical criterion (3), which requires checking pagination
+   "**directly in the official handbook PDF**". A state mirror is not the official PDF. The quoted
+   clause text in §14.4 remains sound — the same Clause 2.1 wording appears in at least four
+   independent complete copies (this mirror, `crescent.education`, `pvpitsangli.edu.in`, and
+   indexed copies of the same file), and internal evidence is consistent — but **the mirror cannot
+   be the artefact on which Gate 3 is closed.**
+
+**Confidence and its limit.** The bucket attribution is inferred from the *set of documents served
+under the prefix*, because bucket metadata could not be read (listing returned `anonymous`). The
+inference is high-confidence and based on six independent Gujarat ACPC documents, but it is an
+inference from content, not from a bucket owner field. It is recorded as such.
+
+## 16.3 Gate 3 re-check — `OPEN` (unchanged); the required artefact is now better specified
+
+The pass-3 blocker stands: the reader available here consumes roughly the first 30 PDF pages, so
+Chapter VII (printed p.70) and the Annexures (p.77+) cannot be reached at any chunk index. What
+pass 4 adds is that the copy used was a **mirror**, so even a successful extraction from it would
+need confirmation against AICTE's original before Gate 3 could close.
+
+The operator action in §15.1 is unchanged in substance and now **one step stricter**: obtain
+AICTE's **own** PDF (not the ACPC mirror), then record PDF index, printed folio, heading and
+existence/absence for Annexure-2 §2.1 and Clause 7.17. No page number is asserted here.
+
+## 16.4 Gate 2 re-check — `BLOCKED_EXTERNAL_EVIDENCE` (unchanged); one new verified datum
+
+Newly verified this pass, from a state-hosted copy of the official 2026–27 public notice
+(DTE Andhra Pradesh, `dteapengg.in`): the notice carries the reference
+**"No: AICTE/Regulation Bureau-AP/2026-27 dated 26/11/2025"**, the portal went live
+**28 November 2025**, and the schedule ran *28 Nov → 20 Dec 2025* (new institutions),
+*18 Dec 2025 → 17 Jan 2026* (existing BBA/BCA/BMS and NPNL), with late-fee applications from
+*13 Jan 2026*. It also instructs applicants to read the APH "**along with the amendments issued
+from time to time**".
+
+This is **the public notice, not the addendum**. It establishes that (a) a formal 2026–27 notice
+existed with a reference number and date, and (b) AICTE itself directs applicants to amendments
+"issued from time to time" — i.e. amendments are contemplated. It does **not** establish that an
+addendum was issued, what it contains, its date, or its finality. Gate 2 stays open.
+
+## 16.5 Gate 4 re-check — `OPEN` (unchanged)
+
+Unaffected by the provenance correction in substance: the Clause 2.1.a(iii) wording agrees across
+four independent copies, and the interpretation recorded in §14.4 (a historical 30 April 2025
+threshold inside one of five alternatives for the 3-year EoA from AY 2024-25) is a reading of that
+wording, not of a particular host. What is still missing is unchanged: an authoritative statement
+of whether clause 2.1 was amended for AY 2026–27, which depends entirely on Gate 2. The two
+unsupported claims listed in §15.3 remain prohibited.
+
+## 16.6 Gate-by-gate re-check against the canonical criteria
+
+Criteria quoted from `docs/canonical/phases.md` (§2 of this record):
+
+| # | Canonical requirement | Status | What is satisfied / what is missing |
+|---|---|---|---|
+| 1 | "retrieve and reconcile the complete 1 April 2024 scrutiny document" | **`CLOSED`** | Complete 5-page, 21-category document retrieved from AICTE's own domain via the archive; reconciled: **no EOA category**. Unaffected by the mirror finding (this one *is* an AICTE file) |
+| 2 | "establish official publication/finality/effective date of the 2026–27 addendum" | `BLOCKED_EXTERNAL_EVIDENCE` | Not established. Candidate artefacts identified; none retrieved; archive coverage of AICTE's announcements page ends 13 Feb 2025 |
+| 3 | "check Annexure-2 §2.1 pagination and Clause 7.17 **directly in the official handbook PDF**" | `OPEN` | Text extraction cannot reach printed p.53+; the copy read is a **state mirror** and cannot close the criterion even if reachable |
+| 4 | "resolve the NBA-validity-through-30-April-2025 reference for AY 2026–27" | `OPEN` | Historical clause text verified; AY 2026–27 status unresolved, dependent on Gate 2 |
+| 5 | "verify the official SIH statement and deadline" | **`CLOSED`** | Verified on `www.sih.gov.in`: SIH26261, exact title, AICTE, software, Smart Automation, deadline field 28 Oct 2026. Banner-vs-row conflict narrowed (§15.4), date **provisional** |
+| 6 | "resolve reuse-repository licensing/authorship/data-history risks" | **`CLOSED`** | Reuse excluded; no code copied; PII finding escalated to owner (§8) |
+| — | "every enabled regulatory rule has an authoritative source, applicability conditions, effective period, interpretation and tests" | **Not met** | No rule is enabled; this is by design while 2–4 are open |
+
+**Phase 0 verdict: `BLOCKED`. Three of six gates closed. `COMPLETE` is not available.**
+
+## 16.7 Operator retrieval request (the only remaining path for Gates 2, 3, 4)
+
+This sandbox cannot download the documents. Its outbound network admits only a small host allowlist
+(GitHub, npm, PyPI); AICTE's portal, state DTE hosts and the Internet Archive are unreachable from a
+shell, and the page-fetching tool that *can* reach the CDN is limited to roughly the first 30 PDF
+pages. **No SHA-256 exists for any document in this record, and none is claimed.**
+
+Requested from the operator, using an authorized browser (an Indian network avoids AICTE's
+geo-block):
+
+1. **AICTE's own APH PDF** — from the "Approval Process Handbook 2024-25 to 2026-27" link on
+   `https://www.aicte.gov.in/approal-process-2024-2027` (or the bulletins page
+   `https://aicte.gov.in/bulletins/annoucement`). Do **not** substitute the Gujarat ACPC mirror.
+   Record: source URL, actual filename (**not** `2025031399.pdf` unless AICTE itself names it so),
+   file size, `sha256sum`, retrieval date.
+2. **The 2026–27 addendum/corrigendum** — from the same AICTE site (announcements / approval-process
+   2026-27 page). If a listing entry exists, capture its **exact text and advertised date** — that
+   entry is the publication record and is itself the Gate 2 evidence. Note whether the site
+   distinguishes "Draft" from published (it did for 2025–26), and record the PDF's title page,
+   reference number, issue date, signature and effective period.
+3. **Page captures from the APH** — for Annexure-2 §2.1 and Clause 7.17: PDF page index, printed
+   folio, exact heading, first and last line of the page, and (for 7.17) whether the clause exists
+   and what the highest Chapter VII clause number is. State the viewer's indexing convention.
+4. Place the files **outside version control** (e.g. `~/phase0-sources/`) and paste only URL,
+   filename, size and SHA-256 into an appended correction to this record — government PDFs should
+   not be committed as binaries.
+
+With 1+3, **Gate 3 closes**. With 2, **Gate 2 closes and Gate 4 becomes decidable** in one reading.
+
+## 16.8 Pass-4 source table (verification date 2026-10-24)
+
+| ID | URL | Status | Supports |
+|---|---|---|---|
+| ACPC-BUCKET | `https://cdnbbsr.s3waas.gov.in/s35938b4d054136e5d59ada6ec9c295d7a/` (prefix) | **Reachable; attribution inferred from contents** | §16.2 provenance correction |
+| ACPC-PROOF-DDCET | `…/uploads/2026/02/202602061048018796.pdf` | **Retrieved, complete** | Proof the bucket serves Gujarat ACPC documents; not the addendum |
+| ACPC-PROOF-KEYDATES | `…/uploads/2026/05/202605301879131412.pdf` | Indexed, title read | "ADMISSION COMMITTEE FOR PROFESSIONAL COURSES" — same bucket |
+| CDX-APH | `http://web.archive.org/cdx/search/cdx?url=cdnbbsr…uploads/2025/03*` | **Works** | Confirms capture `20250729035507` of the mirror; enumerates ~50 same-batch objects |
+| CDX-2026 | CDX prefix `…/uploads/2026*` | **Works, complete** | Exhaustive: no addendum among 2026 objects |
+| CDX-AICTE-ANN | `http://web.archive.org/cdx/search/cdx?url=aicte.gov.in/bulletins/annoucement*` | **Works — 1 capture only (2025-02-13)** | Archive gap: publication record for the 2026–27 cycle is not archived |
+| AP-NOTICE-2026-27 | `https://dteapengg.in/Documents/NOTIFICATIONS/AICTE%20Approval%20Process%202026-27_Fair%20Copy…pdf` | Indexed; state-hosted copy of an AICTE notice | Reference **AICTE/Regulation Bureau-AP/2026-27 dated 26/11/2025**; portal live 28 Nov 2025; "along with the amendments issued from time to time" |
+| RJ-HTE | `https://hte.rajasthan.gov.in/oldhte/hteCircular/AICTE%20Approval.pdf` | **Not retrievable** (host error; no capture) | Gate 2 lead only — unchanged from §15.2 |
+
+## 16.9 Pass-4 verdict and smallest remaining action per gate
+
+**Phase 0: `BLOCKED`.**
+
+| Gate | Smallest action that closes it |
+|---|---|
+| 1, 5, 6 | **Already closed.** No action |
+| 2 | Operator opens AICTE's own announcements / approval-process-2026-27 page and records the addendum entry (title + advertised date) plus the PDF's title page, reference number, issue date and effective period |
+| 3 | Operator opens **AICTE's own** APH PDF and records PDF index + printed folio + heading for Annexure-2 §2.1 and Clause 7.17 |
+| 4 | Follows from Gate 2: read the addendum against clause 2.1 and state whether the 30 April 2025 NBA condition was amended or left standing |
+
+Nothing in this pass enables a regulatory rule. The single change of substance is that the
+handbook evidence base is now correctly attributed to a **state mirror**, so Gate 3 must be closed
+on AICTE's own artefact.
 
