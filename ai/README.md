@@ -116,6 +116,11 @@ AICTE_DEVANAGARI_FONT=/path/to/NotoSansDevanagari.ttf \
   python ai/raster_benchmark.py --count 24 --seed 42 --real-engine \
   --json ai/reports/real_tesseract_5.5.2_count24_seed42.json
 
+# Multi-seed stability check (per-seed metrics, case-weighted pooling, per-metric variance)
+AICTE_DEVANAGARI_FONT=/path/to/NotoSansDevanagari.ttf \
+  python ai/raster_benchmark.py --count 24 --seeds 42,7,13 --real-engine \
+  --json ai/reports/real_tesseract_5.5.2_multiseed_3x24.json
+
 # Preprocessing diagnosis
 python ai/evaluate_extraction.py --corpus ai/corpus/ocr_corruption_cases.jsonl --normalize
 

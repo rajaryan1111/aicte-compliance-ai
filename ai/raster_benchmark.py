@@ -32,6 +32,7 @@ import math
 import os
 import random
 import shutil
+import statistics
 import sys
 import time
 from abc import ABC, abstractmethod
@@ -738,6 +739,174 @@ class MockRasterOCREngine(RasterOCREngine):
 
 
 # ---------------------------------------------------------------------------
+# Aggregation, multi-seed summaries and CLI input validation
+# ---------------------------------------------------------------------------
+
+
+def aggregate_evaluations(res_list: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate per-case evaluation dicts into precision/recall/F1 and error rates.
+
+    When nothing was scored the metrics are ``None`` (JSON ``null``) and
+    ``scored_cases`` is 0 - never 0.0, which would read as a perfect score for a
+    measurement that did not happen.
+    """
+    if not res_list:
+        return {
+            "scored_cases": 0,
+            "cer": None,
+            "wer": None,
+            "exact": None,
+            "precision": None,
+            "recall": None,
+            "f1": None,
+        }
+    tot_tp = sum(r["tp"] for r in res_list)
+    tot_fp = sum(r["fp"] for r in res_list)
+    tot_fn = sum(r["fn"] for r in res_list)
+    p = tot_tp / (tot_tp + tot_fp) if (tot_tp + tot_fp) > 0 else 0.0
+    r = tot_tp / (tot_tp + tot_fn) if (tot_tp + tot_fn) > 0 else 0.0
+    f1 = 2 * p * r / (p + r) if (p + r) > 0 else 0.0
+    return {
+        "scored_cases": len(res_list),
+        "cer": round(sum(x["cer"] for x in res_list) / len(res_list), 4),
+        "wer": round(sum(x["wer"] for x in res_list) / len(res_list), 4),
+        "exact": round(sum(x["exact_transcription"] for x in res_list) / len(res_list), 4),
+        "precision": round(p, 4),
+        "recall": round(r, 4),
+        "f1": round(f1, 4),
+    }
+
+
+def parse_seed_list(raw: str) -> Optional[list[int]]:
+    """Parse a comma-separated seed list, or return ``None`` when it is invalid.
+
+    Rejects empty input, non-integers, negatives and duplicates: a duplicated
+    seed would silently double-weight one dataset in the pooled figures.
+    """
+    parts = [part.strip() for part in str(raw).split(",")]
+    if not parts or any(not part for part in parts):
+        return None
+    seeds: list[int] = []
+    for part in parts:
+        try:
+            value = int(part)
+        except (TypeError, ValueError):
+            return None
+        if value < 0 or value in seeds:
+            return None
+        seeds.append(value)
+    return seeds
+
+
+def _metric_stats(values: list[Optional[float]]) -> dict[str, Any]:
+    """Mean/sample-stdev/min/max for one metric across seeds (``None`` if unmeasured)."""
+    if not values or any(v is None for v in values):
+        return {"n": 0, "mean": None, "stdev": None, "min": None, "max": None}
+    numeric = [float(v) for v in values if v is not None]
+    return {
+        "n": len(numeric),
+        "mean": round(sum(numeric) / len(numeric), 4),
+        "stdev": round(statistics.stdev(numeric), 4) if len(numeric) > 1 else 0.0,
+        "min": round(min(numeric), 4),
+        "max": round(max(numeric), 4),
+    }
+
+
+def summarize_multiseed_reports(
+    seed_reports: list[tuple[int, dict[str, Any]]],
+) -> dict[str, Any]:
+    """Combine one benchmark report per seed into a pooled report with variance.
+
+    Every seed contributes its own block (metrics, counts, per-case evidence) and
+    the pooled figures are computed from the pooled per-case rows - never by
+    averaging per-seed averages, which would weight seeds with fewer scored cases
+    the same as seeds with more.
+    """
+    if not seed_reports:
+        raise ValueError("at least one (seed, report) pair is required")
+    for seed, report in seed_reports:
+        if not report.get("available"):
+            raise ValueError(f"seed {seed} has an unavailable engine report")
+
+    clean_rows: list[dict[str, Any]] = []
+    corr_rows: list[dict[str, Any]] = []
+    per_seed: list[dict[str, Any]] = []
+    for seed, report in seed_reports:
+        evaluated = [c for c in report.get("case_results", []) if c.get("status") == "evaluated"]
+        clean_rows.extend(c["clean"] for c in evaluated)
+        corr_rows.extend(c["corrupted"] for c in evaluated)
+        per_seed.append(
+            {
+                "seed": seed,
+                "dataset_fingerprint": report.get("dataset_fingerprint"),
+                "total_cases": report.get("total_cases"),
+                "evaluated_count": report.get("evaluated_count"),
+                "unavailable_count": report.get("unavailable_count"),
+                "metrics_available": report.get("metrics_available"),
+                "duration_seconds": report.get("duration_seconds"),
+                "render_fonts": report.get("render_fonts", {}),
+                "clean_baseline": report.get("clean_baseline"),
+                "corrupted_evaluation": report.get("corrupted_evaluation"),
+                "degradation_delta": report.get("degradation_delta"),
+                "case_results": report.get("case_results", []),
+            }
+        )
+
+    pooled_clean = aggregate_evaluations(clean_rows)
+    pooled_corr = aggregate_evaluations(corr_rows)
+
+    def _delta(clean_value: Optional[float], corr_value: Optional[float], *, invert: bool = False) -> Optional[float]:
+        if clean_value is None or corr_value is None:
+            return None
+        return round(clean_value - corr_value if invert else corr_value - clean_value, 4)
+
+    clean_seeds = [entry["clean_baseline"] or {} for entry in per_seed]
+    corr_seeds = [entry["corrupted_evaluation"] or {} for entry in per_seed]
+    variance = {
+        f"clean_{metric}": _metric_stats([block.get(metric) for block in clean_seeds])
+        for metric in ("cer", "wer", "exact", "f1")
+    }
+    variance.update(
+        {
+            f"corrupted_{metric}": _metric_stats([block.get(metric) for block in corr_seeds])
+            for metric in ("cer", "wer", "exact", "f1")
+        }
+    )
+
+    first = seed_reports[0][1]
+    total_cases = sum(entry["total_cases"] or 0 for entry in per_seed)
+    unavailable = sum(entry["unavailable_count"] or 0 for entry in per_seed)
+    evaluated_count = pooled_clean["scored_cases"]
+
+    return {
+        "mode": "multiseed",
+        "engine": first.get("engine"),
+        "engine_version": first.get("engine_version"),
+        "engine_type": first.get("engine_type"),
+        "seeds": [seed for seed, _ in seed_reports],
+        "count_per_seed": max((entry["total_cases"] or 0 for entry in per_seed), default=0),
+        "total_cases": total_cases,
+        "evaluated_count": evaluated_count,
+        "unavailable_count": unavailable,
+        "metrics_available": evaluated_count > 0,
+        "duration_seconds": round(
+            sum(entry["duration_seconds"] or 0.0 for entry in per_seed), 3
+        ),
+        "pooled": {
+            "clean_baseline": pooled_clean,
+            "corrupted_evaluation": pooled_corr,
+            "degradation_delta": {
+                "cer_increase": _delta(pooled_clean["cer"], pooled_corr["cer"]),
+                "wer_increase": _delta(pooled_clean["wer"], pooled_corr["wer"]),
+                "f1_drop": _delta(pooled_clean["f1"], pooled_corr["f1"], invert=True),
+            },
+        },
+        "variance": variance,
+        "per_seed": per_seed,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Engine language resolution
 # ---------------------------------------------------------------------------
 
@@ -1006,38 +1175,7 @@ class RasterBenchmarkScorer:
         evaluated_count = len(clean_results)
         corrupted_count = len(corrupted_results)
 
-        def _aggregate(res_list: list[dict[str, Any]]) -> dict[str, Any]:
-            """Aggregate per-case results.
-
-            When nothing was scored the metrics are ``None`` (JSON ``null``) and
-            ``scored_cases`` is 0 - never 0.0, which would read as a perfect score
-            for a measurement that did not happen.
-            """
-            if not res_list:
-                return {
-                    "scored_cases": 0,
-                    "cer": None,
-                    "wer": None,
-                    "exact": None,
-                    "precision": None,
-                    "recall": None,
-                    "f1": None,
-                }
-            tot_tp = sum(r["tp"] for r in res_list)
-            tot_fp = sum(r["fp"] for r in res_list)
-            tot_fn = sum(r["fn"] for r in res_list)
-            p = tot_tp / (tot_tp + tot_fp) if (tot_tp + tot_fp) > 0 else 0.0
-            r = tot_tp / (tot_tp + tot_fn) if (tot_tp + tot_fn) > 0 else 0.0
-            f1 = 2 * p * r / (p + r) if (p + r) > 0 else 0.0
-            return {
-                "scored_cases": len(res_list),
-                "cer": round(sum(r["cer"] for r in res_list) / len(res_list), 4),
-                "wer": round(sum(r["wer"] for r in res_list) / len(res_list), 4),
-                "exact": round(sum(r["exact_transcription"] for r in res_list) / len(res_list), 4),
-                "precision": round(p, 4),
-                "recall": round(r, 4),
-                "f1": round(f1, 4),
-            }
+        _aggregate = aggregate_evaluations
 
         def _delta(clean_value: Optional[float], corr_value: Optional[float], *, invert: bool = False) -> Optional[float]:
             if clean_value is None or corr_value is None:
@@ -1098,10 +1236,113 @@ class RasterBenchmarkScorer:
 # ---------------------------------------------------------------------------
 
 
+def _fmt_metric(value: Optional[float]) -> str:
+    """Format a metric, printing ``n/a`` when nothing was measured."""
+    return "n/a" if value is None else f"{value:.3f}"
+
+
+def _run_multiseed(args: argparse.Namespace, engine: RasterOCREngine, seeds: list[int]) -> int:
+    """Run the benchmark once per seed, then write/print the pooled report."""
+    print(f"Generating synthetic raster image datasets for {len(seeds)} seed(s)...")
+    seed_reports: list[tuple[int, dict[str, Any]]] = []
+    for seed in seeds:
+        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=args.count, seed=seed)
+        print(f"  seed {seed}: {len(cases)} paired clean/corrupted cases")
+        if args.output_images:
+            seed_dir = args.output_images / f"seed{seed}"
+            seed_dir.mkdir(parents=True, exist_ok=True)
+            for c in cases:
+                (seed_dir / f"{c['case_id']}_clean.png").write_bytes(c["clean_image_bytes"])
+                (seed_dir / f"{c['case_id']}_{c['corruption_type']}.png").write_bytes(
+                    c["corrupted_image_bytes"]
+                )
+        print(f"  running benchmark for seed {seed}...")
+        seed_reports.append((seed, RasterBenchmarkScorer.run_benchmark(cases, engine)))
+
+    if any(not report.get("available") for _, report in seed_reports):
+        print(f"Engine unavailable: {seed_reports[0][1].get('error')}")
+        return 1
+
+    combined = summarize_multiseed_reports(seed_reports)
+    pooled_clean = combined["pooled"]["clean_baseline"]
+    pooled_corr = combined["pooled"]["corrupted_evaluation"]
+    pooled_delta = combined["pooled"]["degradation_delta"]
+
+    print("\n=========== RASTER OCR MULTI-SEED BENCHMARK REPORT ===========")
+    print(
+        f"Engine: {combined['engine']} ({combined.get('engine_type', 'unknown')}) | "
+        f"Version: {combined.get('engine_version')} | "
+        f"Seeds: {', '.join(str(seed) for seed in combined['seeds'])} | "
+        f"Cases/seed: {combined.get('count_per_seed')}"
+    )
+    print(
+        f"Evaluated: {combined['evaluated_count']}/{combined['total_cases']} | "
+        f"Unavailable: {combined['unavailable_count']} | "
+        f"Time: {combined['duration_seconds']}s"
+    )
+    print("-------------------------------------------------------------")
+    print("Per seed:")
+    for entry in combined["per_seed"]:
+        entry_clean = entry["clean_baseline"] or {}
+        entry_corr = entry["corrupted_evaluation"] or {}
+        print(
+            f"  seed={entry['seed']:<6} -> clean CER={_fmt_metric(entry_clean.get('cer'))} | "
+            f"corr CER={_fmt_metric(entry_corr.get('cer'))} | "
+            f"corr F1={_fmt_metric(entry_corr.get('f1'))} | "
+            f"scored={entry_clean.get('scored_cases', 0)}"
+        )
+    print("-------------------------------------------------------------")
+    print(
+        f"POOLED CLEAN:     CER={_fmt_metric(pooled_clean['cer'])} | WER={_fmt_metric(pooled_clean['wer'])} | "
+        f"Exact={_fmt_metric(pooled_clean['exact'])} | F1={_fmt_metric(pooled_clean['f1'])}"
+    )
+    print(
+        f"POOLED CORRUPTED: CER={_fmt_metric(pooled_corr['cer'])} | WER={_fmt_metric(pooled_corr['wer'])} | "
+        f"Exact={_fmt_metric(pooled_corr['exact'])} | F1={_fmt_metric(pooled_corr['f1'])}"
+    )
+    print(
+        f"POOLED DELTA:     +CER={_fmt_metric(pooled_delta['cer_increase'])} | "
+        f"+WER={_fmt_metric(pooled_delta['wer_increase'])} | -F1={_fmt_metric(pooled_delta['f1_drop'])}"
+    )
+    for side in ("clean", "corrupted"):
+        stats = combined["variance"][f"{side}_cer"]
+        print(
+            f"VARIANCE ({side:9} CER): mean={_fmt_metric(stats['mean'])} | "
+            f"sd={_fmt_metric(stats['stdev'])} | min={_fmt_metric(stats['min'])} | "
+            f"max={_fmt_metric(stats['max'])}"
+        )
+    print("==============================================================")
+
+    if not combined["metrics_available"]:
+        print(
+            "ERROR: no case could be scored across any seed, so no OCR metric was "
+            "measured. This is not a zero-error result.",
+            file=sys.stderr,
+        )
+
+    if args.json:
+        args.json.parent.mkdir(parents=True, exist_ok=True)
+        combined["count"] = args.count
+        args.json.write_text(json.dumps(combined, indent=2), encoding="utf-8")
+        print(f"Report written to {args.json}")
+
+    return 0 if combined["metrics_available"] else 2
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Raster Image OCR Benchmark")
     parser.add_argument("--count", type=int, default=16, help="Number of synthetic document images to generate")
-    parser.add_argument("--seed", type=int, default=42, help="Deterministic random seed")
+    parser.add_argument("--seed", type=int, default=42, help="Deterministic random seed (single-seed mode)")
+    parser.add_argument(
+        "--seeds",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated seeds for a multi-seed run (e.g. 42,7,13). Each seed generates its "
+            "own dataset; the report pools every scored case and records mean/stdev per metric. "
+            "Overrides --seed."
+        ),
+    )
     parser.add_argument("--json", type=Path, help="Write machine-readable benchmark report to JSON file")
     parser.add_argument("--output-images", type=Path, help="Optional directory to save generated PNG images")
     parser.add_argument("--real-engine", action="store_true", help="Attempt real Tesseract engine evaluation")
@@ -1120,18 +1361,36 @@ def main() -> int:
         print("ERROR: --count must be at least 1.", file=sys.stderr)
         return 1
 
-    print("Generating synthetic raster image dataset...")
-    cases = RasterDocumentGenerator.generate_benchmark_dataset(count=args.count, seed=args.seed)
-    print(f"Generated {len(cases)} paired clean/corrupted test cases.")
+    seeds: Optional[list[int]] = None
+    if args.seeds is not None:
+        seeds = parse_seed_list(args.seeds)
+        if seeds is None:
+            print(
+                "ERROR: --seeds must be a comma-separated list of distinct non-negative "
+                f"integers (got {args.seeds!r}).",
+                file=sys.stderr,
+            )
+            return 1
+        if args.seed != 42:
+            print(
+                f"NOTE: --seed {args.seed} ignored because --seeds was given "
+                f"({', '.join(str(seed) for seed in seeds)})."
+            )
 
-    if args.output_images:
-        args.output_images.mkdir(parents=True, exist_ok=True)
-        for c in cases:
-            clean_path = args.output_images / f"{c['case_id']}_clean.png"
-            corr_path = args.output_images / f"{c['case_id']}_{c['corruption_type']}.png"
-            clean_path.write_bytes(c["clean_image_bytes"])
-            corr_path.write_bytes(c["corrupted_image_bytes"])
-        print(f"Saved {len(cases) * 2} images to {args.output_images}")
+    cases: list[dict[str, Any]] = []
+    if seeds is None:
+        print("Generating synthetic raster image dataset...")
+        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=args.count, seed=args.seed)
+        print(f"Generated {len(cases)} paired clean/corrupted test cases.")
+
+        if args.output_images:
+            args.output_images.mkdir(parents=True, exist_ok=True)
+            for c in cases:
+                clean_path = args.output_images / f"{c['case_id']}_clean.png"
+                corr_path = args.output_images / f"{c['case_id']}_{c['corruption_type']}.png"
+                clean_path.write_bytes(c["clean_image_bytes"])
+                corr_path.write_bytes(c["corrupted_image_bytes"])
+            print(f"Saved {len(cases) * 2} images to {args.output_images}")
 
     engine: RasterOCREngine
     if args.real_engine:
@@ -1148,6 +1407,9 @@ def main() -> int:
     else:
         engine = MockRasterOCREngine()
 
+    if seeds is not None:
+        return _run_multiseed(args, engine, seeds)
+
     print(f"Running benchmark with engine '{engine.engine_name}'...")
     report = RasterBenchmarkScorer.run_benchmark(cases, engine)
 
@@ -1159,9 +1421,7 @@ def main() -> int:
     corr = report["corrupted_evaluation"]
     delta = report["degradation_delta"]
 
-    def _fmt(value: Optional[float]) -> str:
-        """Format a metric, printing ``n/a`` when nothing was measured."""
-        return "n/a" if value is None else f"{value:.3f}"
+    _fmt = _fmt_metric
 
     print("\n================ RASTER OCR BENCHMARK REPORT ================")
     print(

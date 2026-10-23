@@ -41,8 +41,11 @@ from ai.raster_benchmark import (  # noqa: E402
     apply_rotation,
     apply_skew,
     character_error_rate,
+    aggregate_evaluations,
+    parse_seed_list,
     resolve_render_font,
     script_is_renderable,
+    summarize_multiseed_reports,
     tesseract_language_for,
     word_error_rate,
 )
@@ -1031,3 +1034,146 @@ class TestFieldScoringNulls:
         assert result["tp"] == 0
         assert result["fp"] == 0
         assert result["fn"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Test multi-seed measurement (variance and pooling)
+# ---------------------------------------------------------------------------
+
+
+class TestSeedListParsing:
+    def test_valid_list(self):
+        assert parse_seed_list("42,7,13") == [42, 7, 13]
+        assert parse_seed_list(" 5 ") == [5]
+        assert parse_seed_list("0,1") == [0, 1]
+
+    def test_invalid_lists_rejected(self):
+        for raw in ("", "   ", "abc", "1,abc", "1,,2", "1,", ",1", "-1", "1,1", "1, 1"):
+            assert parse_seed_list(raw) is None, raw
+
+
+class TestMultiseedSummary:
+    @staticmethod
+    def _reports(seeds=(1, 2), count=3):
+        engine = MockRasterOCREngine()
+        return [
+            (
+                seed,
+                RasterBenchmarkScorer.run_benchmark(
+                    RasterDocumentGenerator.generate_benchmark_dataset(count=count, seed=seed),
+                    engine,
+                ),
+            )
+            for seed in seeds
+        ]
+
+    def test_counts_and_seeds(self):
+        combined = summarize_multiseed_reports(self._reports(seeds=(3, 9), count=4))
+        assert combined["mode"] == "multiseed"
+        assert combined["seeds"] == [3, 9]
+        assert combined["count_per_seed"] == 4
+        assert combined["total_cases"] == 8
+        assert combined["evaluated_count"] == 8
+        assert combined["unavailable_count"] == 0
+        assert [entry["seed"] for entry in combined["per_seed"]] == [3, 9]
+
+    def test_pooled_metrics_are_case_weighted_not_mean_of_means(self):
+        reports = self._reports()
+        combined = summarize_multiseed_reports(reports)
+        rows = [
+            case["clean"]
+            for _, report in reports
+            for case in report["case_results"]
+            if case["status"] == "evaluated"
+        ]
+        expected = aggregate_evaluations(rows)
+        assert combined["pooled"]["clean_baseline"] == expected
+        assert combined["pooled"]["clean_baseline"]["scored_cases"] == len(rows)
+
+    def test_variance_block_is_internally_consistent(self):
+        combined = summarize_multiseed_reports(self._reports(seeds=(1, 2, 3)))
+        for side in ("clean", "corrupted"):
+            per_seed_values = [
+                entry[f"{side}_baseline" if side == "clean" else "corrupted_evaluation"]["cer"]
+                for entry in combined["per_seed"]
+            ]
+            stats = combined["variance"][f"{side}_cer"]
+            assert stats["n"] == len(per_seed_values)
+            assert stats["min"] == min(per_seed_values)
+            assert stats["max"] == max(per_seed_values)
+            assert stats["min"] <= stats["mean"] <= stats["max"]
+            assert stats["stdev"] >= 0.0
+
+    def test_requires_at_least_one_report(self):
+        import pytest
+
+        with pytest.raises(ValueError):
+            summarize_multiseed_reports([])
+
+    def test_unavailable_seed_report_rejected(self):
+        import pytest
+
+        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=1, seed=1)
+        clean = RasterBenchmarkScorer.run_benchmark(cases, MockRasterOCREngine())
+
+        class Missing(MockRasterOCREngine):
+            def is_available(self):
+                return False
+
+        unavailable = RasterBenchmarkScorer.run_benchmark(cases, Missing())
+        with pytest.raises(ValueError):
+            summarize_multiseed_reports([(1, clean), (2, unavailable)])
+
+
+class TestMultiseedCLI:
+    def _run(self, *args):
+        import subprocess
+
+        return subprocess.run(
+            [sys.executable, "ai/raster_benchmark.py", *args],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+        )
+
+    def test_multiseed_writes_pooled_report(self, tmp_path):
+        out = tmp_path / "multi.json"
+        res = self._run("--count", "2", "--seeds", "1,2", "--json", str(out))
+        assert res.returncode == 0, res.stderr
+        data = json.loads(out.read_text(encoding="utf-8"))
+
+        assert data["mode"] == "multiseed"
+        assert data["seeds"] == [1, 2]
+        assert data["count_per_seed"] == 2
+        assert data["total_cases"] == 4
+        assert data["evaluated_count"] == 4
+        assert data["engine_type"] == "mock"
+        assert set(data["variance"]) >= {"clean_cer", "corrupted_cer"}
+        assert len(data["per_seed"]) == 2
+        assert "MULTI-SEED" in res.stdout
+
+    def test_multiseed_is_deterministic(self, tmp_path):
+        first, second = tmp_path / "a.json", tmp_path / "b.json"
+        assert self._run("--count", "2", "--seeds", "1,2", "--json", str(first)).returncode == 0
+        assert self._run("--count", "2", "--seeds", "1,2", "--json", str(second)).returncode == 0
+        a = json.loads(first.read_text(encoding="utf-8"))
+        b = json.loads(second.read_text(encoding="utf-8"))
+        a.pop("duration_seconds", None)
+        b.pop("duration_seconds", None)
+        for entry in a["per_seed"]:
+            entry.pop("duration_seconds", None)
+        for entry in b["per_seed"]:
+            entry.pop("duration_seconds", None)
+        assert a == b
+
+    def test_invalid_seeds_rejected(self):
+        for raw in ("abc", "1,,2", "1,1", "-3"):
+            res = self._run("--count", "2", "--seeds", raw)
+            assert res.returncode == 1, raw
+            assert "--seeds" in res.stderr
+            assert "distinct non-negative" in res.stderr
+
+    def test_seed_flag_ignored_note(self):
+        res = self._run("--count", "1", "--seed", "5", "--seeds", "1")
+        assert res.returncode == 0, res.stderr
+        assert "--seed 5 ignored" in res.stdout

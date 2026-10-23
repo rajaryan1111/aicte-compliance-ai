@@ -342,6 +342,29 @@ are English/certificate-oriented — the documented backend-owned gap
 ([`BACKEND_HANDOFF.md`](BACKEND_HANDOFF.md)). CER above 1.0 (rotation, noise WER) is a real
 metric value: the hypothesis can contain more edits than the reference has characters.
 
+### Multi-seed stability (`--seeds`)
+
+A single 24-case run is a thin sample, so the same benchmark was repeated over three seeds and
+pooled in
+[`ai/reports/real_tesseract_5.5.2_multiseed_3x24.json`](reports/real_tesseract_5.5.2_multiseed_3x24.json)
+(`--count 24 --seeds 42,7,13`: 72 cases, 24 per language, 0 unavailable, 59 s).
+
+```
+POOLED CLEAN:      CER 0.1857 | WER 0.3404 | exact 0.1667 | field micro-F1 0.2898
+POOLED CORRUPTED:  CER 0.4443 | WER 0.9823 | exact 0.0833 | field micro-F1 0.1527
+POOLED DELTA:      +CER 0.2586 | +WER 0.6419 | -F1 0.1371
+```
+
+Spread across the three seeds (CER): clean mean `0.1857`, sd `0.0184` (range
+`0.1662`–`0.2028`); corrupted mean `0.4443`, sd `0.0245` (range `0.4264`–`0.4722`). Per-seed
+clean CER was 0.203 / 0.188 / 0.166 for seeds 42 / 7 / 13, so the single-seed figure above
+sits inside that spread and must be read together with it, not instead of it.
+
+Pooled metrics are **case-weighted** — computed from all 72 per-case rows rather than by
+averaging three per-seed averages, which would weight a seed with fewer scored cases the same
+as one with more. The two reports are kept separate: the single-seed report is the one used
+elsewhere in this document, and the multi-seed report is the stability check.
+
 ### What changed in the module to make this measurement honest
 
 Four defects were found and fixed while producing this report; each has regression tests in
@@ -378,7 +401,8 @@ as a false negative.
   scanner, no skew from a real platen, no stamps, no handwriting, no multi-page PDFs.
 - **One Hindi font, one Latin font.** Different typefaces change CER substantially.
 - **Small sample.** 24 cases: each language has 8, each corruption has 3. The corruption
-  breakdown is indicative, not statistically stable.
+  breakdown is indicative, not statistically stable; the three-seed report
+  (`--seeds`, see above) bounds the seed-to-seed CER spread at roughly ±0.02.
 - **Not a vendor comparison.** Only Tesseract was run; no other engine or cloud OCR was
   evaluated on the same corpus.
 - **Not real-world AICTE accuracy.** No real certificate was used or may be committed, so
