@@ -15,18 +15,31 @@ import redis
 from pathlib import Path
 import tempfile
 
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session, sessionmaker
+# The live suite must exercise the real broker.  backend/app/worker/celery_app.py
+# defaults task_always_eager to true whenever pytest is importable, so without
+# this the *producer* (the pytest process) would run .delay() inline, no message
+# would ever reach Redis, and the worker spawned below would idle forever.  This
+# has to happen before the application modules below are imported, because
+# celery_app decides its default at import time.  A caller that sets the
+# variable explicitly still wins.
+_RUN_LIVE_INTEGRATION_TESTS = os.getenv("RUN_LIVE_INTEGRATION_TESTS", "").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+if _RUN_LIVE_INTEGRATION_TESTS:
+    os.environ["CELERY_TASK_ALWAYS_EAGER"] = "false"
 
-from backend.app.db.session import get_db, normalize_database_url
-from backend.app.main import app
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import create_engine, text  # noqa: E402
+from sqlalchemy.engine import Engine  # noqa: E402
+from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
+
+from backend.app.db.session import get_db, normalize_database_url  # noqa: E402
+from backend.app.main import app  # noqa: E402
 
 # Integration test environment flags
-RUN_LIVE_INTEGRATION_TESTS = (
-    os.getenv("RUN_LIVE_INTEGRATION_TESTS", "").lower() in ("true", "1", "yes")
-)
+RUN_LIVE_INTEGRATION_TESTS = _RUN_LIVE_INTEGRATION_TESTS
 DEFAULT_PG_URL = "postgresql://aicte_test:aicte_test_pass@localhost:5432/aicte_test_db"
 DEFAULT_REDIS_URL = "redis://localhost:6379/1"
 
@@ -38,6 +51,8 @@ POSTGRES_URL = normalize_database_url(
 REDIS_URL = os.getenv("INTEGRATION_REDIS_URL", os.getenv("REDIS_URL", DEFAULT_REDIS_URL))
 CLAMAV_HOST = os.getenv("AICTE_CLAMAV_HOST", "localhost")
 CLAMAV_PORT = int(os.getenv("AICTE_CLAMAV_PORT", "3310"))
+# Bounded wait for the worker to answer a control ping (was a fixed 2s sleep).
+WORKER_READY_TIMEOUT = float(os.getenv("INTEGRATION_WORKER_READY_TIMEOUT", "30"))
 
 TEST_JWT_SECRET = "integration-test-secret-key-at-least-32-chars-long!"
 os.environ.setdefault("JWT_SECRET_KEY", TEST_JWT_SECRET)
@@ -198,28 +213,75 @@ def live_celery_worker(require_live_postgres: str, require_live_redis: str) -> G
         "celery",
     ]
 
+    # Worker output goes to a file rather than a pipe: nothing reads an unread
+    # PIPE, so a chatty worker would block on a full buffer, and on timeout we
+    # want its actual output for the failure message instead of a hang.
+    log_file = tempfile.NamedTemporaryFile(  # noqa: SIM115 - closed in teardown
+        mode="w+", prefix="celery_worker_", suffix=".log", delete=False
+    )
+
+    def _read_log() -> str:
+        log_file.flush()
+        with open(log_file.name, encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+
     proc = subprocess.Popen(
         cmd,
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
         text=True,
     )
 
-    # Wait for worker process to initialize and connect to broker
-    time.sleep(2.0)
-    if proc.poll() is not None:
-        stdout, stderr = proc.communicate()
-        pytest.fail(f"Celery worker process failed to start (exit code {proc.returncode}):\n{stderr}")
+    # Bounded readiness polling on an observable condition -- the worker
+    # answering a control ping -- instead of a fixed sleep, which raced a real
+    # worker start (~2s here) and produced non-deterministic results.
+    from backend.app.worker.celery_app import celery_app
+
+    celery_app.conf.broker_url = require_live_redis
+    readiness_deadline = time.time() + WORKER_READY_TIMEOUT
+    worker_ready = False
+    while time.time() < readiness_deadline:
+        if proc.poll() is not None:
+            pytest.fail(
+                f"Celery worker exited during startup (exit code {proc.returncode}):\n{_read_log()}"
+            )
+        try:
+            # A worker that has not finished booting either does not reply or
+            # raises a transport error; both mean "not ready yet".
+            if celery_app.control.ping(timeout=0.5):
+                worker_ready = True
+                break
+        except Exception:
+            pass
+        time.sleep(0.25)
+
+    if not worker_ready:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5.0)
+        except Exception:
+            proc.kill()
+        pytest.fail(
+            f"Celery worker did not answer a control ping within {WORKER_READY_TIMEOUT}s.\n"
+            f"Broker: {require_live_redis}\nWorker output:\n{_read_log()}"
+        )
 
     yield proc
 
-    # Teardown: terminate gracefully
+    # Teardown: terminate gracefully, then read the log before closing it.
     try:
         proc.terminate()
         proc.wait(timeout=5.0)
     except Exception:
         proc.kill()
+        proc.wait(timeout=5.0)
+    finally:
+        log_file.close()
+        try:
+            os.unlink(log_file.name)
+        except OSError:
+            pass
 
 
 @pytest.fixture

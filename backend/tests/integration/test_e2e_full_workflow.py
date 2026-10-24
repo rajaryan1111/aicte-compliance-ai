@@ -192,12 +192,19 @@ def test_full_application_workflow_end_to_end(
     )
     assert upload_res.status_code == 201, f"Upload failed: {upload_res.text}"
     upload_data = upload_res.json()
-    document_id = upload_data["document_id"]
-    version_id = upload_data["version_id"]
+    # Documented shape (backend/app/schemas/document.py::DocumentUploadResponse):
+    # {"document": {...}, "version": {...}, "job": ..., "polling_url": ...}.
+    # The identifiers are nested under document/version, not flat on the body.
+    assert set(upload_data) >= {"document", "version", "polling_url"}
+    document_id = upload_data["document"]["id"]
+    version_id = upload_data["version"]["id"]
     polling_url = upload_data["polling_url"]
     assert document_id > 0
     assert version_id > 0
     assert polling_url is not None
+    # The response must not imply the document is scanned or OCR'd yet.
+    assert upload_data["version"]["scan_status"] in ("pending_scan", "scanning", "clean")
+    assert upload_data["notice"]
 
     # -------------------------------------------------------------------------
     # Step 4: Verify Asynchronous Processing by Real Worker
@@ -209,7 +216,10 @@ def test_full_application_workflow_end_to_end(
         poll_res = live_api_client.get(polling_url, headers=admin_headers)
         if poll_res.status_code == 200:
             job_status = poll_res.json()
-            if job_status.get("job", {}).get("state") in ("completed", "partial"):
+            # ProcessingJobStatusResponse is flat: state/scan_status are top-level
+            # fields, not nested under a "job" object.
+            assert "state" in job_status
+            if job_status["state"] in ("completed", "partial"):
                 is_completed = True
                 assert job_status["scan_status"] == "clean"
                 assert job_status["is_terminal"] is True
@@ -289,7 +299,14 @@ def test_full_application_workflow_end_to_end(
         f"/api/v1/applications/{application_id}",
         headers=foreign_headers,
     )
-    assert foreign_get.status_code == 403, "Foreign user was not denied access to cross-institution data"
+    # 404, not 403: a foreign tenant's application is concealed as not-found
+    # (backend/app/api/deps.py) so its existence cannot be probed.  The denial is
+    # real -- only the status code differs from a role-permission refusal.
+    assert foreign_get.status_code == 404, "Foreign user was not denied access to cross-institution data"
+    assert foreign_get.json()["detail"] in (
+        "Application not found.",
+        "Resource not found or access denied.",
+    )
 
     # -------------------------------------------------------------------------
     # Step 9: Export Audit Package
@@ -305,7 +322,9 @@ def test_full_application_workflow_end_to_end(
     assert export_res.status_code == 201, f"Export failed: {export_res.text}"
     pkg_data = export_res.json()
     package_id = pkg_data["id"]
-    expected_root_hash = pkg_data["merkle_root_hash"]
+    # AuditPackageRead exposes the digest as sha256_root_hash (there is no
+    # merkle_root_hash field).
+    expected_root_hash = pkg_data["sha256_root_hash"]
 
     # -------------------------------------------------------------------------
     # Step 10: Download Audit Package Archive

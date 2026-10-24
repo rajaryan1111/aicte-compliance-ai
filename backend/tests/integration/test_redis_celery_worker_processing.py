@@ -8,6 +8,7 @@ idempotency, and safe terminal states.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import uuid
 import time
 from typing import Any
 
@@ -20,6 +21,7 @@ from backend.app.core.dispatcher import dispatch_outbox_message, dispatch_pendin
 from backend.app.core.scanner import ScanResult, ScanStatus
 from backend.app.core.storage import LocalStorageBackend, generate_storage_key
 from backend.app.db.models import (
+    OutboxMessage,
     Application,
     AuditEvent,
     Document,
@@ -32,10 +34,22 @@ from backend.app.repositories.processing_job_repository import ProcessingJobRepo
 from backend.app.services.processing_job_service import ProcessingJobService
 from backend.app.worker.celery_app import celery_app
 from backend.app.worker.tasks import set_worker_session_factory
+from backend.app.worker.tasks import process_document_job_task
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _unique_key_suffix() -> str:
+    """Collision-free storage-key segment.
+
+    ``document_versions.storage_key`` carries a UNIQUE index, so a fixed key
+    makes the suite pass only on a pristine database and fail on every rerun.
+    """
+    return uuid.uuid4().hex
+
+
 
 
 def _create_synthetic_pdf(text_lines: list[str]) -> bytes:
@@ -68,6 +82,11 @@ def setup_integration_env(require_live_postgres: str, require_live_redis: str, l
     """Configure in-process Celery to use real Redis and configure worker session factory."""
     celery_app.conf.broker_url = require_live_redis
     celery_app.conf.result_backend = require_live_redis
+    # The producer must publish, not execute inline.  celery_app.py defaults this
+    # to true under pytest; the worker subprocess is already non-eager, so the
+    # two would otherwise disagree and no message would ever reach the broker.
+    celery_app.conf.task_always_eager = False
+    celery_app.conf.task_eager_propagates = False
     set_worker_session_factory(sessionmaker(bind=live_postgres_engine))
 
 
@@ -171,6 +190,7 @@ def test_document_job_dispatched_and_processed_by_real_worker(
 def test_outbox_broker_failure_and_redispatch_recovery(
     live_postgres_session: Session,
     require_live_redis: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Verify outbox records failure when broker is unreachable and recovers on retry (Phase 4.4)."""
     code = f"INST-OUTBOX-{int(_utc_now().timestamp())}"
@@ -189,7 +209,7 @@ def test_outbox_broker_failure_and_redispatch_recovery(
     ver = DocumentVersion(
         document_id=doc.id,
         version_number=1,
-        storage_key="docs/test/outbox.pdf",
+        storage_key=f"docs/test/{_unique_key_suffix()}/outbox.pdf",
         sha256="1" * 64,
         media_type="application/pdf",
         byte_size=512,
@@ -208,19 +228,35 @@ def test_outbox_broker_failure_and_redispatch_recovery(
     live_postgres_session.commit()
 
     # Simulate broker failure by pointing to an unreachable broker port
-    orig_broker = celery_app.conf.broker_url
-    try:
-        celery_app.conf.broker_url = "redis://127.0.0.1:59999/0"
-        celery_app.conf.task_always_eager = False
-        success = dispatch_outbox_message(live_postgres_session, outbox_msg)
-        assert success is False
+    # Simulate the publish failing, at the publish boundary.
+    #
+    # Pointing broker_url at a dead port does NOT do this: Celery caches both a
+    # connection pool and a producer pool per app, and neither app.close() nor
+    # setting app._pool = None invalidates a warm producer -- verified, the
+    # publish still succeeded and the old assertions passed without exercising
+    # the failure path at all.  Patching the task's publish is therefore the
+    # honest way to test the dispatcher's contract here; the recovery half below
+    # still uses the real broker.
+    def _broker_unreachable(*args: Any, **kwargs: Any) -> None:
+        raise ConnectionError("broker unreachable (simulated publish failure)")
 
-        live_postgres_session.refresh(outbox_msg)
-        assert outbox_msg.status == "failed"
-        assert outbox_msg.last_error is not None
-        assert "59999" in outbox_msg.last_error or "Error" in outbox_msg.last_error or "refused" in outbox_msg.last_error.lower()
-    finally:
-        celery_app.conf.broker_url = orig_broker
+    monkeypatch.setattr(process_document_job_task, "delay", _broker_unreachable)
+    success = dispatch_outbox_message(live_postgres_session, outbox_msg)
+    assert success is False
+
+    live_postgres_session.refresh(outbox_msg)
+    assert outbox_msg.status == "failed"
+    assert outbox_msg.last_error is not None
+    assert "unreachable" in outbox_msg.last_error.lower()
+
+    # The message must be preserved for redispatch, not dropped: the repository
+    # has no get_by_id, so reload it through the session.
+    live_postgres_session.expire_all()
+    retained = live_postgres_session.get(OutboxMessage, outbox_msg.id)
+    assert retained is not None, "failed outbox message must be retained for recovery"
+
+    # Recovery: real broker again, and the retained message is republished.
+    monkeypatch.undo()
 
     # Recovery: restore broker connectivity and run dispatch_pending_outbox
     outbox_msg.status = "pending"
@@ -257,7 +293,7 @@ def test_retry_and_backoff_on_transient_error(
     ver = DocumentVersion(
         document_id=doc.id,
         version_number=1,
-        storage_key="docs/test/retry.pdf",
+        storage_key=f"docs/test/{_unique_key_suffix()}/retry.pdf",
         sha256="2" * 64,
         media_type="application/pdf",
         byte_size=512,
@@ -397,7 +433,7 @@ def test_permanent_malware_detection_reaches_terminal_failure(
     ver = DocumentVersion(
         document_id=doc.id,
         version_number=1,
-        storage_key="docs/test/malware.bin",
+        storage_key=f"docs/test/{_unique_key_suffix()}/malware.bin",
         sha256="4" * 64,
         media_type="application/pdf",
         byte_size=100,
@@ -412,10 +448,12 @@ def test_permanent_malware_detection_reaches_terminal_failure(
 
     class MaliciousScanner:
         def scan(self, file_bytes: bytes, filename: str) -> ScanResult:
+            # ScanResult(status, scanner_name, details) -- scanner_name is
+            # required and there is no engine_version field.
             return ScanResult(
                 status=ScanStatus.REJECTED,
+                scanner_name="clamav-test-double",
                 details="Win.Test.EICAR_HDB-1 FOUND",
-                engine_version="ClamAV 1.4.1",
             )
 
     class SimpleStorage:
@@ -472,7 +510,7 @@ def test_authoritative_status_polling_returns_persisted_state(
     ver = DocumentVersion(
         document_id=doc.id,
         version_number=1,
-        storage_key="docs/test/status.pdf",
+        storage_key=f"docs/test/{_unique_key_suffix()}/status.pdf",
         sha256="5" * 64,
         media_type="application/pdf",
         byte_size=200,
@@ -492,5 +530,83 @@ def test_authoritative_status_polling_returns_persisted_state(
     assert fetched_job.state == "completed"
 
     # Clean up
+    live_postgres_session.delete(inst)
+    live_postgres_session.commit()
+
+
+def test_repeated_transient_failures_reach_terminal_failure(
+    live_postgres_session: Session,
+) -> None:
+    """A job that keeps failing transiently must fail closed at max_attempts.
+
+    Regression guard for a rollback bug: claim_job() increments attempt_count
+    inside the unit of work, and the failure path rolled that back, so the
+    counter read zero on every retry.  The backoff then stayed at 2**0 * 5s and
+    the job could never satisfy ``attempt_count >= max_attempts`` -- it retried
+    forever instead of failing closed, leaving the document permanently
+    unscanned rather than terminally rejected.
+    """
+    code = f"INST-BOUNDED-{int(_utc_now().timestamp())}"
+    inst = Institution(institution_id=code, display_name="Bounded Retry Institute")
+    live_postgres_session.add(inst)
+    live_postgres_session.commit()
+
+    app_rec = Application(
+        institution_id=inst.id, application_type="eoa", academic_year="2026-2027"
+    )
+    live_postgres_session.add(app_rec)
+    live_postgres_session.commit()
+
+    doc = Document(application_id=app_rec.id, document_type="land_noc")
+    live_postgres_session.add(doc)
+    live_postgres_session.commit()
+
+    storage = LocalStorageBackend()
+    key = generate_storage_key(extension=".pdf")
+    storage.put(key, b"%PDF-1.4 bounded retry")
+    ver = DocumentVersion(
+        document_id=doc.id,
+        version_number=1,
+        storage_key=key,
+        sha256="6" * 64,
+        media_type="application/pdf",
+        byte_size=20,
+        scan_status="pending_scan",
+        processing_status="queued",
+    )
+    live_postgres_session.add(ver)
+    live_postgres_session.commit()
+
+    job = ProcessingJobRepository.create_job(
+        live_postgres_session, document_version_id=ver.id, max_attempts=3
+    )
+    live_postgres_session.commit()
+
+    class AlwaysTransientScanner:
+        def scan(self, data: bytes, filename: str | None = None) -> ScanResult:
+            raise ConnectionError("scanner socket unreachable")
+
+    attempts_seen: list[int] = []
+    for _ in range(job.max_attempts):
+        updated = ProcessingJobService.run_job(
+            live_postgres_session,
+            job_id=job.id,
+            scanner=AlwaysTransientScanner(),  # type: ignore[arg-type]
+            storage=storage,
+        )
+        assert updated is not None
+        attempts_seen.append(updated.attempt_count)
+
+    # Every attempt is counted, so the counter advances 1..max_attempts.
+    assert attempts_seen == list(range(1, job.max_attempts + 1))
+
+    final = ProcessingJobRepository.get_by_id(live_postgres_session, job.id)
+    assert final is not None
+    assert final.state == "failed", "a repeatedly failing job must fail closed"
+    assert final.last_error_code == "ConnectionError"
+
+    live_postgres_session.refresh(ver)
+    assert ver.processing_status == "failed"
+
     live_postgres_session.delete(inst)
     live_postgres_session.commit()

@@ -14,6 +14,7 @@ Verifies:
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import uuid
 
 from fastapi.testclient import TestClient
 import pytest
@@ -36,6 +37,17 @@ from backend.app.repositories.user_repository import UserRepository
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _unique_key_suffix() -> str:
+    """Collision-free storage-key segment.
+
+    ``document_versions.storage_key`` carries a UNIQUE index, so a fixed key
+    makes the suite pass only on a pristine database and fail on every rerun.
+    """
+    return uuid.uuid4().hex
+
+
 
 
 def test_cross_institution_access_denial(
@@ -310,7 +322,7 @@ def test_quarantine_download_protection_for_unclean_documents(
     v_pending = DocumentVersion(
         document_id=doc.id,
         version_number=1,
-        storage_key="docs/test/pending.pdf",
+        storage_key=f"docs/test/{_unique_key_suffix()}/pending.pdf",
         sha256="a" * 64,
         media_type="application/pdf",
         byte_size=100,
@@ -321,7 +333,7 @@ def test_quarantine_download_protection_for_unclean_documents(
     v_rejected = DocumentVersion(
         document_id=doc.id,
         version_number=2,
-        storage_key="docs/test/rejected.pdf",
+        storage_key=f"docs/test/{_unique_key_suffix()}/rejected.pdf",
         sha256="b" * 64,
         media_type="application/pdf",
         byte_size=100,
@@ -332,7 +344,7 @@ def test_quarantine_download_protection_for_unclean_documents(
     v_unavail = DocumentVersion(
         document_id=doc.id,
         version_number=3,
-        storage_key="docs/test/unavail.pdf",
+        storage_key=f"docs/test/{_unique_key_suffix()}/unavail.pdf",
         sha256="c" * 64,
         media_type="application/pdf",
         byte_size=100,
