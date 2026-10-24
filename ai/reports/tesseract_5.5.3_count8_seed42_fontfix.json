@@ -1,0 +1,474 @@
+{
+  "available": true,
+  "engine": "tesseract",
+  "engine_version": "5.5.3",
+  "engine_type": "real",
+  "dataset_fingerprint": "8617fa60d6984e28",
+  "total_cases": 8,
+  "evaluated_count": 8,
+  "unavailable_count": 0,
+  "sample_size": 8,
+  "duration_seconds": 4.005,
+  "clean_baseline": {
+    "cer": 0.2702,
+    "wer": 0.4203,
+    "exact": 0.25,
+    "precision": 1.0,
+    "recall": 0.25,
+    "f1": 0.4
+  },
+  "corrupted_evaluation": {
+    "cer": 0.544,
+    "wer": 1.0745,
+    "exact": 0.125,
+    "precision": 1.0,
+    "recall": 0.125,
+    "f1": 0.2222
+  },
+  "degradation_delta": {
+    "cer_increase": 0.2738,
+    "wer_increase": 0.6542,
+    "f1_drop": 0.1778
+  },
+  "by_corruption_type": {
+    "none": {
+      "cer": 0.0,
+      "wer": 0.0,
+      "exact": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "gaussian_blur": {
+      "cer": 0.7059,
+      "wer": 0.8108,
+      "exact": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "skew": {
+      "cer": 0.42,
+      "wer": 1.1852,
+      "exact": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "low_resolution": {
+      "cer": 0.3778,
+      "wer": 0.6667,
+      "exact": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "jpeg_compression": {
+      "cer": 0.0899,
+      "wer": 0.3333,
+      "exact": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "low_contrast": {
+      "cer": 0.7389,
+      "wer": 0.9524,
+      "exact": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "noise": {
+      "cer": 1.1688,
+      "wer": 3.1071,
+      "exact": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "rotation": {
+      "cer": 0.851,
+      "wer": 1.5405,
+      "exact": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    }
+  },
+  "by_language": {
+    "en": {
+      "cer": 0.5155,
+      "wer": 1.2579,
+      "exact": 0.3333,
+      "precision": 1.0,
+      "recall": 0.3333,
+      "f1": 0.5
+    },
+    "bilingual": {
+      "cer": 0.5489,
+      "wer": 0.8949,
+      "exact": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "hi": {
+      "cer": 0.5795,
+      "wer": 1.0688,
+      "exact": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    }
+  },
+  "case_results": [
+    {
+      "case_id": "ccc9f31a7118",
+      "language": "en",
+      "layout": "certificate",
+      "corruption_type": "none",
+      "status": "evaluated",
+      "expected_text": "ALL INDIA COUNCIL FOR TECHNICAL EDUCATION\nEXTENSION OF APPROVAL NOTIFICATION\nInstitution Name: Beta Engineering College\nCertificate Number: CERT/2026/0001\nAcademic Year: 2026-2027\nValid Until: 2027-04-30\nIssue Date: 2025-05-20",
+      "expected_fields": {
+        "institution_name": "Beta Engineering College",
+        "certificate_number": "CERT/2026/0001",
+        "valid_until": "2027-04-30",
+        "academic_year": "2026-2027",
+        "issue_date": "2025-05-20"
+      },
+      "clean": {
+        "predicted_text": "ALL INDIA COUNCIL FOR TECHNICAL EDUCATION\nEXTENSION OF APPROVAL NOTIFICATION\nInstitution Name: Beta Engineering College\nCertificate Number: CERT/2026/0001\nAcademic Year: 2026-2027\nValid Until: 2027-04-30\nIssue Date: 2025-05-20",
+        "predicted_fields": {
+          "institution_name": "Beta Engineering College",
+          "certificate_number": "CERT/2026/0001",
+          "academic_year": "2026-2027",
+          "valid_until": "2027-04-30",
+          "issue_date": "2025-05-20"
+        },
+        "cer": 0.0,
+        "wer": 0.0,
+        "exact_transcription": 1.0,
+        "tp": 5,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "corrupted": {
+        "predicted_text": "ALL INDIA COUNCIL FOR TECHNICAL EDUCATION\nEXTENSION OF APPROVAL NOTIFICATION\nInstitution Name: Beta Engineering College\nCertificate Number: CERT/2026/0001\nAcademic Year: 2026-2027\nValid Until: 2027-04-30\nIssue Date: 2025-05-20",
+        "predicted_fields": {
+          "institution_name": "Beta Engineering College",
+          "certificate_number": "CERT/2026/0001",
+          "academic_year": "2026-2027",
+          "valid_until": "2027-04-30",
+          "issue_date": "2025-05-20"
+        },
+        "cer": 0.0,
+        "wer": 0.0,
+        "exact_transcription": 1.0,
+        "tp": 5,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      }
+    },
+    {
+      "case_id": "416a104c5861",
+      "language": "bilingual",
+      "layout": "certificate",
+      "corruption_type": "gaussian_blur",
+      "status": "evaluated",
+      "expected_text": "AICTE APPROVAL / \u0905\u0928\u0941\u092e\u094b\u0926\u0928 \u092a\u094d\u0930\u092e\u093e\u0923\u092a\u0924\u094d\u0930\nInstitution / \u0938\u0902\u0938\u094d\u0925\u093e\u0928: Beta Engineering College\nCertificate No / \u092a\u094d\u0930\u092e\u093e\u0923\u092a\u0924\u094d\u0930 \u0938\u0902\u0916\u094d\u092f\u093e: CERT/2026/0002\nAcademic Year / \u0936\u0948\u0915\u094d\u0937\u0923\u093f\u0915 \u0938\u0924\u094d\u0930: 2026-2027\nValid Until / \u092e\u093e\u0928\u094d\u092f\u0924\u093e \u0924\u0915: 2028-06-30\nIssue Date / \u091c\u093e\u0930\u0940 \u0915\u0930\u0928\u0947 \u0915\u0940 \u0924\u093f\u0925\u093f: 2026-04-15",
+      "expected_fields": {
+        "institution_name": "Beta Engineering College",
+        "certificate_number": "CERT/2026/0002",
+        "valid_until": "2028-06-30",
+        "academic_year": "2026-2027",
+        "issue_date": "2026-04-15"
+      },
+      "clean": {
+        "predicted_text": "aa APPROVAL / \u0905\u0928\u0941\u092e\u094b\u0926\u0928 \u092a\u094d\u0930\u092e\u093e\u0923\u092a\u0924\u094d\u0930 Issue Date / \u091c\u093e\u0930\u0940 \u0915\u0930\u0928\u0947 \u0915\u0940 TPH? 2026-04-15\nInstitution / \u0938\u0902\u0938\u0942\u0925\u093e\u0928: Beta Engineering College\nCertificate No / \u092a\u094d\u0930\u092e\u093e\u0923\u092a\u0924\u094d\u0930 aT: CERT/2026/0002\nAcademic Year / Staaf \u0938\u0924\u094d\u0930: 2026-2027\nValid Until / \u092e\u093e\u0928\u0942\u092f\u0924\u093e \u0924\u0915: 2028-06-30",
+        "predicted_fields": {},
+        "cer": 0.4157,
+        "wer": 0.5676,
+        "exact_transcription": 0.0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "corrupted": {
+        "predicted_text": "AICTE APPROVAL / \u0905\u0928\u0941\u092e\u094b\u0926\u0928 \u092a\u094d\u0930\u092e\u093e\u0923\u092a\u0924\u094d\u0930 Valid Untd / STEHT Fw 2028-06-30 tasve Date / \u091c\u093e\u0930\u0940 ere wf 2026-04-15\ninathton TTT! Bete Engree ng Cotege\nCortticate No / qrererey werer CERT2026/0002\nAcaderm< Year / terete wer 2026-2027",
+        "predicted_fields": {},
+        "cer": 0.7059,
+        "wer": 0.8108,
+        "exact_transcription": 0.0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      }
+    },
+    {
+      "case_id": "069fcbabc0bc",
+      "language": "hi",
+      "layout": "certificate",
+      "corruption_type": "skew",
+      "status": "evaluated",
+      "expected_text": "\u0905\u0916\u093f\u0932 \u092d\u093e\u0930\u0924\u0940\u092f \u0924\u0915\u0928\u0940\u0915\u0940 \u0936\u093f\u0915\u094d\u0937\u093e \u092a\u0930\u093f\u0937\u0926 - \u0905\u0928\u0941\u092e\u094b\u0926\u0928 \u0935\u093f\u0938\u094d\u0924\u093e\u0930\n\u0936\u0948\u0915\u094d\u0937\u0923\u093f\u0915 \u0938\u0924\u094d\u0930: 2025-2026\n\u092a\u094d\u0930\u092e\u093e\u0923\u092a\u0924\u094d\u0930 \u0938\u0902\u0916\u094d\u092f\u093e: CERT/2026/0003\n\u0938\u0902\u0938\u094d\u0925\u093e\u0928: Alpha Institute of Technology\n\u092e\u093e\u0928\u094d\u092f\u0924\u093e \u0924\u0915: 2028-06-30\n\u091c\u093e\u0930\u0940 \u0915\u0930\u0928\u0947 \u0915\u0940 \u0924\u093f\u0925\u093f: 2026-04-15",
+      "expected_fields": {
+        "institution_name": "Alpha Institute of Technology",
+        "certificate_number": "CERT/2026/0003",
+        "valid_until": "2028-06-30",
+        "academic_year": "2025-2026",
+        "issue_date": "2026-04-15"
+      },
+      "clean": {
+        "predicted_text": "\u091c\u093f \u092d\u093e\u0930\u0924\u0940\u092f \u0924\u0915\u0928\u0940\u0915\u0940 \u0936\u0915\u094d\u0937\u093e \u092a\u0930\u0937\u093f\u0926 - \u0905\u0928\u0941\u092e\u094b\u0926\u0928 \u0935\u0938\u093f\u0924\u093e\u0930 \u092a\u094d\u0930\u092e\u093e\u0923\u092a\u0924\u094d\u0930 \u0938\u0902\u0916\u094d\u092f\u093e: 0\u096c\u0930/2026/0003 \u0938\u0902\u0938\u0942\u0925\u093e\u0928: /8\u096578 98 \u0966 \u0965\u096d\u096e\u09657005\u096b \u092e\u093e\u0928\u094d\u200c\u092f\u0924\u093e \u0924\u0915: 2028-06-30 \u091c\u093e\u0930\u0940 \u0915\u0930\u0928\u0947 \u0915\u0940 \u0924\u0925\u093f\u0903\u093f 2026-04-45\n\u0936\u0948\u0915\u094d\u0937\u0923\u0915\u093f \u0938\u0924\u094d\u0930: 2025-2026",
+        "predicted_fields": {},
+        "cer": 0.485,
+        "wer": 0.7037,
+        "exact_transcription": 0.0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "corrupted": {
+        "predicted_text": "\u091c\u093e\u0913 \u0905\u0916\u0932\u093f \u092d\u093e\u0930\u0924\u0940\u092f \u0924\u0915\u0928\u0940\u0915\u0940 \u0936\u0915\u094d\u0942\u0937\u093e \u092a\u0930\u0937\u093f\u0926 - \u0905\u0928\u0941\u092e\u094b\u0926\u0928 \u0935\u0938\u093f\u094d\u0924\u093e\u0930 |\n\u0936\u0948\u0915\u094d\u0937\u0923\u0915\u093f \u0938\u0924\u094d\u0930: 2025-2026 \u0964\n| \u092a\u094d\u0930\u092e\u093e\u0923\u092a\u0924\u094d\u0930 \u0938\u0902\u0916\u094d\u092f\u093e: 0\u096c&/2026/0003\n| \u0938\u0902\u0938\u0942\u0925\u093e\u0928: 8-8 \u09657\u0965\u092a\u093e8 \u0966 \u0965\u096d\u091f\u093e\u0964\u0966\u0966\u096b\u096b |\n| \u092e\u093e\u0928\u094d\u092f\u0924\u093e \u0924\u0915: 2028-06-30 |\n|. \u091c\u093e\u0930\u0940 \u0915\u0930\u0928\u0947 \u0915\u0940 \u0924\u0925\u093f\u0930\u093f 2026-04-45\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|",
+        "predicted_fields": {},
+        "cer": 0.42,
+        "wer": 1.1852,
+        "exact_transcription": 0.0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      }
+    },
+    {
+      "case_id": "777ba5f71607",
+      "language": "en",
+      "layout": "two_column",
+      "corruption_type": "low_resolution",
+      "status": "evaluated",
+      "expected_text": "AICTE SUMMARY VERIFICATION TABLE\nInstitution Name: Apex Polytechnic Institute\nCertificate No: CERT/2026/0004\nAcademic Year: 2025-2026\nValid Until: 2027-04-30\nIssue Date: 2025-05-20",
+      "expected_fields": {
+        "institution_name": "Apex Polytechnic Institute",
+        "certificate_number": "CERT/2026/0004",
+        "valid_until": "2027-04-30",
+        "academic_year": "2025-2026",
+        "issue_date": "2025-05-20"
+      },
+      "clean": {
+        "predicted_text": "AICTE SUMMARY VERIFICATION TABLE\nInstitution Name Apex Polytechnic Institute\nCertificate No CERT/2026/0004\nAcademic Year 2025-2026\nValid Until 2027-04-30\nIssue Date 2025-05-20",
+        "predicted_fields": {},
+        "cer": 0.0278,
+        "wer": 0.2381,
+        "exact_transcription": 0.0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "corrupted": {
+        "predicted_text": "AICTE SUMMARY VERIFICATION TABLE\nCertificate No CERT 2020mo04\nAcseternic: Year a0zs-2028\nValid Until 2027-04-30\ntie Date 2025-05-20",
+        "predicted_fields": {},
+        "cer": 0.3778,
+        "wer": 0.6667,
+        "exact_transcription": 0.0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      }
+    },
+    {
+      "case_id": "b782d56b131f",
+      "language": "bilingual",
+      "layout": "two_column",
+      "corruption_type": "jpeg_compression",
+      "status": "evaluated",
+      "expected_text": "AICTE SUMMARY VERIFICATION TABLE\nInstitution Name: Beta Engineering College\nCertificate No: CERT/2026/0005\nAcademic Year: 2026-2027\nValid Until: 2027-04-30\nIssue Date: 2025-05-20",
+      "expected_fields": {
+        "institution_name": "Beta Engineering College",
+        "certificate_number": "CERT/2026/0005",
+        "valid_until": "2027-04-30",
+        "academic_year": "2026-2027",
+        "issue_date": "2025-05-20"
+      },
+      "clean": {
+        "predicted_text": "AICTE SUMMARY VERIFICATION TABLE\n\u091c\u0947 \u0939\u093e Name Beta Engineering College\nCertificate No CERT/2026/0005\nAcademic Year 2026-2027\nValid Until 2027-04-30\nIssue Date 2025-05-20",
+        "predicted_fields": {},
+        "cer": 0.0899,
+        "wer": 0.3333,
+        "exact_transcription": 0.0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "corrupted": {
+        "predicted_text": "AICTE SUMMARY VERIFICATION TABLE\n\u091c\u0947 \u0939\u093e Name Beta Engineering College\nCertificate No CERT/2026/0005\nAcademic Year 2026-2027\nValid Until 2027-04-30\nIssue Date 2025-05-20",
+        "predicted_fields": {},
+        "cer": 0.0899,
+        "wer": 0.3333,
+        "exact_transcription": 0.0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      }
+    },
+    {
+      "case_id": "93c1a3afb503",
+      "language": "hi",
+      "layout": "two_column",
+      "corruption_type": "low_contrast",
+      "status": "evaluated",
+      "expected_text": "AICTE SUMMARY VERIFICATION TABLE\nInstitution Name: National Technical Academy\nCertificate No: CERT/2026/0006\nAcademic Year: 2026-2027\nValid Until: 2028-06-30\nIssue Date: 2025-05-20",
+      "expected_fields": {
+        "institution_name": "National Technical Academy",
+        "certificate_number": "CERT/2026/0006",
+        "valid_until": "2028-06-30",
+        "academic_year": "2026-2027",
+        "issue_date": "2025-05-20"
+      },
+      "clean": {
+        "predicted_text": "+\u0965\u096d& 50\u0965\u0965\u0965\u0965/\u096d\u0968\u096a \u096a\u096c\u0968\u0965\u0964\u0965\u0966\u096d\u096d\u0965\u0964\u096d\u096a 88|\u20ac\n\u091c\u0947 \u0939\u093e [\u093f\u0926\u094d\u092f\u093e]8 \u092a\u093f\u0932\u094d\u092e\u093e\u0923\u093e\u0935\u0964| [8\u096d\u096f\u096e\u0965\u096570\u0966 \u0965| \u096a\u096e80\u096d70\u096b\n\u090f\u0936\u093e\u091f\u0906\u0911\u0966 \u096b\u0966 6\u091b\u093e\u0930\u093e\u0964/2026/0006\n\u09664000 \u096d 2026-2027\n\u090f\u0902\u0935 \u090f\u0917 2028-06-30\n\u09695\u096b8 048 2025-05-20",
+        "predicted_fields": {},
+        "cer": 0.7278,
+        "wer": 0.9524,
+        "exact_transcription": 0.0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "corrupted": {
+        "predicted_text": "+\u0965\u096d& 50\u0965\u0965\u0965/\u096d\u096a\u0968\u096a \u096a\u096c\u0968\u0965\u0964\u0964\u0966\u096d\u096a\u096d\u0965\u0964\u096d\u096a 788|\u20ac\n\u0935\u0947 \u0939\u093e [\u093f\u0926\u094d\u0932\u093e\u09648 \u092a\u093f\u0932\u094d\u092e\u093e\u0902\u0923\u093e\u0935\u0964| [8\u096f\u096e\u0965\u096570\u0966 \u0965| \u096a\u096e80\u096d70\u096b\n\u090f\u0936\u093e\u0906\u0966 \u096b\u0966 \u20ac\u091b\u093e\u0930\u093e\u0964/2026/0006\n\u09664000 \u096a\u096d 2026-2027\n\u090f\u0915\u094d\u093e\u0902\u0935 \u090f\u091c 2028-06-30\n|\u09695\u096b8 048 2025-05-20",
+        "predicted_fields": {},
+        "cer": 0.7389,
+        "wer": 0.9524,
+        "exact_transcription": 0.0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      }
+    },
+    {
+      "case_id": "190c1a70d9bc",
+      "language": "en",
+      "layout": "certificate",
+      "corruption_type": "noise",
+      "status": "evaluated",
+      "expected_text": "ALL INDIA COUNCIL FOR TECHNICAL EDUCATION\nEXTENSION OF APPROVAL NOTIFICATION\nInstitution Name: Alpha Institute of Technology\nCertificate Number: CERT/2026/0007\nAcademic Year: 2025-2026\nValid Until: 2028-06-30\nIssue Date: 2026-04-15",
+      "expected_fields": {
+        "institution_name": "Alpha Institute of Technology",
+        "certificate_number": "CERT/2026/0007",
+        "valid_until": "2028-06-30",
+        "academic_year": "2025-2026",
+        "issue_date": "2026-04-15"
+      },
+      "clean": {
+        "predicted_text": "ALL INDIA COUNCIL FOR TECHNICAL EDUCATION\nEXTENSION OF APPROVAL NOTIFICATION\nInstitution Name: Alpha Institute of Technology\nCertificate Number: CERT/2026/0007\nAcademic Year: 2025-2026\nValid Until: 2028-06-30\nIssue Date: 2026-04-15",
+        "predicted_fields": {
+          "institution_name": "Alpha Institute of Technology",
+          "certificate_number": "CERT/2026/0007",
+          "academic_year": "2025-2026",
+          "valid_until": "2028-06-30",
+          "issue_date": "2026-04-15"
+        },
+        "cer": 0.0,
+        "wer": 0.0,
+        "exact_transcription": 1.0,
+        "tp": 5,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "corrupted": {
+        "predicted_text": "a Ieee institution Name: Alpha institute of Technology. B 2 wee a oe ay ee oe on ae RS a\nae Ceitificate Number: CERT/2026/0007\u00b0 ee es a a ee ee ae za 3\nai Avademic Year. 2025:2026- ae Oe we wb anne eee yea oer ~\na Vail Uni: 2028-08-30 ney a we - & # a - ee ee \u2019 fos oe: : : oe\nfs: tesue Date: 2026-04-15 - a 2 ae ee ee z - a \u2014 oS : eh \u2018 aS : ie : a ;",
+        "predicted_fields": {},
+        "cer": 1.1688,
+        "wer": 3.1071,
+        "exact_transcription": 0.0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      }
+    },
+    {
+      "case_id": "ec718f9c6a80",
+      "language": "bilingual",
+      "layout": "certificate",
+      "corruption_type": "rotation",
+      "status": "evaluated",
+      "expected_text": "AICTE APPROVAL / \u0905\u0928\u0941\u092e\u094b\u0926\u0928 \u092a\u094d\u0930\u092e\u093e\u0923\u092a\u0924\u094d\u0930\nInstitution / \u0938\u0902\u0938\u094d\u0925\u093e\u0928: Beta Engineering College\nCertificate No / \u092a\u094d\u0930\u092e\u093e\u0923\u092a\u0924\u094d\u0930 \u0938\u0902\u0916\u094d\u092f\u093e: CERT/2026/0008\nAcademic Year / \u0936\u0948\u0915\u094d\u0937\u0923\u093f\u0915 \u0938\u0924\u094d\u0930: 2025-2026\nValid Until / \u092e\u093e\u0928\u094d\u092f\u0924\u093e \u0924\u0915: 2027-04-30\nIssue Date / \u091c\u093e\u0930\u0940 \u0915\u0930\u0928\u0947 \u0915\u0940 \u0924\u093f\u0925\u093f: 2026-04-15",
+      "expected_fields": {
+        "institution_name": "Beta Engineering College",
+        "certificate_number": "CERT/2026/0008",
+        "valid_until": "2027-04-30",
+        "academic_year": "2025-2026",
+        "issue_date": "2026-04-15"
+      },
+      "clean": {
+        "predicted_text": "\u091c\u091c APPROVAL / \u0905\u0928\u0941\u092e\u094b\u0926\u0928 \u092a\u094d\u0930\u092e\u093e\u0923\u092a\u0924\u094d\u0930 Issue Date / \u091c\u093e\u0930\u0940 \u0915\u0930\u0928\u0947 \u0915\u0940 TPH? 2026-04-15\nInstitution / \u0938\u0902\u0938\u0942\u0925\u093e\u0928: Beta Engineering College\nCertificate No / \u092a\u094d\u0930\u092e\u093e\u0923\u092a\u0924\u094d\u0930 aT: CERT/2026/0008\nAcademic Year / Staaf \u0938\u0924\u094d\u0930: 2025-2026\nValid Until / \u092e\u093e\u0928\u0942\u092f\u0924\u093e \u0924\u0915: 2027-04-30",
+        "predicted_fields": {},
+        "cer": 0.4157,
+        "wer": 0.5676,
+        "exact_transcription": 0.0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "corrupted": {
+        "predicted_text": "7 59 \u00bb & an \u00a9 2 8 \u00a9 [oy > 2\nfo} -8e8 3\nfo} Pu g 3\no g \u00a7\n228 8 8\nSEE E\n-l ;\nfF E\n< 3 |\n> a EF\n\u0939\u0947 3 Ok \u20ac\nx oS\nep Sy\nFo PS EES\noe tee 8\n< sg eis\nSO PR 233",
+        "predicted_fields": {},
+        "cer": 0.851,
+        "wer": 1.5405,
+        "exact_transcription": 0.0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      }
+    }
+  ],
+  "seed": 42
+}

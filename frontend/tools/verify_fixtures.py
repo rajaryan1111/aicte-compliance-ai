@@ -94,8 +94,16 @@ def _is_utc_timestamp(value: str) -> bool:
     return parsed.tzinfo is not None and parsed.utcoffset() is not None
 
 
+def _is_iso_date(value: str) -> bool:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return parsed is not None
+
+
 def _compare(actual: Any, expected: Any, path: str, problems: list[str]) -> None:
-    """Compare recorded and live payloads, treating checked_at as opaque."""
+    """Compare recorded and live payloads, treating checked_at and evaluation_date as dynamic."""
     if isinstance(expected, dict):
         if not isinstance(actual, dict):
             problems.append(f"{path}: expected an object, got {type(actual).__name__}")
@@ -106,6 +114,12 @@ def _compare(actual: Any, expected: Any, path: str, problems: list[str]) -> None
             problems.append(f"{path}.{key}: in the fixture, missing from the live response")
         for key in sorted(set(expected) & set(actual)):
             if key == "checked_at":
+                continue
+            if key == "evaluation_date":
+                # Evaluation date is dynamic (evaluates as today's date in UTC).
+                # Verify that both are well-formed ISO dates rather than failing across calendar days.
+                if not _is_iso_date(str(actual[key])):
+                    problems.append(f"{path}.{key}: live value {actual[key]!r} is not a valid ISO date")
                 continue
             _compare(actual[key], expected[key], f"{path}.{key}", problems)
         return
@@ -118,6 +132,17 @@ def _compare(actual: Any, expected: Any, path: str, problems: list[str]) -> None
         for index, (actual_item, expected_item) in enumerate(zip(actual, expected, strict=False)):
             _compare(actual_item, expected_item, f"{path}[{index}]", problems)
         return
+    if isinstance(actual, str) and isinstance(expected, str):
+        # Handle dynamic evaluation date in expiry message:
+        # e.g., "Document expiry date 2020-01-01 is before the evaluation date 2026-10-24."
+        date_prefix = "is before the evaluation date "
+        if date_prefix in actual and date_prefix in expected:
+            act_prefix, _, act_eval_date = actual.partition(date_prefix)
+            exp_prefix, _, exp_eval_date = expected.partition(date_prefix)
+            act_date = act_eval_date.rstrip(".")
+            exp_date = exp_eval_date.rstrip(".")
+            if act_prefix == exp_prefix and _is_iso_date(act_date) and _is_iso_date(exp_date):
+                return
     if actual != expected:
         problems.append(f"{path}: live {actual!r} != fixture {expected!r}")
 

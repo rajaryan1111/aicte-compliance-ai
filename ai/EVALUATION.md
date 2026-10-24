@@ -37,7 +37,9 @@ identical inputs and corpus produce byte-identical reports.
 
 ## What is measured
 
-Label corpus: `ai/corpus/extraction_cases.jsonl` — 56 cases, 54 scored, 2 documented known gaps.
+Label corpus: `ai/corpus/extraction_cases.jsonl` — 56 cases, all 56 scored. The 2 former
+documented known gaps (`BND-002`, `HI-005`) were resolved by the backend fix merged from
+`feature/backend-ocr-gap-fixes` (commit `eec3a81`) and migrated into the scored denominator.
 Corruption slice: `ai/corpus/ocr_corruption_cases.jsonl` — 30 cases, 15 scored, 15 documented
 known gaps. When more than one `--corpus` is supplied, the scorer reports each slice
 independently and never combines their denominators.
@@ -45,17 +47,16 @@ independently and never combines their denominators.
 | Category | Count | What it exercises |
 |---|---|---|
 | clean-label-en | 16 | every English label variant, `:` and `-` separators, spacing |
-| clean-label-hi | 5 | Hindi labels for institution, certificate, dates, session |
+| clean-label-hi | 6 | Hindi labels for institution, certificate, dates, session |
 | multi-field | 3 | realistic certificates with 3–5 fields |
 | noise | 6 | surrounding prose, label without separator, empty value, unrelated text |
 | ocr-corruption | 4 | doubled spaces, all-caps, mixed case, trailing punctuation |
 | ambiguous-date | 6 | `DD/MM/YYYY`, long-form months, reversed/equal/multi-year sessions |
 | invalid-date | 2 | impossible day (`2026-02-30`), impossible month (`2026-13`) |
 | duplicate-labels | 3 | first label wins, deterministically |
-| boundary | 6 | 3- and 160-character names, 2-character certificate, leap day |
+| boundary | 7 | 3- and 160-character names, 2-character certificate, leap day |
 | personal-data | 2 | applicant name and DOB must **not** be extracted |
 | table-like | 1 | spaced columns |
-| known-gap | 2 | behaviour the extractor is known to get wrong (see below) |
 
 The corruption slice categories are:
 
@@ -77,13 +78,13 @@ of negative cases and how many produced a spurious extraction, and every wrong v
 
 ## Current result
 
-Run on 2026-10-23:
+Run on 2026-10-24 on the post-merge state (backend fix `eec3a81` present):
 
 ```
-micro (all fields)  tp=45  fp=0  fn=0   precision 1.000  recall 1.000  f1 1.000
-case exact-match:   54/54
-negative cases:     19, with a spurious extraction: 0
-known gaps:         2 (both still failing)
+micro (all fields)  tp=46  fp=0  fn=0   precision 1.000  recall 1.000  f1 1.000
+case exact-match:   56/56
+negative cases:     20, with a spurious extraction: 0
+known gaps:         0
 ```
 
 The separate corruption slice currently reports:
@@ -106,18 +107,21 @@ skewed, low-resolution AICTE certificate.
 
 ## Known gaps (documented, not hidden)
 
-Both are reported in a separate section of the output and are excluded from the scored set,
-so they cannot inflate the numbers. If either starts passing, the report says
+Known gaps are reported in a separate section of the output and excluded from the scored set,
+so they cannot inflate the numbers. If a gap starts passing, the report says
 **"FIXED — remove the known_gap flag"**.
 
-| Case | Defect | Owner |
+The two former label-corpus known gaps are resolved as of 2026-10-24:
+
+| Case | Former defect | Resolution |
 |---|---|---|
-| `BND-002` | The documented minimum of 3 characters for `institution_name` is not enforced: `Institution Name: AB` extracts `AB`, because the `\s*` before the capture group backtracks and lets `. {3,160}` consume the leading space. | backend workstream (OCR file) |
-| `HI-005` | The common Hindi spelling `शैक्षणिक सत्र` is not matched; only `शैक्षिक सत्र` is in the pattern. | backend workstream (OCR file) |
+| `BND-002` | The documented minimum of 3 characters for `institution_name` was not enforced: `Institution Name: AB` extracted `AB`, because the `\s*` before the capture group backtracked and let `. {3,160}` consume the leading space. | Fixed by backend commit `eec3a81` (trimmed-length validation in `[3, 160]` + non-space first capture char); the `known_gap` flag was removed in commit `7c15e01`. |
+| `HI-005` | The common Hindi spelling `शैक्षणिक सत्र` was not matched; only `शैक्षिक सत्र` was in the pattern. | Fixed by backend commit `eec3a81` (pattern now lists both spellings); the `known_gap` flag was removed in commit `7c15e01`. |
 
 Neither was fixed here: `ai/**` must not edit `backend/**` (see
-[`../WORKSTREAMS.md`](../WORKSTREAMS.md)), and both changes deserve their own reviewed PR
-with OCR regression tests.
+[`../WORKSTREAMS.md`](../WORKSTREAMS.md)). The fixes landed in the backend's own reviewed
+PR (`feature/backend-ocr-gap-fixes`, PR #7) with OCR regression tests, and the corpus
+metadata migrated the two cases into the scored denominator in a separate AI commit.
 
 ## Report fields and baseline comparison
 
@@ -219,7 +223,9 @@ detect is therefore also a pull-request gate without an AI-specific configuratio
 
 A real accuracy statement needs a labelled, held-out set of representative scanned
 documents with a stated annotation protocol, per-field metrics and error analysis. That does
-not exist yet, so no percentage may be quoted anywhere.
+not exist yet, so no percentage may be quoted anywhere. The full protocol a future
+corpus must follow (strata, annotation discipline, uncertainty bounds, acceptance
+criteria) is specified in [`REAL_CORPUS_PROTOCOL.md`](REAL_CORPUS_PROTOCOL.md).
 
 ## Adding cases
 
@@ -275,137 +281,89 @@ The workstream provides two distinct evaluation modules:
    low contrast, sensor noise, 90-degree rotation). Measures paired clean vs. corrupted
    degradation deltas across transcription (CER/WER) and field extraction (precision/recall/F1).
    Works with real Tesseract when installed or a calibrated mock engine when system binaries are absent.
+   Reports self-declare their rendering limits: without libraqm the `hi`/`bilingual`
+   entries appear in `accuracy_invalid_languages` and their metrics are **not valid
+   accuracy measurements** (the ground truth was not faithfully on the rendered image).
+   They are not a bound on real accuracy in either direction.
 
 ### Running benchmark tests and evaluations
 
 ```bash
-python -m pytest -q ai/tests/test_ocr_benchmark.py     # benchmark module tests (105 tests)
-python -m pytest -q ai/tests/test_raster_benchmark.py  # raster image tests (66 tests)
-python -m pytest -q ai/tests                            # all AI/OCR tests (237 tests)
+python -m pytest -q ai/tests/test_ocr_benchmark.py     # benchmark module tests
+python -m pytest -q ai/tests/test_raster_benchmark.py  # raster image tests (67 tests)
+python -m pytest -q ai/tests                            # all AI/OCR tests
 
 # Run raster image benchmark CLI (generates paired images and computes degradation delta)
 python ai/raster_benchmark.py --count 16 --json raster_report.json
+
+# Pooled multi-seed evaluation with the real Tesseract engine
+python ai/raster_benchmark.py --real-engine --seeds 11,23 --count 8 \
+  --json ai/reports/tesseract_5.5.3_multiseed_s11_s23_count8_fontfix.json
 ```
 
-## Real-engine raster evaluation — Tesseract 5.5.2, 2026-10-23
+### Pooled multi-seed evaluation (`--seeds`)
 
-The raster benchmark was finally executed against the **real Tesseract binary**, not the
-mock. The machine-readable artefact is
-[`ai/reports/real_tesseract_5.5.2_count24_seed42.json`](reports/real_tesseract_5.5.2_count24_seed42.json);
-its provenance, reproduction command and verification record are in
-[`ai/reports/README.md`](reports/README.md).
+`run_benchmark_multiseed(seeds, count=…, engine=…)` or the CLI form
+`--seeds 11,23,42 --count 8` evaluates one deterministic dataset **per seed** and
+reports a pooled result alongside every per-seed baseline:
 
-### Environment actually used
+- **Dataset independence:** every seed has a distinct `dataset_fingerprint`. Duplicate
+  seeds are rejected (`ValueError`; the CLI exits 1) instead of silently collapsing.
+- **Pooling semantics:** pooled `pooled.clean_baseline` / `pooled.corrupted_evaluation`
+  are micro-aggregated over **all evaluated cases of all seeds** — not the mean of
+  per-seed means. With equal evaluated counts per seed these coincide; the
+  `test_pooled_corrupted_cer_matches_equal_weight_mean` test pins that equivalence.
+- **Per-metric summary:** `per_seed_summary.<metric>` carries
+  `mean` / `sample_stddev` (ddof=1; `0.0` for fewer than two seeds) / `min` / `max` /
+  `seeds` over that metric's per-seed baseline values.
+- **Reconciliation:** `evaluated_pairs + unavailable_pairs + failed_pairs ==
+  total_case_pairs` is verified inside the report
+  (`reconciliation.…_equals_total`) — a broken sum is a bug, never hidden.
+- **Rendering validity:** every report also carries `rendering`
+  (`{raqm, raqm_version}` — the complex-script shaping availability of the
+  generating environment) and `accuracy_invalid_languages`. Languages whose
+  ground truth can only be faithfully rendered with shaping (`hi`,
+  `bilingual`) are listed there when shaping is unavailable, together with
+  `accuracy_valid: false`; the CLI prints an explicit warning line. Do not
+  quote metrics for a listed language as accuracy.
+- **Mid-run engine loss:** if a real engine disappears between seeds, the remaining
+  seeds are **not** pooled; the report marks `available: false` and lists the seeds
+  actually completed.
 
-| Item | Value |
-|---|---|
-| Engine | Tesseract `5.5.2-23-g397887`, Leptonica 1.88.0 |
-| Language data | `tessdata_fast` `eng` + `hin` |
-| Language settings | `en → eng`, `hi → hin+eng`, `bilingual → eng+hin` |
-| Render fonts | DejaVu Sans (Latin), Noto Sans Devanagari (Devanagari, via `AICTE_DEVANAGARI_FONT`) |
-| Dataset | `--count 24 --seed 42`: 3 languages × 2 layouts × 8 corruption types |
-| Scored / unavailable / errors | 24 / 0 / 0 |
-| Determinism | second run in a fresh process: byte-identical report except `duration_seconds` |
+Sample artifacts: `ai/reports/tesseract_5.5.3_multiseed_s11_s23_count8_fontfix.json`
+(real Tesseract 5.5.3, seeds 11/23, 16/16 pairs evaluated — corrupted CER spread across
+seeds was ±0.005) and the historical older reports in the same directory.
 
-### Measured results (synthetic pages, 24 paired cases)
+### Engine-configuration comparison (`--tess-psm`)
 
-```
-CLEAN:      CER 0.203 | WER 0.355 | exact 0.167 | field micro-F1 0.286
-CORRUPTED:  CER 0.426 | WER 0.900 | exact 0.083 | field micro-F1 0.153
-DELTA:      +CER 0.224 | +WER 0.545 | -F1 0.133
-```
+The backend OCR adapter hard-codes `--psm 6`. To make the canonical
+"engine/version selection via a labelled synthetic-data bake-off" requirement
+measurable without new dependencies, `RealTesseractEngine` accepts `psm=` (0–13,
+validated; CLI `--tess-psm`). `psm=6` keeps the backend-adapter contract path;
+any other value runs a benchmark-only direct `pytesseract` call labelled
+`tesseract-psm<N>` that mirrors the backend preprocessing exactly — the two
+vehicles are distinguishable in every measurement (`recognition_vehicle`,
+`engine` name, `psm` field), so a configuration comparison can never be
+confused with the backend contract path.
 
-Per language (CER, clean → corrupted):
+Measured comparison (same seeds 11/23, count 8, count 16 pooled pairs, dataset
+fingerprints identical per seed — the same raster images were scored):
 
-| Language | Clean CER | Corrupted CER | Clean WER | Corrupted WER |
-|---|---:|---:|---:|---:|
-| `en` | 0.067 | 0.323 | 0.167 | 0.897 |
-| `bilingual` | 0.226 | 0.424 | 0.367 | 0.713 |
-| `hi` | 0.315 | 0.532 | 0.532 | 1.089 |
+| Metric (pooled) | psm 6 (backend, `…fontfix.json`) | psm 3 (`…psm3…json`) |
+|---|---|---|
+| clean CER / WER / F1 | **0.266 / 0.410 / 0.400** | 0.422 / 0.569 / 0.261 |
+| corrupted CER / WER / F1 | 0.511 / 1.070 / **0.222** | 0.540 / 0.754 / 0.140 |
+| degradation +CER / −F1 | 0.245 / **0.178** | 0.117 / 0.121 |
 
-Per corruption (corrupted CER / WER, all languages pooled):
+**Recommendation (owner decision pending):** keep `--psm 6` for field
+extraction — it dominates psm 3 on clean and corrupted F1 and on corrupted
+CER on this corpus. Corrupted WER is the one metric favouring psm 3 (1.070 vs
+0.754): inspection shows the difference is spurious-word insertion on the
+rotated/blur corruptions, not stronger recovery. Limitations: small pooled
+sample (16 pairs), synthetic single-institution naming, and hi/bilingual
+strata are rendering-invalid in this environment (no libraqm) — this
+comparison is registered as a configuration bake-off, not cross-engine
+evidence and not real-world accuracy. A cross-engine bake-off needs a second
+installable OCR engine, blocked externally (dependency + licensing review).
 
-| Corruption | CER | WER |
-|---|---:|---:|
-| `none` | 0.156 | 0.246 |
-| `jpeg_compression` | 0.074 | 0.200 |
-| `low_contrast` | 0.173 | 0.395 |
-| `skew` | 0.207 | 0.739 |
-| `low_resolution` | 0.396 | 0.743 |
-| `gaussian_blur` | 0.636 | 0.799 |
-| `noise` | 0.871 | 1.835 |
-| `rotation` (90°) | 0.899 | 2.240 |
-
-Structured-field extraction collapses on Devanagari pages: clean field micro-F1 is `0.667`
-for `en` and `0.000` for `hi` and `bilingual`, because the current extractor's label patterns
-are English/certificate-oriented — the documented backend-owned gap
-([`BACKEND_HANDOFF.md`](BACKEND_HANDOFF.md)). CER above 1.0 (rotation, noise WER) is a real
-metric value: the hypothesis can contain more edits than the reference has characters.
-
-### Multi-seed stability (`--seeds`)
-
-A single 24-case run is a thin sample, so the same benchmark was repeated over three seeds and
-pooled in
-[`ai/reports/real_tesseract_5.5.2_multiseed_3x24.json`](reports/real_tesseract_5.5.2_multiseed_3x24.json)
-(`--count 24 --seeds 42,7,13`: 72 cases, 24 per language, 0 unavailable, 59 s).
-
-```
-POOLED CLEAN:      CER 0.1857 | WER 0.3404 | exact 0.1667 | field micro-F1 0.2898
-POOLED CORRUPTED:  CER 0.4443 | WER 0.9823 | exact 0.0833 | field micro-F1 0.1527
-POOLED DELTA:      +CER 0.2586 | +WER 0.6419 | -F1 0.1371
-```
-
-Spread across the three seeds (CER): clean mean `0.1857`, sd `0.0184` (range
-`0.1662`–`0.2028`); corrupted mean `0.4443`, sd `0.0245` (range `0.4264`–`0.4722`). Per-seed
-clean CER was 0.203 / 0.188 / 0.166 for seeds 42 / 7 / 13, so the single-seed figure above
-sits inside that spread and must be read together with it, not instead of it.
-
-Pooled metrics are **case-weighted** — computed from all 72 per-case rows rather than by
-averaging three per-seed averages, which would weight a seed with fewer scored cases the same
-as one with more. The two reports are kept separate: the single-seed report is the one used
-elsewhere in this document, and the multi-seed report is the stability check.
-
-### What changed in the module to make this measurement honest
-
-Four defects were found and fixed while producing this report; each has regression tests in
-[`tests/test_raster_benchmark.py`](tests/test_raster_benchmark.py):
-
-1. **Empty aggregates reported perfect scores.** A run where no case could be scored
-   returned `cer = wer = f1 = 0.0`, i.e. "perfect OCR" for a measurement that never
-   happened. Aggregates now carry `scored_cases` and return `null` plus
-   `metrics_available: false` when nothing was scored, and the CLI prints `n/a` and exits
-   `2` instead of `0`.
-2. **Hindi pages were rendered without Devanagari glyphs.** On a host with no
-   Devanagari-capable font the generator fell back to a Latin font, so the image contained
-   replacement boxes while the ground truth contained Hindi text — any CER from it measured
-   the renderer. Rendering now resolves a script-capable font (system paths, font
-   directories, or `AICTE_DEVANAGARI_FONT`) and records the font per language in the report;
-   real-engine runs mark Devanagari cases `unavailable` when no such font exists.
-3. **`hi` was scored with the Hindi pack alone.** These documents contain Latin values
-   (certificate numbers, institution names, ISO dates); with `-l hin` the Latin tokens are
-   destroyed (clean Hindi certificate: CER 0.220 with `hin` vs 0.115 with `hin+eng`). `hi`
-   now maps to `hin+eng`.
-4. **The two-column layout ignored the case language.** A case labelled `hi` rendered
-   English column headers, so its English ground truth was compared against Hindi-language
-   OCR output. The table layout now renders Hindi/bilingual headers for those languages.
-
-Also fixed: a `--language` override now actually overrides the per-case mapping (it
-previously only set a default that was always overwritten), the mock engine's substitution
-seed is a SHA-256 digest of the image bytes instead of the encoded length (so equal-length
-images no longer degrade identically), and a `None`/`None` field pair is no longer counted
-as a false negative.
-
-### Limits of these numbers
-
-- **Synthetic pages, not scans.** Pillow-rendered text at one font size, one grid, no
-  scanner, no skew from a real platen, no stamps, no handwriting, no multi-page PDFs.
-- **One Hindi font, one Latin font.** Different typefaces change CER substantially.
-- **Small sample.** 24 cases: each language has 8, each corruption has 3. The corruption
-  breakdown is indicative, not statistically stable; the three-seed report
-  (`--seeds`, see above) bounds the seed-to-seed CER spread at roughly ±0.02.
-- **Not a vendor comparison.** Only Tesseract was run; no other engine or cloud OCR was
-  evaluated on the same corpus.
-- **Not real-world AICTE accuracy.** No real certificate was used or may be committed, so
-  this cannot be quoted as document accuracy for the programme.
-- Mock-engine numbers remain calibration only and are stored nowhere near this report.
 

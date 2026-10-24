@@ -182,12 +182,12 @@ def extract_institution_fields(
     lines = [line for line in lines if line]
 
     patterns: tuple[tuple[str, re.Pattern[str]], ...] = (
-        ("institution_name", re.compile(r"^(?:name of institution|institution name|name of college|college name|संस्थान का नाम|संस्था का नाम|महाविद्यालय का नाम|कॉलेज का नाम)\s*[:\-]\s*(.{3,160})$", re.I)),
+        ("institution_name", re.compile(r"^(?:name of institution|institution name|name of college|college name|संस्थान का नाम|संस्था का नाम|महाविद्यालय का नाम|कॉलेज का नाम)\s*[:\-]\s*(\S.{2,159})$", re.I)),
         ("certificate_number", re.compile(r"^(?:certificate no\.?|certificate number|reference no\.?|reference number|document no\.?|प्रमाणपत्र संख्या|प्रमाणपत्र क्रमांक|संदर्भ संख्या|दस्तावेज़ संख्या)\s*[:\-]\s*([A-Z0-9][A-Z0-9/._\-]{1,79})$", re.I)),
         ("application_reference", re.compile(r"^(?:application ref(?:erence)?|application id|application no\.?|आवेदन संदर्भ|आवेदन संख्या|आवेदन क्रमांक)\s*[:\-]\s*([A-Z0-9][A-Z0-9/._\-]{1,79})$", re.I)),
         ("issue_date", re.compile(r"^(?:date of issue|issued on|issue date|जारी करने की तिथि|जारी दिनांक|निर्गमन तिथि)\s*[:\-]\s*(.+)$", re.I)),
         ("valid_until", re.compile(r"^(?:valid until|valid up to|valid upto|valid till|expiry date|expires on|वैधता तक|समाप्ति तिथि|अंतिम वैधता तिथि)\s*[:\-]\s*(.+)$", re.I)),
-        ("academic_year", re.compile(r"^(?:academic year|academic session|शैक्षणिक वर्ष|शैक्षिक सत्र)\s*[:\-]\s*((?:20\d{2})\s*[-/]\s*(?:20\d{2}))$", re.I)),
+        ("academic_year", re.compile(r"^(?:academic year|academic session|शैक्षणिक वर्ष|शैक्षिक वर्ष|शैक्षणिक सत्र|शैक्षिक सत्र)\s*[:\-]\s*((?:20\d{2})\s*[-/]\s*(?:20\d{2}))$", re.I)),
     )
 
     for line in lines:
@@ -196,6 +196,8 @@ def extract_institution_fields(
             if not match or field_name in fields:
                 continue
             raw_value = match.group(1).strip()
+            if field_name == "institution_name" and (len(raw_value) < 3 or len(raw_value) > 160):
+                continue
             if field_name in {"issue_date", "valid_until"}:
                 parsed_date = parse_iso_date_candidate(raw_value)
                 if parsed_date is None:

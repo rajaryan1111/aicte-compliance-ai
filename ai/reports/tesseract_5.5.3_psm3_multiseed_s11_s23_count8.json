@@ -1,0 +1,162 @@
+{
+  "available": true,
+  "engine": "tesseract-psm3",
+  "engine_version": "5.5.3",
+  "engine_type": "real",
+  "seeds": [
+    11,
+    23
+  ],
+  "count_per_seed": 8,
+  "total_case_pairs": 16,
+  "evaluated_pairs": 16,
+  "unavailable_pairs": 0,
+  "failed_pairs": 0,
+  "reconciliation": {
+    "evaluated_plus_unavailable_plus_failed_equals_total": true
+  },
+  "total_duration_seconds": 7.411,
+  "per_seed": [
+    {
+      "seed": 11,
+      "dataset_fingerprint": "64a7fa075cb000ad",
+      "evaluated_count": 8,
+      "unavailable_count": 0,
+      "error_count": 0,
+      "duration_seconds": 3.817,
+      "clean_baseline": {
+        "cer": 0.4244,
+        "wer": 0.5737,
+        "exact": 0.0,
+        "precision": 1.0,
+        "recall": 0.15,
+        "f1": 0.2609
+      },
+      "corrupted_evaluation": {
+        "cer": 0.5429,
+        "wer": 0.7718,
+        "exact": 0.0,
+        "precision": 1.0,
+        "recall": 0.075,
+        "f1": 0.1395
+      },
+      "degradation_delta": {
+        "cer_increase": 0.1185,
+        "wer_increase": 0.1981,
+        "f1_drop": 0.1214
+      },
+      "accuracy_invalid_languages": [
+        "bilingual",
+        "hi"
+      ]
+    },
+    {
+      "seed": 23,
+      "dataset_fingerprint": "c41a94d5c36ca82f",
+      "evaluated_count": 8,
+      "unavailable_count": 0,
+      "error_count": 0,
+      "duration_seconds": 3.594,
+      "clean_baseline": {
+        "cer": 0.4206,
+        "wer": 0.5638,
+        "exact": 0.0,
+        "precision": 1.0,
+        "recall": 0.15,
+        "f1": 0.2609
+      },
+      "corrupted_evaluation": {
+        "cer": 0.537,
+        "wer": 0.7366,
+        "exact": 0.0,
+        "precision": 1.0,
+        "recall": 0.075,
+        "f1": 0.1395
+      },
+      "degradation_delta": {
+        "cer_increase": 0.1164,
+        "wer_increase": 0.1728,
+        "f1_drop": 0.1214
+      },
+      "accuracy_invalid_languages": [
+        "bilingual",
+        "hi"
+      ]
+    }
+  ],
+  "pooled": {
+    "clean_baseline": {
+      "cer": 0.4225,
+      "wer": 0.5687,
+      "exact": 0.0,
+      "precision": 1.0,
+      "recall": 0.15,
+      "f1": 0.2609
+    },
+    "corrupted_evaluation": {
+      "cer": 0.5399,
+      "wer": 0.7542,
+      "exact": 0.0,
+      "precision": 1.0,
+      "recall": 0.075,
+      "f1": 0.1395
+    },
+    "degradation_delta": {
+      "cer_increase": 0.1174,
+      "wer_increase": 0.1855,
+      "f1_drop": 0.1214
+    }
+  },
+  "per_seed_summary": {
+    "clean_cer": {
+      "mean": 0.4225,
+      "sample_stddev": 0.0027,
+      "min": 0.4206,
+      "max": 0.4244,
+      "seeds": 2
+    },
+    "clean_wer": {
+      "mean": 0.5687,
+      "sample_stddev": 0.007,
+      "min": 0.5638,
+      "max": 0.5737,
+      "seeds": 2
+    },
+    "clean_f1": {
+      "mean": 0.2609,
+      "sample_stddev": 0.0,
+      "min": 0.2609,
+      "max": 0.2609,
+      "seeds": 2
+    },
+    "corrupted_cer": {
+      "mean": 0.54,
+      "sample_stddev": 0.0042,
+      "min": 0.537,
+      "max": 0.5429,
+      "seeds": 2
+    },
+    "corrupted_wer": {
+      "mean": 0.7542,
+      "sample_stddev": 0.0249,
+      "min": 0.7366,
+      "max": 0.7718,
+      "seeds": 2
+    },
+    "corrupted_f1": {
+      "mean": 0.1395,
+      "sample_stddev": 0.0,
+      "min": 0.1395,
+      "max": 0.1395,
+      "seeds": 2
+    }
+  },
+  "rendering": {
+    "raqm": false,
+    "raqm_version": null
+  },
+  "accuracy_invalid_languages": [
+    "bilingual",
+    "hi"
+  ]
+}

@@ -25,6 +25,7 @@ Invariants:
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import io
 import json
@@ -32,14 +33,14 @@ import math
 import os
 import random
 import shutil
-import statistics
 import sys
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
+from PIL import features as PIL_features
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -49,35 +50,23 @@ if str(REPO_ROOT) not in sys.path:
 # Language mapping: dataset language code → Tesseract language code
 # ---------------------------------------------------------------------------
 
-#: Dataset language → Tesseract language spec.
-#:
-#: ``hi`` documents are rendered with Hindi labels *and* Latin values
-#: (certificate numbers, institution names, ISO dates), so the Hindi pack alone
-#: destroys the Latin tokens: measured on the clean Hindi certificate,
-#: ``hin`` gives CER 0.220 against ``hin+eng`` CER 0.115. Both packs are
-#: therefore required for a fair Hindi measurement.
 DATASET_LANG_TO_TESSERACT: dict[str, str] = {
     "en": "eng",
-    "hi": "hin+eng",
+    "hi": "hin",
     "bilingual": "eng+hin",
 }
 
 # ---------------------------------------------------------------------------
-# Font selection, script coverage and graceful fallback
+# Font selection with graceful fallback
 # ---------------------------------------------------------------------------
 
-#: Languages whose rendered documents require Devanagari glyph coverage.
-DEVANAGARI_LANGUAGES: frozenset[str] = frozenset({"hi", "bilingual"})
-
-#: Environment variable pointing at a Devanagari-capable font file. Used to make
-#: real-engine Hindi evaluation reproducible on hosts without a system font.
-DEVANAGARI_FONT_ENV = "AICTE_DEVANAGARI_FONT"
-
-#: Latin-script fonts, in preference order.
-_LATIN_FONT_CANDIDATES: list[str] = [
+_SYSTEM_FONT_CANDIDATES: list[str] = [
     # macOS system / supplemental fonts
     "/System/Library/Fonts/Supplemental/Arial.ttf",
-    "/System/Library/Fonts/Supplemental/Helvetica.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",
+    "/System/Library/Fonts/Supplemental/Devanagari Sangam MN.ttc",
+    "/System/Library/Fonts/Supplemental/DevanagariMT.ttc",
     "/System/Library/Fonts/Geneva.ttf",
     # Linux font paths
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -85,100 +74,66 @@ _LATIN_FONT_CANDIDATES: list[str] = [
     "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
 ]
 
-#: Fonts known to carry Devanagari glyph coverage, in preference order.
-_DEVANAGARI_FONT_CANDIDATES: list[str] = [
-    # macOS system / supplemental fonts
-    "/System/Library/Fonts/Supplemental/DevanagariMT.ttc",
-    "/System/Library/Fonts/Supplemental/Devanagari Sangam MN.ttc",
-    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-    # Linux font paths
-    "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
-    "/usr/share/fonts/truetype/noto/NotoSansDevanagari[wdth,wght].ttf",
-    "/usr/share/fonts/truetype/lohit-devanagari/Lohit-Devanagari.ttf",
-    "/usr/share/fonts/truetype/Gargi/Gargi.ttf",
-    "/usr/share/fonts/truetype/samyak/Samyak-Devanagari.ttf",
-    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-    # Windows
-    "C:/Windows/Fonts/mangal.ttf",
-    "C:/Windows/Fonts/Nirmala.ttf",
-]
-
-#: Directories scanned for a file whose name mentions Devanagari.
-_FONT_SEARCH_DIRS: tuple[str, ...] = (
-    "~/.fonts",
-    "~/.local/share/fonts",
-    "/usr/local/share/fonts",
-)
-
-#: Kept for backwards compatibility with earlier imports of this module.
-_SYSTEM_FONT_CANDIDATES: list[str] = _DEVANAGARI_FONT_CANDIDATES + _LATIN_FONT_CANDIDATES
+# Probing samples used to verify a candidate font actually renders the
+# required script.  Some fonts (notably TTC faces such as Devanagari MT)
+# contain digits but lack Latin glyphs, substituting a shared "tofu" box for
+# every missing letter; rendering such a font silently corrupts the whole
+# benchmark, because every letter then OCRs as O/0 while digits stay correct.
+_LATIN_SAMPLE = "ABCDEfgHIJKLMqr"  # mixed shapes: round, straight, tall, short
+_DEVANAGARI_SAMPLE = "कखगसहडआ"
 
 
-def _iter_font_files(directory: Path) -> list[Path]:
-    if not directory.is_dir():
-        return []
-    return sorted(
-        p
-        for p in directory.rglob("*")
-        if p.suffix.lower() in {".ttf", ".ttc", ".otf"} and p.is_file()
-    )
+def _font_renders_sample(font: ImageFont.FreeTypeFont | ImageFont.ImageFont, sample: str) -> bool:
+    """Return True when *font* renders every character of *sample* distinctly.
 
-
-def resolve_render_font(language: str = "en") -> Optional[str]:
-    """Return the font file used to render *language*, or ``None`` if none applies.
-
-    Latin-script documents fall back to Pillow's built-in font, so ``None`` is
-    normal there. For Devanagari languages ``None`` means the rendered image
-    would contain replacement boxes instead of the labelled text — callers must
-    treat that as "cannot measure", never as an OCR result.
+    Each character is drawn onto a scratch image (the same draw path the
+    document renderer uses) and the bitmaps are compared.  A font that
+    substitutes one shared glyph for several distinct characters (the
+    classic tofu box) is rejected.  This is an empirical coverage check,
+    not a name heuristic.
     """
-    if language in DEVANAGARI_LANGUAGES:
-        override = os.environ.get(DEVANAGARI_FONT_ENV)
-        if override and os.path.isfile(override):
-            return override
-        for path in _DEVANAGARI_FONT_CANDIDATES:
-            if os.path.isfile(path):
-                return path
-        for directory in _FONT_SEARCH_DIRS:
-            for candidate in _iter_font_files(Path(os.path.expanduser(directory))):
-                if "devanagari" in candidate.name.lower():
-                    return str(candidate)
-        return None
-
-    for path in _LATIN_FONT_CANDIDATES:
-        if os.path.isfile(path):
-            return path
-    return None
-
-
-def script_is_renderable(language: str = "en") -> bool:
-    """True when the document for *language* can be rendered with real glyphs."""
-    if language in DEVANAGARI_LANGUAGES:
-        return resolve_render_font(language) is not None
-    return True
+    bitmaps: list[bytes] = []
+    for ch in sample:
+        try:
+            scratch = Image.new("L", (64, 64), 0)
+            ImageDraw.Draw(scratch).text((8, 8), ch, fill=255, font=font)
+            data = scratch.tobytes()
+        except Exception:
+            return False
+        if not any(data):
+            return False
+        bitmaps.append(data)
+    # Distinct characters must not share one identical bitmap (tofu).
+    return len(set(bitmaps)) == len(bitmaps)
 
 
 def _get_font(size: int = 20, language: str = "en") -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     """Return a usable FreeType font or fallback to Pillow default.
 
-    A Devanagari-capable font is required for ``hi``/``bilingual`` documents;
-    when none is installed the Latin font (or Pillow's bitmap font) is returned
-    so that rendering still succeeds, and ``script_is_renderable`` reports the
-    loss of script coverage to the caller.
+    Candidates are probed in order and the first font that renders the
+    required script sample distinctly wins.  For ``hi``/``bilingual`` the
+    font must cover both Devanagari and basic Latin, because the synthetic
+    documents mix scripts on the same line (e.g. ``प्रमाणपत्र संख्या:
+    CERT/2026/0001``).
     """
-    preferred: list[str] = []
-    if language in DEVANAGARI_LANGUAGES:
-        resolved = resolve_render_font(language)
-        if resolved:
-            preferred.append(resolved)
-    preferred.extend(_LATIN_FONT_CANDIDATES)
-
-    for path in preferred:
-        if os.path.isfile(path):
+    if language in ("hi", "bilingual"):
+        for path in _SYSTEM_FONT_CANDIDATES:
+            if not os.path.isfile(path):
+                continue
             try:
-                return ImageFont.truetype(path, size)
+                font = ImageFont.truetype(path, size)
             except Exception:
                 continue
+            if _font_renders_sample(font, _DEVANAGARI_SAMPLE) and _font_renders_sample(font, _LATIN_SAMPLE):
+                return font
+    for path in _SYSTEM_FONT_CANDIDATES:
+        if os.path.isfile(path):
+            try:
+                font = ImageFont.truetype(path, size)
+            except Exception:
+                continue
+            if _font_renders_sample(font, _LATIN_SAMPLE):
+                return font
 
     return ImageFont.load_default()
 
@@ -370,8 +325,6 @@ class RasterDocumentGenerator:
 
         font_header = _get_font(26, language=language)
         font_body = _get_font(20, language=language)
-        render_font = resolve_render_font(language)
-        renderable = script_is_renderable(language)
 
         lines: list[str] = []
 
@@ -416,30 +369,7 @@ class RasterDocumentGenerator:
 
         elif layout == "two_column":
             draw.rectangle([(20, 20), (width - 20, height - 20)], outline="#333333", width=2)
-            # The table layout must honour the requested language: a case labelled
-            # ``hi`` that renders English labels would be scored against Hindi OCR
-            # output while its ground truth is English, which measures nothing.
-            if language == "hi":
-                title = "अखिल भारतीय तकनीकी शिक्षा परिषद - सारांश तालिका"
-                col1_lines = ["संस्थान", "प्रमाणपत्र संख्या", "शैक्षणिक सत्र", "मान्यता तक", "जारी करने की तिथि"]
-            elif language == "bilingual":
-                title = "AICTE SUMMARY VERIFICATION TABLE / सारांश तालिका"
-                col1_lines = [
-                    "Institution / संस्थान",
-                    "Certificate No / प्रमाणपत्र संख्या",
-                    "Academic Year / शैक्षणिक सत्र",
-                    "Valid Until / मान्यता तक",
-                    "Issue Date / जारी करने की तिथि",
-                ]
-            else:
-                title = "AICTE SUMMARY VERIFICATION TABLE"
-                col1_lines = [
-                    "Institution Name",
-                    "Certificate No",
-                    "Academic Year",
-                    "Valid Until",
-                    "Issue Date",
-                ]
+            title = "AICTE SUMMARY VERIFICATION TABLE"
             draw.text((50, 40), title, fill="black", font=font_header)
             lines.append(title)
             # Table grid lines
@@ -450,6 +380,13 @@ class RasterDocumentGenerator:
             draw.line([(50, 290), (width - 50, 290)], fill="black", width=1)
             draw.line([(450, 90), (450, 340)], fill="black", width=1)
 
+            col1_lines = [
+                "Institution Name",
+                "Certificate No",
+                "Academic Year",
+                "Valid Until",
+                "Issue Date",
+            ]
             col2_lines = [inst, cert, ay, vu, idate]
 
             y_pos = 105
@@ -466,8 +403,6 @@ class RasterDocumentGenerator:
             "ground_truth": ground_truth,
             "language": language,
             "layout": layout,
-            "render_font": render_font,
-            "script_renderable": renderable,
         }
 
     @classmethod
@@ -542,8 +477,6 @@ class RasterDocumentGenerator:
                     "corrupted_image": corrupted_img,
                     "ground_truth": doc["ground_truth"],
                     "transcription_ground_truth": doc["transcription_ground_truth"],
-                    "render_font": doc.get("render_font"),
-                    "script_renderable": doc.get("script_renderable", True),
                     "dataset_fingerprint": dataset_fp,
                 }
             )
@@ -589,10 +522,25 @@ class RealTesseractEngine(RasterOCREngine):
     """
 
     engine_name = "tesseract"
+    _VALID_PSM_RANGE = range(0, 14)
 
-    def __init__(self, language: str = "eng", *, override_language: bool = False):
+    def __init__(self, language: str = "eng", psm: int = 6):
+        """Configure the real Tesseract engine.
+
+        ``psm=6`` (the backend contract default) routes through
+        ``backend.app.ocr_pipeline.TesseractOCRAdapter`` unmodified. Any other
+        page-segmentation mode uses a direct ``pytesseract`` call that mirrors
+        the backend preprocessing exactly (grayscale, autocontrast, upscale) and
+        is labelled ``tesseract-psm<N>`` so a configuration bake-off cannot be
+        confused with the backend contract path.
+        """
+        if not isinstance(psm, int) or isinstance(psm, bool) or psm not in self._VALID_PSM_RANGE:
+            raise ValueError(f"psm must be an integer in {[int(ps) for ps in self._VALID_PSM_RANGE]}, got {psm!r}")
         self.language = language
-        self.override_language = override_language
+        self.psm = psm
+        if psm != 6:
+            # Instance-level override so reports distinguish configurations.
+            self.engine_name = f"tesseract-psm{psm}"
         self._available = shutil.which("tesseract") is not None
         self.engine_version: Optional[str] = None
         self._available_languages: set[str] = set()
@@ -636,8 +584,13 @@ class RealTesseractEngine(RasterOCREngine):
             raise RuntimeError(f"Failed to import backend OCR adapter: {exc}") from exc
 
         lang = language or self.language
-        adapter = TesseractOCRAdapter(language=lang)
-        raw_result = adapter.recognize(image_bytes)
+        if self.psm == 6:
+            adapter = TesseractOCRAdapter(language=lang)
+            raw_result = adapter.recognize(image_bytes)
+            recognition_vehicle = "backend_adapter"
+        else:
+            raw_result = self._direct_recognize(image_bytes, lang)
+            recognition_vehicle = "direct_pytesseract"
 
         # Group words by (page, line) to preserve line boundaries required by
         # extract_institution_fields (which uses ^…$ regex patterns per line).
@@ -663,9 +616,91 @@ class RealTesseractEngine(RasterOCREngine):
             "transcription": text,
             "fields": plain_fields,
             "confidence": avg_conf,
-            "engine": "tesseract",
+            "engine": self.engine_name,
             "engine_version": self.engine_version,
+            "recognition_vehicle": recognition_vehicle,
+            "psm": self.psm,
         }
+
+    def _direct_recognize(self, image_bytes: bytes, lang: str) -> dict[str, Any]:
+        """Benchmark-only recognition with a configurable PSM (non-contract path).
+
+        Deliberately mirrors the preprocessing of
+        ``backend.app.ocr_pipeline.TesseractOCRAdapter.recognize`` (grayscale,
+        autocontrast, min-700px upscale) with the same defensive decoding so a
+        PSM bake-off differs from the backend contract path only in the
+        segmentation mode. Not used for production extraction.
+        """
+        import os
+
+        if len(image_bytes) > 10 * 1024 * 1024:
+            raise RuntimeError("Image exceeds the 10 MiB processing limit.")
+        try:
+            import pytesseract
+            from PIL import Image, ImageOps
+        except ImportError as exc:
+            raise RuntimeError(f"OCR dependencies missing: {exc}") from exc
+
+        try:
+            with Image.open(io.BytesIO(image_bytes)) as source:
+                source.load()
+                image = ImageOps.grayscale(source)
+                image = ImageOps.autocontrast(image)
+                if min(image.size) < 700:
+                    scale = min(2.0, 700 / max(1, min(image.size)))
+                    new_size = (
+                        max(1, int(image.width * scale)),
+                        max(1, int(image.height * scale)),
+                    )
+                    image = image.resize(new_size)
+        except Exception as exc:
+            raise RuntimeError(f"Image could not be decoded safely: {exc}") from exc
+
+        try:
+            data = pytesseract.image_to_data(
+                image, lang=lang, config=f"--psm {self.psm}", output_type=pytesseract.Output.DICT
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Tesseract OCR failed; no result was produced: {exc}") from exc
+
+        words: list[dict[str, Any]] = []
+        texts = data.get("text") or []
+        confs = data.get("conf") or []
+        pages = data.get("page_num") or []
+        lines = data.get("line_num") or []
+        for index, raw_text in enumerate(texts):
+            if raw_text is None or not str(raw_text).strip():
+                continue
+            try:
+                conf_val = float(confs[index])
+            except (IndexError, TypeError, ValueError):
+                conf_val = 0.0
+            if conf_val < 0:
+                continue
+            try:
+                page = max(1, int(pages[index]))
+            except (IndexError, TypeError, ValueError):
+                page = 1
+            try:
+                line = max(1, int(lines[index]))
+            except (IndexError, TypeError, ValueError):
+                line = 1
+            words.append({"text": str(raw_text), "confidence": conf_val, "page": page, "line": line})
+        if not words and os.getenv("RASTER_BM_STRICT_WORDS") == "1":
+            raise RuntimeError("No words recognized under the benchmark PSM configuration.")
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            words=[
+                SimpleNamespace(
+                    text=w["text"],
+                    confidence=w["confidence"],
+                    page_number=w["page"],
+                    line_number=w["line"],
+                )
+                for w in words
+            ]
+        )
 
 
 class MockRasterOCREngine(RasterOCREngine):
@@ -709,12 +744,9 @@ class MockRasterOCREngine(RasterOCREngine):
         elif error_rate >= 0.9:
             pred_text = ""  # severe rotation/blur yields unreadable text
         else:
-            # Introduce character substitutions. The seed is derived from a stable
-            # SHA-256 digest of the image bytes (not ``hash()`` or ``len()``) so the
-            # degradation is identical in every Python process and is sensitive to
-            # the actual pixels rather than the encoded size.
+            # Introduce character substitutions
             chars = list(reference_text)
-            rng = random.Random(int(hashlib.sha256(image_bytes).hexdigest()[:16], 16))
+            rng = random.Random(len(image_bytes))
             for idx in range(len(chars)):
                 if rng.random() < error_rate:
                     chars[idx] = "X"
@@ -736,191 +768,6 @@ class MockRasterOCREngine(RasterOCREngine):
             "confidence": round(conf, 4),
             "engine": self.engine_name,
         }
-
-
-# ---------------------------------------------------------------------------
-# Aggregation, multi-seed summaries and CLI input validation
-# ---------------------------------------------------------------------------
-
-
-def aggregate_evaluations(res_list: list[dict[str, Any]]) -> dict[str, Any]:
-    """Aggregate per-case evaluation dicts into precision/recall/F1 and error rates.
-
-    When nothing was scored the metrics are ``None`` (JSON ``null``) and
-    ``scored_cases`` is 0 - never 0.0, which would read as a perfect score for a
-    measurement that did not happen.
-    """
-    if not res_list:
-        return {
-            "scored_cases": 0,
-            "cer": None,
-            "wer": None,
-            "exact": None,
-            "precision": None,
-            "recall": None,
-            "f1": None,
-        }
-    tot_tp = sum(r["tp"] for r in res_list)
-    tot_fp = sum(r["fp"] for r in res_list)
-    tot_fn = sum(r["fn"] for r in res_list)
-    p = tot_tp / (tot_tp + tot_fp) if (tot_tp + tot_fp) > 0 else 0.0
-    r = tot_tp / (tot_tp + tot_fn) if (tot_tp + tot_fn) > 0 else 0.0
-    f1 = 2 * p * r / (p + r) if (p + r) > 0 else 0.0
-    return {
-        "scored_cases": len(res_list),
-        "cer": round(sum(x["cer"] for x in res_list) / len(res_list), 4),
-        "wer": round(sum(x["wer"] for x in res_list) / len(res_list), 4),
-        "exact": round(sum(x["exact_transcription"] for x in res_list) / len(res_list), 4),
-        "precision": round(p, 4),
-        "recall": round(r, 4),
-        "f1": round(f1, 4),
-    }
-
-
-def parse_seed_list(raw: str) -> Optional[list[int]]:
-    """Parse a comma-separated seed list, or return ``None`` when it is invalid.
-
-    Rejects empty input, non-integers, negatives and duplicates: a duplicated
-    seed would silently double-weight one dataset in the pooled figures.
-    """
-    parts = [part.strip() for part in str(raw).split(",")]
-    if not parts or any(not part for part in parts):
-        return None
-    seeds: list[int] = []
-    for part in parts:
-        try:
-            value = int(part)
-        except (TypeError, ValueError):
-            return None
-        if value < 0 or value in seeds:
-            return None
-        seeds.append(value)
-    return seeds
-
-
-def _metric_stats(values: list[Optional[float]]) -> dict[str, Any]:
-    """Mean/sample-stdev/min/max for one metric across seeds (``None`` if unmeasured)."""
-    if not values or any(v is None for v in values):
-        return {"n": 0, "mean": None, "stdev": None, "min": None, "max": None}
-    numeric = [float(v) for v in values if v is not None]
-    return {
-        "n": len(numeric),
-        "mean": round(sum(numeric) / len(numeric), 4),
-        "stdev": round(statistics.stdev(numeric), 4) if len(numeric) > 1 else 0.0,
-        "min": round(min(numeric), 4),
-        "max": round(max(numeric), 4),
-    }
-
-
-def summarize_multiseed_reports(
-    seed_reports: list[tuple[int, dict[str, Any]]],
-) -> dict[str, Any]:
-    """Combine one benchmark report per seed into a pooled report with variance.
-
-    Every seed contributes its own block (metrics, counts, per-case evidence) and
-    the pooled figures are computed from the pooled per-case rows - never by
-    averaging per-seed averages, which would weight seeds with fewer scored cases
-    the same as seeds with more.
-    """
-    if not seed_reports:
-        raise ValueError("at least one (seed, report) pair is required")
-    for seed, report in seed_reports:
-        if not report.get("available"):
-            raise ValueError(f"seed {seed} has an unavailable engine report")
-
-    clean_rows: list[dict[str, Any]] = []
-    corr_rows: list[dict[str, Any]] = []
-    per_seed: list[dict[str, Any]] = []
-    for seed, report in seed_reports:
-        evaluated = [c for c in report.get("case_results", []) if c.get("status") == "evaluated"]
-        clean_rows.extend(c["clean"] for c in evaluated)
-        corr_rows.extend(c["corrupted"] for c in evaluated)
-        per_seed.append(
-            {
-                "seed": seed,
-                "dataset_fingerprint": report.get("dataset_fingerprint"),
-                "total_cases": report.get("total_cases"),
-                "evaluated_count": report.get("evaluated_count"),
-                "unavailable_count": report.get("unavailable_count"),
-                "metrics_available": report.get("metrics_available"),
-                "duration_seconds": report.get("duration_seconds"),
-                "render_fonts": report.get("render_fonts", {}),
-                "clean_baseline": report.get("clean_baseline"),
-                "corrupted_evaluation": report.get("corrupted_evaluation"),
-                "degradation_delta": report.get("degradation_delta"),
-                "case_results": report.get("case_results", []),
-            }
-        )
-
-    pooled_clean = aggregate_evaluations(clean_rows)
-    pooled_corr = aggregate_evaluations(corr_rows)
-
-    def _delta(clean_value: Optional[float], corr_value: Optional[float], *, invert: bool = False) -> Optional[float]:
-        if clean_value is None or corr_value is None:
-            return None
-        return round(clean_value - corr_value if invert else corr_value - clean_value, 4)
-
-    clean_seeds = [entry["clean_baseline"] or {} for entry in per_seed]
-    corr_seeds = [entry["corrupted_evaluation"] or {} for entry in per_seed]
-    variance = {
-        f"clean_{metric}": _metric_stats([block.get(metric) for block in clean_seeds])
-        for metric in ("cer", "wer", "exact", "f1")
-    }
-    variance.update(
-        {
-            f"corrupted_{metric}": _metric_stats([block.get(metric) for block in corr_seeds])
-            for metric in ("cer", "wer", "exact", "f1")
-        }
-    )
-
-    first = seed_reports[0][1]
-    total_cases = sum(entry["total_cases"] or 0 for entry in per_seed)
-    unavailable = sum(entry["unavailable_count"] or 0 for entry in per_seed)
-    evaluated_count = pooled_clean["scored_cases"]
-
-    return {
-        "mode": "multiseed",
-        "engine": first.get("engine"),
-        "engine_version": first.get("engine_version"),
-        "engine_type": first.get("engine_type"),
-        "seeds": [seed for seed, _ in seed_reports],
-        "count_per_seed": max((entry["total_cases"] or 0 for entry in per_seed), default=0),
-        "total_cases": total_cases,
-        "evaluated_count": evaluated_count,
-        "unavailable_count": unavailable,
-        "metrics_available": evaluated_count > 0,
-        "duration_seconds": round(
-            sum(entry["duration_seconds"] or 0.0 for entry in per_seed), 3
-        ),
-        "pooled": {
-            "clean_baseline": pooled_clean,
-            "corrupted_evaluation": pooled_corr,
-            "degradation_delta": {
-                "cer_increase": _delta(pooled_clean["cer"], pooled_corr["cer"]),
-                "wer_increase": _delta(pooled_clean["wer"], pooled_corr["wer"]),
-                "f1_drop": _delta(pooled_clean["f1"], pooled_corr["f1"], invert=True),
-            },
-        },
-        "variance": variance,
-        "per_seed": per_seed,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Engine language resolution
-# ---------------------------------------------------------------------------
-
-
-def tesseract_language_for(engine: "RealTesseractEngine", case_language: str) -> str:
-    """Resolve the Tesseract language spec for a case.
-
-    An explicit ``--language``/constructor override wins for every case (useful
-    for controlled comparisons); otherwise the dataset language is mapped through
-    :data:`DATASET_LANG_TO_TESSERACT`.
-    """
-    if getattr(engine, "override_language", False) and getattr(engine, "language", None):
-        return engine.language
-    return DATASET_LANG_TO_TESSERACT.get(case_language, "eng")
 
 
 # ---------------------------------------------------------------------------
@@ -952,8 +799,6 @@ class RasterBenchmarkScorer:
         for k in field_keys:
             ev = expected_fields.get(k)
             pv = predicted_fields.get(k)
-            if ev is None and pv is None:
-                continue
             if ev is not None and pv is not None and str(ev) == str(pv):
                 tp += 1
             elif ev is not None and pv is not None:
@@ -1007,8 +852,6 @@ class RasterBenchmarkScorer:
         corrupted_results: list[dict[str, Any]] = []
         per_corruption: dict[str, list[dict[str, Any]]] = {}
         per_language: dict[str, list[dict[str, Any]]] = {}
-        clean_per_corruption: dict[str, list[dict[str, Any]]] = {}
-        clean_per_language: dict[str, list[dict[str, Any]]] = {}
         case_results: list[dict[str, Any]] = []
         unavailable_cases: list[dict[str, Any]] = []
 
@@ -1021,7 +864,7 @@ class RasterBenchmarkScorer:
 
             # --- language availability check for real engines ---------------
             if isinstance(engine, RealTesseractEngine):
-                tesseract_lang = tesseract_language_for(engine, lang)
+                tesseract_lang = DATASET_LANG_TO_TESSERACT.get(lang, "eng")
                 if not engine.has_language(tesseract_lang):
                     missing = [
                         p
@@ -1029,33 +872,6 @@ class RasterBenchmarkScorer:
                         if p not in engine._available_languages
                     ]
                     reason = f"Missing Tesseract language pack(s): {', '.join(missing)}"
-                    unavailable_cases.append({
-                        "case_id": case_id,
-                        "language": lang,
-                        "tesseract_language": tesseract_lang,
-                        "status": "unavailable",
-                        "reason": reason,
-                    })
-                    case_results.append({
-                        "case_id": case_id,
-                        "language": lang,
-                        "layout": case.get("layout", "unknown"),
-                        "corruption_type": corr_type,
-                        "status": "unavailable",
-                        "reason": reason,
-                    })
-                    continue
-
-                # --- script coverage check ---------------------------------
-                # Without a Devanagari-capable font the rendered image contains
-                # replacement boxes instead of the labelled Hindi text, so any
-                # CER/WER computed from it would measure the renderer, not OCR.
-                if lang in DEVANAGARI_LANGUAGES and resolve_render_font(lang) is None:
-                    reason = (
-                        "No Devanagari-capable font available for rendering: the "
-                        "document image does not contain the labelled text "
-                        f"(set {DEVANAGARI_FONT_ENV} to a Devanagari font file)"
-                    )
                     unavailable_cases.append({
                         "case_id": case_id,
                         "language": lang,
@@ -1083,7 +899,7 @@ class RasterBenchmarkScorer:
                         corruption_type="none",
                     )
                 elif isinstance(engine, RealTesseractEngine):
-                    tesseract_lang = tesseract_language_for(engine, lang)
+                    tesseract_lang = DATASET_LANG_TO_TESSERACT.get(lang, "eng")
                     res_clean = engine.extract_from_bytes(
                         case["clean_image_bytes"],
                         language=tesseract_lang,
@@ -1119,7 +935,7 @@ class RasterBenchmarkScorer:
                         corruption_type=corr_type,
                     )
                 elif isinstance(engine, RealTesseractEngine):
-                    tesseract_lang = tesseract_language_for(engine, lang)
+                    tesseract_lang = DATASET_LANG_TO_TESSERACT.get(lang, "eng")
                     res_corr = engine.extract_from_bytes(
                         case["corrupted_image_bytes"],
                         language=tesseract_lang,
@@ -1147,8 +963,6 @@ class RasterBenchmarkScorer:
 
             per_corruption.setdefault(corr_type, []).append(eval_corr)
             per_language.setdefault(lang, []).append(eval_corr)
-            clean_per_corruption.setdefault(corr_type, []).append(eval_clean)
-            clean_per_language.setdefault(lang, []).append(eval_clean)
 
             # --- per-case detail -------------------------------------------
             case_results.append({
@@ -1173,29 +987,16 @@ class RasterBenchmarkScorer:
 
         elapsed = time.time() - start_time
         evaluated_count = len(clean_results)
-        corrupted_count = len(corrupted_results)
 
-        _aggregate = aggregate_evaluations
+        clean_agg = _aggregate_metrics(clean_results)
+        corr_agg = _aggregate_metrics(corrupted_results)
 
-        def _delta(clean_value: Optional[float], corr_value: Optional[float], *, invert: bool = False) -> Optional[float]:
-            if clean_value is None or corr_value is None:
-                return None
-            value = clean_value - corr_value if invert else corr_value - clean_value
-            return round(value, 4)
-
-        clean_agg = _aggregate(clean_results)
-        corr_agg = _aggregate(corrupted_results)
-
-        corr_breakdown = {k: _aggregate(v) for k, v in per_corruption.items()}
-        lang_breakdown = {k: _aggregate(v) for k, v in per_language.items()}
-        clean_corr_breakdown = {k: _aggregate(v) for k, v in clean_per_corruption.items()}
-        clean_lang_breakdown = {k: _aggregate(v) for k, v in clean_per_language.items()}
+        corr_breakdown = {k: _aggregate_metrics(v) for k, v in per_corruption.items()}
+        lang_breakdown = {k: _aggregate_metrics(v) for k, v in per_language.items()}
 
         dataset_fp = cases[0].get("dataset_fingerprint", "unknown") if cases else "unknown"
-
-        render_fonts: dict[str, Optional[str]] = {}
-        for evaluated_lang in sorted({r.get("language", "en") for r in case_results if r.get("status") == "evaluated"}):
-            render_fonts[evaluated_lang] = resolve_render_font(evaluated_lang)
+        capabilities = rendering_capabilities()
+        invalid_languages = _accuracy_invalid_languages(per_language.keys())
 
         report: dict[str, Any] = {
             "available": True,
@@ -1205,23 +1006,21 @@ class RasterBenchmarkScorer:
             "dataset_fingerprint": dataset_fp,
             "total_cases": len(cases),
             "evaluated_count": evaluated_count,
-            "corrupted_count": corrupted_count,
             "unavailable_count": len(unavailable_cases),
             "sample_size": evaluated_count,
-            "metrics_available": evaluated_count > 0,
             "duration_seconds": round(elapsed, 3),
-            "render_fonts": render_fonts,
             "clean_baseline": clean_agg,
             "corrupted_evaluation": corr_agg,
             "degradation_delta": {
-                "cer_increase": _delta(clean_agg["cer"], corr_agg["cer"]),
-                "wer_increase": _delta(clean_agg["wer"], corr_agg["wer"]),
-                "f1_drop": _delta(clean_agg["f1"], corr_agg["f1"], invert=True),
+                "cer_increase": round(corr_agg["cer"] - clean_agg["cer"], 4),
+                "wer_increase": round(corr_agg["wer"] - clean_agg["wer"], 4),
+                "f1_drop": round(clean_agg["f1"] - corr_agg["f1"], 4),
             },
             "by_corruption_type": corr_breakdown,
             "by_language": lang_breakdown,
-            "clean_by_corruption_type": clean_corr_breakdown,
-            "clean_by_language": clean_lang_breakdown,
+            "rendering": capabilities,
+            "accuracy_invalid_languages": invalid_languages,
+            "accuracy_valid": not invalid_languages,
             "case_results": case_results,
         }
 
@@ -1232,115 +1031,314 @@ class RasterBenchmarkScorer:
 
 
 # ---------------------------------------------------------------------------
+# Pooled multi-seed aggregation
+# ---------------------------------------------------------------------------
+
+
+def _aggregate_metrics(res_list: list[dict[str, Any]]) -> dict[str, float]:
+    """Aggregate per-case evaluation dicts into pooled run-level metrics.
+
+    CER/WER/exact are arithmetic means over scored cases; precision/recall/F1
+    are pooled micro-aggregations over field-level tp/fp/fn.  An empty list
+    yields the honest null metrics (all zeros), never fabricated perfection.
+    """
+    if not res_list:
+        return {"cer": 0.0, "wer": 0.0, "exact": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0}
+    tot_tp = sum(r["tp"] for r in res_list)
+    tot_fp = sum(r["fp"] for r in res_list)
+    tot_fn = sum(r["fn"] for r in res_list)
+    p = tot_tp / (tot_tp + tot_fp) if (tot_tp + tot_fp) > 0 else 0.0
+    r = tot_tp / (tot_tp + tot_fn) if (tot_tp + tot_fn) > 0 else 0.0
+    f1 = 2 * p * r / (p + r) if (p + r) > 0 else 0.0
+    return {
+        "cer": round(sum(row["cer"] for row in res_list) / len(res_list), 4),
+        "wer": round(sum(row["wer"] for row in res_list) / len(res_list), 4),
+        "exact": round(sum(row["exact_transcription"] for row in res_list) / len(res_list), 4),
+        "precision": round(p, 4),
+        "recall": round(r, 4),
+        "f1": round(f1, 4),
+    }
+
+
+def sample_stddev(values: list[float]) -> float:
+    """Sample standard deviation (ddof=1) of *values*.
+
+    An empty list or a single value yields ``0.0`` by convention, so a
+    single-seed report is never padded with a meaningless spread number.
+    """
+    n = len(values)
+    if n <= 1:
+        return 0.0
+    mean = sum(values) / n
+    return math.sqrt(sum((v - mean) ** 2 for v in values) / (n - 1))
+
+
+def _metric_summary(per_seed_values: dict[str, list[float]]) -> dict[str, dict[str, float]]:
+    """Per-metric mean / sample-std / min / max across seeds."""
+    summary: dict[str, dict[str, float]] = {}
+    for metric, vals in per_seed_values.items():
+        if not vals:
+            continue
+        summary[metric] = {
+            "mean": round(sum(vals) / len(vals), 4),
+            "sample_stddev": round(sample_stddev(vals), 4),
+            "min": round(min(vals), 4),
+            "max": round(max(vals), 4),
+            "seeds": len(vals),
+        }
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# Rendering capability detection (complex-script shaping)
+# ---------------------------------------------------------------------------
+
+
+@functools.lru_cache(maxsize=1)
+def rendering_capabilities() -> dict[str, Any]:
+    """Report the shaping capability of the current rendering environment.
+
+    ``raqm`` is the complex-script shaping library Pillow uses for Devanagari
+    matra reordering and conjunct shaping.  Official Pillow wheels for macOS
+    do not bundle libraqm (Linux manylinux wheels do), so when it is absent
+    Hindi text is rendered glyph-by-glyph and the resulting image does NOT
+    faithfully contain the ground-truth text.  Transcription metrics measured
+    on such images describe the OCR reading an unshaped approximation — they
+    are neither a lower bound nor an upper bound on OCR quality on faithful
+    input; they are simply not valid accuracy measurements for that language.
+    """
+    raqm = bool(PIL_features.check("raqm"))
+    return {"raqm": raqm, "raqm_version": PIL_features.version("raqm") if raqm else None}
+
+
+#: Languages whose ground truth can only be faithfully rendered with shaping.
+SHAPING_REQUIRED_LANGUAGES = frozenset({"hi", "bilingual"})
+
+
+def language_rendering_valid(lang: str) -> bool:
+    """False exactly when *lang* needs shaping and shaping is unavailable."""
+    if rendering_capabilities()["raqm"]:
+        return True
+    return lang not in SHAPING_REQUIRED_LANGUAGES
+
+
+def _accuracy_invalid_languages(langs: Iterable[str]) -> list[str]:
+    """Sorted languages evaluated despite unfaithful (unshaped) rendering."""
+    return sorted({lang for lang in langs if lang in SHAPING_REQUIRED_LANGUAGES and not language_rendering_valid(lang)})
+
+
+def run_benchmark_multiseed(
+    seeds: list[int],
+    *,
+    count: int,
+    engine: RasterOCREngine,
+) -> dict[str, Any]:
+    """Run the benchmark over several deterministic seeds and pool the results.
+
+    Each seed generates its own deterministic dataset (distinct
+    ``dataset_fingerprint``); per-seed reports are kept, and pooled metrics
+    are micro-aggregated over **all evaluated cases from all seeds** — they
+    are not the mean of per-seed means (which would weight seeds by their
+    evaluated-case counts instead of pooling case-level results).
+
+    Per-metric summaries (mean / sample stddev / min / max across seeds) use
+    the *corrupted* evaluation of every evaluated case in that seed.
+
+    Returns the multiseed report schema documented in ``ai/EVALUATION.md``:
+    ``seeds``, ``per_seed``, ``pooled``, ``per_seed_summary``, plus
+    reconciliation counts.  Raises ``ValueError`` for an empty or duplicate
+    seed list rather than silently collapsing seeds.
+    """
+    if not seeds:
+        raise ValueError("`seeds` must contain at least one seed")
+    if len(set(seeds)) != len(seeds):
+        raise ValueError(
+            f"Duplicate seeds in {seeds!r}: every seed must be distinct, "
+            "otherwise datasets are not independent samples"
+        )
+
+    engine_type = "real" if isinstance(engine, RealTesseractEngine) else "mock"
+    if not engine.is_available():
+        return {
+            "available": False,
+            "engine": engine.engine_name,
+            "engine_type": engine_type,
+            "error": f"Engine {engine.engine_name} is unavailable on this host system.",
+            "seeds": seeds,
+            "total_cases": len(seeds) * count,
+        }
+
+    per_seed: list[dict[str, Any]] = []
+
+    all_clean_results: list[dict[str, Any]] = []
+    all_corrupted_results: list[dict[str, Any]] = []
+
+    for seed in seeds:
+        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=count, seed=seed)
+        report = RasterBenchmarkScorer.run_benchmark(cases, engine)
+        if not report.get("available"):
+            # Availability was checked above; an engine that became
+            # unavailable mid-run is reported explicitly instead of pooled.
+            return {
+                "available": False,
+                "engine": engine.engine_name,
+                "engine_type": engine_type,
+                "error": f"Engine became unavailable during seed {seed}: {report.get('error')}",
+                "seeds": seeds,
+                "completed_seeds": [p["seed"] for p in per_seed],
+            }
+        per_seed.append(
+            {
+                "seed": seed,
+                "dataset_fingerprint": report["dataset_fingerprint"],
+                "evaluated_count": report["evaluated_count"],
+                "unavailable_count": report["unavailable_count"],
+                "error_count": sum(1 for c in report["case_results"] if c["status"] == "error"),
+                "duration_seconds": report["duration_seconds"],
+                "clean_baseline": report["clean_baseline"],
+                "corrupted_evaluation": report["corrupted_evaluation"],
+                "degradation_delta": report["degradation_delta"],
+                "accuracy_invalid_languages": report["accuracy_invalid_languages"],
+            }
+        )
+        for cr in report["case_results"]:
+            if cr["status"] == "evaluated":
+                all_clean_results.append(cr["clean"])
+                all_corrupted_results.append(cr["corrupted"])
+
+    pooled = {
+        "clean_baseline": _aggregate_metrics(all_clean_results),
+        "corrupted_evaluation": _aggregate_metrics(all_corrupted_results),
+    }
+    pooled["degradation_delta"] = {
+        "cer_increase": round(
+            pooled["corrupted_evaluation"]["cer"] - pooled["clean_baseline"]["cer"], 4
+        ),
+        "wer_increase": round(
+            pooled["corrupted_evaluation"]["wer"] - pooled["clean_baseline"]["wer"], 4
+        ),
+        "f1_drop": round(
+            pooled["clean_baseline"]["f1"] - pooled["corrupted_evaluation"]["f1"], 4
+        ),
+    }
+
+    per_seed_summary = _metric_summary(
+        {
+            "clean_cer": [r["clean_baseline"]["cer"] for r in per_seed],
+            "clean_wer": [r["clean_baseline"]["wer"] for r in per_seed],
+            "clean_f1": [r["clean_baseline"]["f1"] for r in per_seed],
+            "corrupted_cer": [r["corrupted_evaluation"]["cer"] for r in per_seed],
+            "corrupted_wer": [r["corrupted_evaluation"]["wer"] for r in per_seed],
+            "corrupted_f1": [r["corrupted_evaluation"]["f1"] for r in per_seed],
+        }
+    )
+
+    total_evaluated = sum(r["evaluated_count"] for r in per_seed)
+    total_unavailable = sum(r["unavailable_count"] for r in per_seed)
+    total_errors = sum(r["error_count"] for r in per_seed)
+
+    # Pool the rendering-validity flags across all seeds: any seed that
+    # evaluated a shaping-limited language invalidates that language overall.
+    invalid_seed_background: set[str] = set()
+    for psr in per_seed:
+        invalid_seed_background.update(psr.get("accuracy_invalid_languages", []))
+
+    capabilities = rendering_capabilities()
+
+    return {
+        "available": True,
+        "engine": engine.engine_name,
+        "engine_version": getattr(engine, "engine_version", None),
+        "engine_type": engine_type,
+        "seeds": list(seeds),
+        "count_per_seed": count,
+        "total_case_pairs": len(seeds) * count,
+        "evaluated_pairs": total_evaluated,
+        "unavailable_pairs": total_unavailable,
+        "failed_pairs": total_errors,
+        "reconciliation": {
+            "evaluated_plus_unavailable_plus_failed_equals_total": (
+                total_evaluated + total_unavailable + total_errors == len(seeds) * count
+            ),
+        },
+        "total_duration_seconds": round(sum(r["duration_seconds"] for r in per_seed), 3),
+        "per_seed": per_seed,
+        "pooled": pooled,
+        "per_seed_summary": per_seed_summary,
+        "rendering": capabilities,
+        "accuracy_invalid_languages": sorted(invalid_seed_background),
+    }
+
+
+# ---------------------------------------------------------------------------
 # CLI Command
 # ---------------------------------------------------------------------------
 
 
-def _fmt_metric(value: Optional[float]) -> str:
-    """Format a metric, printing ``n/a`` when nothing was measured."""
-    return "n/a" if value is None else f"{value:.3f}"
+def _print_multiseed_report(report: dict[str, Any]) -> None:
+    """Human-readable console rendering of a ``run_benchmark_multiseed`` report."""
+    pooled = report["pooled"]
+    clean = pooled["clean_baseline"]
+    corr = pooled["corrupted_evaluation"]
+    delta = pooled["degradation_delta"]
 
-
-def _run_multiseed(args: argparse.Namespace, engine: RasterOCREngine, seeds: list[int]) -> int:
-    """Run the benchmark once per seed, then write/print the pooled report."""
-    print(f"Generating synthetic raster image datasets for {len(seeds)} seed(s)...")
-    seed_reports: list[tuple[int, dict[str, Any]]] = []
-    for seed in seeds:
-        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=args.count, seed=seed)
-        print(f"  seed {seed}: {len(cases)} paired clean/corrupted cases")
-        if args.output_images:
-            seed_dir = args.output_images / f"seed{seed}"
-            seed_dir.mkdir(parents=True, exist_ok=True)
-            for c in cases:
-                (seed_dir / f"{c['case_id']}_clean.png").write_bytes(c["clean_image_bytes"])
-                (seed_dir / f"{c['case_id']}_{c['corruption_type']}.png").write_bytes(
-                    c["corrupted_image_bytes"]
-                )
-        print(f"  running benchmark for seed {seed}...")
-        seed_reports.append((seed, RasterBenchmarkScorer.run_benchmark(cases, engine)))
-
-    if any(not report.get("available") for _, report in seed_reports):
-        print(f"Engine unavailable: {seed_reports[0][1].get('error')}")
-        return 1
-
-    combined = summarize_multiseed_reports(seed_reports)
-    pooled_clean = combined["pooled"]["clean_baseline"]
-    pooled_corr = combined["pooled"]["corrupted_evaluation"]
-    pooled_delta = combined["pooled"]["degradation_delta"]
-
-    print("\n=========== RASTER OCR MULTI-SEED BENCHMARK REPORT ===========")
+    print("\n========== RASTER OCR MULTI-SEED BENCHMARK REPORT ==========")
     print(
-        f"Engine: {combined['engine']} ({combined.get('engine_type', 'unknown')}) | "
-        f"Version: {combined.get('engine_version')} | "
-        f"Seeds: {', '.join(str(seed) for seed in combined['seeds'])} | "
-        f"Cases/seed: {combined.get('count_per_seed')}"
+        f"Engine: {report['engine']} ({report['engine_type']}) | "
+        f"Seeds: {report['seeds']} | Cases/seed: {report['count_per_seed']}"
     )
+    if report.get("engine_version"):
+        print(f"Engine Version: {report['engine_version']}")
     print(
-        f"Evaluated: {combined['evaluated_count']}/{combined['total_cases']} | "
-        f"Unavailable: {combined['unavailable_count']} | "
-        f"Time: {combined['duration_seconds']}s"
+        f"Pairs: {report['evaluated_pairs']} evaluated / {report['unavailable_pairs']} unavailable / "
+        f"{report['failed_pairs']} failed of {report['total_case_pairs']} total | "
+        f"Time: {report['total_duration_seconds']}s"
     )
-    print("-------------------------------------------------------------")
-    print("Per seed:")
-    for entry in combined["per_seed"]:
-        entry_clean = entry["clean_baseline"] or {}
-        entry_corr = entry["corrupted_evaluation"] or {}
+    if report["reconciliation"]["evaluated_plus_unavailable_plus_failed_equals_total"]:
+        print("Reconciliation: evaluated + unavailable + failed == total ✓")
+    else:
+        print("Reconciliation: WARNING — counts do not sum to total!")
+    print("------------------------------------------------------------")
+    print(f"POOL CLEAN:     CER={clean['cer']:.3f} | WER={clean['wer']:.3f} | Exact={clean['exact']:.3f} | F1={clean['f1']:.3f}")
+    print(f"POOL CORRUPTED: CER={corr['cer']:.3f} | WER={corr['wer']:.3f} | Exact={corr['exact']:.3f} | F1={corr['f1']:.3f}")
+    print(f"POOL DELTA:     +CER={delta['cer_increase']:.3f} | +WER={delta['wer_increase']:.3f} | -F1={delta['f1_drop']:.3f}")
+    print("------------------------------------------------------------")
+    print("Per-metric summary across seeds (mean / sample-std / min / max):")
+    for metric, stats in sorted(report["per_seed_summary"].items()):
         print(
-            f"  seed={entry['seed']:<6} -> clean CER={_fmt_metric(entry_clean.get('cer'))} | "
-            f"corr CER={_fmt_metric(entry_corr.get('cer'))} | "
-            f"corr F1={_fmt_metric(entry_corr.get('f1'))} | "
-            f"scored={entry_clean.get('scored_cases', 0)}"
+            f"  {metric:14s} -> mean={stats['mean']:.3f} | std={stats['sample_stddev']:.3f} | "
+            f"min={stats['min']:.3f} | max={stats['max']:.3f} | seeds={stats['seeds']}"
         )
-    print("-------------------------------------------------------------")
-    print(
-        f"POOLED CLEAN:     CER={_fmt_metric(pooled_clean['cer'])} | WER={_fmt_metric(pooled_clean['wer'])} | "
-        f"Exact={_fmt_metric(pooled_clean['exact'])} | F1={_fmt_metric(pooled_clean['f1'])}"
-    )
-    print(
-        f"POOLED CORRUPTED: CER={_fmt_metric(pooled_corr['cer'])} | WER={_fmt_metric(pooled_corr['wer'])} | "
-        f"Exact={_fmt_metric(pooled_corr['exact'])} | F1={_fmt_metric(pooled_corr['f1'])}"
-    )
-    print(
-        f"POOLED DELTA:     +CER={_fmt_metric(pooled_delta['cer_increase'])} | "
-        f"+WER={_fmt_metric(pooled_delta['wer_increase'])} | -F1={_fmt_metric(pooled_delta['f1_drop'])}"
-    )
-    for side in ("clean", "corrupted"):
-        stats = combined["variance"][f"{side}_cer"]
+    print("------------------------------------------------------------")
+    if report.get("accuracy_invalid_languages"):
         print(
-            f"VARIANCE ({side:9} CER): mean={_fmt_metric(stats['mean'])} | "
-            f"sd={_fmt_metric(stats['stdev'])} | min={_fmt_metric(stats['min'])} | "
-            f"max={_fmt_metric(stats['max'])}"
+            "RENDERING WARNING: languages "
+            f"{', '.join(report['accuracy_invalid_languages'])} were evaluated without "
+            "complex-script shaping (libraqm); their ground truth is NOT faithfully "
+            "rendered and their metrics are NOT valid accuracy measurements."
         )
-    print("==============================================================")
-
-    if not combined["metrics_available"]:
+        print("------------------------------------------------------------")
+    print("Per-seed CORRUPTED metrics:")
+    for r in report["per_seed"]:
+        c = r["corrupted_evaluation"]
         print(
-            "ERROR: no case could be scored across any seed, so no OCR metric was "
-            "measured. This is not a zero-error result.",
-            file=sys.stderr,
+            f"  seed={r['seed']:<8d} fp={r['dataset_fingerprint'][:12]}... "
+            f"eval={r['evaluated_count']:<3d} CER={c['cer']:.3f} | WER={c['wer']:.3f} | F1={c['f1']:.3f}"
         )
-
-    if args.json:
-        args.json.parent.mkdir(parents=True, exist_ok=True)
-        combined["count"] = args.count
-        args.json.write_text(json.dumps(combined, indent=2), encoding="utf-8")
-        print(f"Report written to {args.json}")
-
-    return 0 if combined["metrics_available"] else 2
+    print("============================================================")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Raster Image OCR Benchmark")
     parser.add_argument("--count", type=int, default=16, help="Number of synthetic document images to generate")
-    parser.add_argument("--seed", type=int, default=42, help="Deterministic random seed (single-seed mode)")
+    parser.add_argument("--seed", type=int, default=42, help="Deterministic random seed")
     parser.add_argument(
         "--seeds",
         type=str,
         default=None,
         help=(
-            "Comma-separated seeds for a multi-seed run (e.g. 42,7,13). Each seed generates its "
-            "own dataset; the report pools every scored case and records mean/stdev per metric. "
-            "Overrides --seed."
+            "Comma-separated list of distinct seeds for a pooled multi-seed "
+            "evaluation (e.g. --seeds 42,43,44). Overrides --seed."
         ),
     )
     parser.add_argument("--json", type=Path, help="Write machine-readable benchmark report to JSON file")
@@ -1349,10 +1347,17 @@ def main() -> int:
     parser.add_argument(
         "--language",
         type=str,
-        default=None,
+        default="eng",
+        help="Default Tesseract language code for real engine (e.g. eng, hin, eng+hin)",
+    )
+    parser.add_argument(
+        "--tess-psm",
+        type=int,
+        default=6,
         help=(
-            "Force this Tesseract language code for every case (e.g. eng, hin, eng+hin). "
-            "Omit to map each case's dataset language via DATASET_LANG_TO_TESSERACT."
+            "Tesseract page-segmentation mode for the real engine (0-13). "
+            "Default 6 uses the backend OCR adapter contract path; other values "
+            "run a benchmark-only direct call labelled tesseract-psm<N>."
         ),
     )
     args = parser.parse_args()
@@ -1361,43 +1366,46 @@ def main() -> int:
         print("ERROR: --count must be at least 1.", file=sys.stderr)
         return 1
 
-    seeds: Optional[list[int]] = None
+    seeds: list[int] | None
     if args.seeds is not None:
-        seeds = parse_seed_list(args.seeds)
-        if seeds is None:
+        raw = [s.strip() for s in args.seeds.split(",") if s.strip()]
+        if not raw:
+            print("ERROR: --seeds must list at least one integer seed.", file=sys.stderr)
+            return 1
+        try:
+            seeds = [int(s) for s in raw]
+        except ValueError:
+            print(f"ERROR: --seeds values must be integers, got {args.seeds!r}.", file=sys.stderr)
+            return 1
+        if len(set(seeds)) != len(seeds):
             print(
-                "ERROR: --seeds must be a comma-separated list of distinct non-negative "
-                f"integers (got {args.seeds!r}).",
+                f"ERROR: duplicate seeds in {seeds!r}: seeds must be distinct.",
                 file=sys.stderr,
             )
             return 1
-        if args.seed != 42:
-            print(
-                f"NOTE: --seed {args.seed} ignored because --seeds was given "
-                f"({', '.join(str(seed) for seed in seeds)})."
-            )
+    else:
+        seeds = None
 
-    cases: list[dict[str, Any]] = []
-    if seeds is None:
-        print("Generating synthetic raster image dataset...")
-        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=args.count, seed=args.seed)
-        print(f"Generated {len(cases)} paired clean/corrupted test cases.")
+    print("Generating synthetic raster image dataset...")
+    cases = RasterDocumentGenerator.generate_benchmark_dataset(count=args.count, seed=args.seed)
+    print(f"Generated {len(cases)} paired clean/corrupted test cases.")
 
-        if args.output_images:
-            args.output_images.mkdir(parents=True, exist_ok=True)
-            for c in cases:
-                clean_path = args.output_images / f"{c['case_id']}_clean.png"
-                corr_path = args.output_images / f"{c['case_id']}_{c['corruption_type']}.png"
-                clean_path.write_bytes(c["clean_image_bytes"])
-                corr_path.write_bytes(c["corrupted_image_bytes"])
-            print(f"Saved {len(cases) * 2} images to {args.output_images}")
+    if args.output_images:
+        args.output_images.mkdir(parents=True, exist_ok=True)
+        for c in cases:
+            clean_path = args.output_images / f"{c['case_id']}_clean.png"
+            corr_path = args.output_images / f"{c['case_id']}_{c['corruption_type']}.png"
+            clean_path.write_bytes(c["clean_image_bytes"])
+            corr_path.write_bytes(c["corrupted_image_bytes"])
+        print(f"Saved {len(cases) * 2} images to {args.output_images}")
 
     engine: RasterOCREngine
     if args.real_engine:
-        if args.language:
-            engine = RealTesseractEngine(language=args.language, override_language=True)
-        else:
-            engine = RealTesseractEngine()
+        try:
+            engine = RealTesseractEngine(language=args.language, psm=args.tess_psm)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
         if not engine.is_available():
             print("ERROR: Real Tesseract engine requested, but 'tesseract' was not found in PATH.")
             return 1
@@ -1407,21 +1415,27 @@ def main() -> int:
     else:
         engine = MockRasterOCREngine()
 
-    if seeds is not None:
-        return _run_multiseed(args, engine, seeds)
-
     print(f"Running benchmark with engine '{engine.engine_name}'...")
-    report = RasterBenchmarkScorer.run_benchmark(cases, engine)
+    if seeds is not None:
+        report = run_benchmark_multiseed(seeds, count=args.count, engine=engine)
+    else:
+        report = RasterBenchmarkScorer.run_benchmark(cases, engine)
 
     if not report.get("available"):
         print(f"Engine unavailable: {report.get('error')}")
         return 1
 
+    if seeds is not None:
+        _print_multiseed_report(report)
+        if args.json:
+            args.json.parent.mkdir(parents=True, exist_ok=True)
+            args.json.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            print(f"Report written to {args.json}")
+        return 0
+
     clean = report["clean_baseline"]
     corr = report["corrupted_evaluation"]
     delta = report["degradation_delta"]
-
-    _fmt = _fmt_metric
 
     print("\n================ RASTER OCR BENCHMARK REPORT ================")
     print(
@@ -1432,44 +1446,35 @@ def main() -> int:
     if report.get("engine_version"):
         print(f"Engine Version: {report['engine_version']}")
     print("-------------------------------------------------------------")
-    print(f"CLEAN:     CER={_fmt(clean['cer'])} | WER={_fmt(clean['wer'])} | Exact={_fmt(clean['exact'])} | F1={_fmt(clean['f1'])}")
-    print(f"CORRUPTED: CER={_fmt(corr['cer'])} | WER={_fmt(corr['wer'])} | Exact={_fmt(corr['exact'])} | F1={_fmt(corr['f1'])}")
-    print(f"DELTA:     +CER={_fmt(delta['cer_increase'])} | +WER={_fmt(delta['wer_increase'])} | -F1={_fmt(delta['f1_drop'])}")
+    print(f"CLEAN:     CER={clean['cer']:.3f} | WER={clean['wer']:.3f} | Exact={clean['exact']:.3f} | F1={clean['f1']:.3f}")
+    print(f"CORRUPTED: CER={corr['cer']:.3f} | WER={corr['wer']:.3f} | Exact={corr['exact']:.3f} | F1={corr['f1']:.3f}")
+    print(f"DELTA:     +CER={delta['cer_increase']:.3f} | +WER={delta['wer_increase']:.3f} | -F1={delta['f1_drop']:.3f}")
     if report.get("unavailable_count", 0) > 0:
-        print(f"UNAVAILABLE: {report['unavailable_count']} case(s) excluded (not measurable on this host)")
+        print(f"UNAVAILABLE: {report['unavailable_count']} case(s) excluded (missing language packs)")
         for uc in report.get("unavailable_cases", []):
             print(f"  {uc['case_id']} ({uc['language']}): {uc['reason']}")
-    if report.get("render_fonts"):
-        print("Rendered with:")
-        for lang, font_path in sorted(report["render_fonts"].items()):
-            print(f"  {lang:18s} -> {font_path or 'Pillow default font'}")
     print("-------------------------------------------------------------")
     print("Performance by Corruption Type:")
     for corr_type, stats in sorted(report["by_corruption_type"].items()):
-        print(f"  {corr_type:18s} -> CER={_fmt(stats['cer'])} | WER={_fmt(stats['wer'])} | F1={_fmt(stats['f1'])}")
-    print("Corrupted performance by Language:")
+        print(f"  {corr_type:18s} -> CER={stats['cer']:.3f} | WER={stats['wer']:.3f} | F1={stats['f1']:.3f}")
+    print("Performance by Language:")
     for lang, stats in sorted(report["by_language"].items()):
-        print(f"  {lang:18s} -> CER={_fmt(stats['cer'])} | WER={_fmt(stats['wer'])} | F1={_fmt(stats['f1'])}")
-    print("Clean performance by Language:")
-    for lang, stats in sorted(report.get("clean_by_language", {}).items()):
-        print(f"  {lang:18s} -> CER={_fmt(stats['cer'])} | WER={_fmt(stats['wer'])} | F1={_fmt(stats['f1'])}")
-    print("=============================================================")
-
-    if not report.get("metrics_available"):
+        print(f"  {lang:18s} -> CER={stats['cer']:.3f} | WER={stats['wer']:.3f} | F1={stats['f1']:.3f}")
+    if report.get("accuracy_invalid_languages"):
         print(
-            "ERROR: no case could be scored, so no OCR metric was measured. "
-            "This is not a zero-error result.",
-            file=sys.stderr,
+            "RENDERING WARNING: languages "
+            f"{', '.join(report['accuracy_invalid_languages'])} evaluated without "
+            "complex-script shaping (libraqm) — metrics NOT valid for these languages."
         )
+    print("=============================================================")
 
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         report["seed"] = args.seed
-        report["count"] = args.count
         args.json.write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(f"Report written to {args.json}")
 
-    return 0 if report.get("metrics_available") else 2
+    return 0
 
 
 if __name__ == "__main__":

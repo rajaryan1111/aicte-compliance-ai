@@ -13,11 +13,8 @@ preprocessing diagnosis built on the conservative normalization library
 ([`ai/ocr_benchmark.py`](ocr_benchmark.py)) provides the engine adapter contract,
 transcription metrics (CER, WER, exact match), structured-field scoring,
 deterministic synthetic data generation, held-out partitioning, and mock-based
-engine contract tests. The raster benchmark has now been executed against a **real
-Tesseract 5.5.2** engine (eng + hin packs) on synthetic pages, and the report is committed
-under [`reports/`](reports/README.md) with its provenance and verification record. The
-working OCR implementation is still in `backend/` (see the OCR placement rule); no model or
-external AI provider is introduced by this work.
+engine contract tests. The working OCR implementation is still in `backend/`
+(see the OCR placement rule); no model or external provider is introduced by this work.
 
 ## Scope
 
@@ -37,19 +34,15 @@ external AI provider is introduced by this work.
 |---|---|
 | [`evaluate_extraction.py`](evaluate_extraction.py) | Corpus-driven extraction scorer with CLI (`--check`, `--json`, `--compare`, `--engine`, `--normalize`). |
 | [`ocr_benchmark.py`](ocr_benchmark.py) | OCR engine adapter contract (`OCREngine` ABC), transcription metrics (CER, WER), structured-field scoring, synthetic case generation, corpus I/O, and held-out partitioning. |
-| [`raster_benchmark.py`](raster_benchmark.py) | Genuine raster-image OCR evaluation: synthetic document image rendering (Pillow), pixel-level corruptions (blur, skew, low-res, JPEG compression, contrast, noise, rotation), paired clean/corrupted benchmark, and engine evaluation. |
+| [`raster_benchmark.py`](raster_benchmark.py) | Genuine raster-image OCR evaluation: synthetic document image rendering (Pillow), pixel-level corruptions (blur, skew, low-res, JPEG compression, contrast, noise, rotation), paired clean/corrupted benchmark, engine evaluation, and the `--tess-psm` configuration bake-off vehicle. |
 | [`normalize.py`](normalize.py) | Conservative text normalization with provenance (zero-width removal, NFKC, line-break unification). |
-| [`corpus/extraction_cases.jsonl`](corpus/extraction_cases.jsonl) | 56 labelled extraction cases (54 scored, 2 documented known gaps). |
+| [`corpus/extraction_cases.jsonl`](corpus/extraction_cases.jsonl) | 56 labelled extraction cases, all 56 scored (the 2 former known gaps were resolved by backend commit `eec3a81`). |
 | [`corpus/ocr_corruption_cases.jsonl`](corpus/ocr_corruption_cases.jsonl) | 30 OCR corruption cases (15 scored, 15 documented known gaps). |
 | [`tests/test_evaluate.py`](tests/test_evaluate.py) | Tests for the extraction evaluator, corpus validation, and scoring semantics. |
 | [`tests/test_ocr_benchmark.py`](tests/test_ocr_benchmark.py) | Tests for the OCR benchmark module: metrics, generation, scoring, contracts, corpus loading, partitioning. |
-| [`tests/test_raster_benchmark.py`](tests/test_raster_benchmark.py) | Tests for the raster benchmark module: pixel transforms, document rendering, paired scoring, engine availability, script/font coverage, language override, measurement honesty, CLI. |
-| [`reports/`](reports/README.md) | Committed benchmark reports (real Tesseract 5.5.2 on 24 synthetic pages) with provenance, reproduction steps and verification record. |
+| [`tests/test_raster_benchmark.py`](tests/test_raster_benchmark.py) | Tests for the raster benchmark module: pixel transforms, document rendering, paired scoring, engine availability, CLI. |
 | [`EVALUATION.md`](EVALUATION.md) | What the evaluation measures, its limitations, and how to run it. |
-| [`BACKEND_HANDOFF.md`](BACKEND_HANDOFF.md) | 17 documented extraction defects owned by the backend workstream. |
-| [`WORKSTREAM_HANDOFF.md`](WORKSTREAM_HANDOFF.md) | Review-only handoff: PR/branch delivery, backend extraction evidence, Phase 6 (accessibility, demo, deployment) and the six Phase 0 research gates, with owners. |
-| [`research/phase-0-closure-record.md`](research/phase-0-closure-record.md) | Phase 0 research closure record (2026-10-24): gate-by-gate status, official evidence, access blockers and owner decisions. Proposal for `docs/research/`. |
-| [`SIH_READINESS.md`](SIH_READINESS.md) | SIH submission readiness (2026-10-24), executed-evidence only: end-to-end flow verification against `main`, P0/P1 defects with owners and minimal fixes, verified demo runbook, and the honest limitations. Verdict `NOT_READY — P0 BLOCKER REMAINS` (no frontend). |
+| [`BACKEND_HANDOFF.md`](BACKEND_HANDOFF.md) | Documented extraction defects owned by the backend workstream (2 of the original 17 resolved; 15 remain). |
 
 ## OCR benchmark: metric definitions
 
@@ -94,7 +87,7 @@ The workstream supports two levels of evaluation:
 ## Running tests and evaluations
 
 ```bash
-# All AI/OCR tests (237: evaluator 66, benchmark module 105, raster 66)
+# All AI/OCR tests (189 tests: evaluator + benchmark + raster)
 python -m pytest -q ai/tests
 
 # Extraction evaluation (human-readable)
@@ -113,16 +106,8 @@ python ai/evaluate_extraction.py --compare baseline.json
 python ai/raster_benchmark.py --count 16
 python ai/raster_benchmark.py --count 16 --json raster_report.json
 
-# Real Tesseract raster evaluation (requires tesseract in PATH; Devanagari cases need
-# a Devanagari-capable font, auto-detected or set via AICTE_DEVANAGARI_FONT)
-AICTE_DEVANAGARI_FONT=/path/to/NotoSansDevanagari.ttf \
-  python ai/raster_benchmark.py --count 24 --seed 42 --real-engine \
-  --json ai/reports/real_tesseract_5.5.2_count24_seed42.json
-
-# Multi-seed stability check (per-seed metrics, case-weighted pooling, per-metric variance)
-AICTE_DEVANAGARI_FONT=/path/to/NotoSansDevanagari.ttf \
-  python ai/raster_benchmark.py --count 24 --seeds 42,7,13 --real-engine \
-  --json ai/reports/real_tesseract_5.5.2_multiseed_3x24.json
+# Attempt real Tesseract raster evaluation (requires tesseract in PATH)
+python ai/raster_benchmark.py --real-engine
 
 # Preprocessing diagnosis
 python ai/evaluate_extraction.py --corpus ai/corpus/ocr_corruption_cases.jsonl --normalize
@@ -148,17 +133,29 @@ ruff check ai/
 ## Known gaps and limitations
 
 - The 17 backend-owned extraction defects are documented in [`BACKEND_HANDOFF.md`](BACKEND_HANDOFF.md).
-- Real Tesseract execution requires the `tesseract` binary in PATH; when absent, the raster
-  benchmark reports the missing prerequisite and refuses to fabricate a result.
-- Devanagari raster cases additionally require a Devanagari-capable font for rendering
-  (system fonts are auto-detected; `AICTE_DEVANAGARI_FONT` overrides). Without one, real-engine
-  runs mark those cases `unavailable` with the reason instead of scoring replacement boxes.
-- The recorded real-engine numbers (see [`EVALUATION.md`](EVALUATION.md#real-engine-raster-evaluation--tesseract-552-2026-10-23))
-  come from 24 synthetic, Pillow-rendered pages — not scans of real certificates.
+- Real Tesseract engine execution requires the Tesseract system binary (`tesseract`) in PATH;
+  when absent, the raster benchmark explicitly reports the missing prerequisite.
 - The synthetic document images use programmatic layouts and font rendering; they are not
   photographed real-world paper documents.
+- Font selection probes rendered glyph bitmaps (see `_font_renders_sample` in
+  `raster_benchmark.py`): fonts that substitute a shared "tofu" box for missing
+  characters — which once made every English letter OCR as O/0 while digits stayed
+  correct — are rejected, and a Devanagari-capable font is required for `hi`/`bilingual`.
+- Pillow on this host is built without libraqm (`PIL.features.check('raqm') == False`;
+  the pinned official Pillow 11.3.0 macOS wheels simply do not bundle libraqm — Linux
+  manylinux wheels do), so Devanagari is rendered glyph-by-glyph without complex-script
+  shaping (conjuncts/matra ordering). Images generated without shaping do not faithfully
+  contain the `hi`/`bilingual` ground truth, so their metrics are **invalid
+  measurements** — neither a lower nor an upper bound on OCR quality on faithful input.
+  Every raster benchmark report carries `rendering`, `accuracy_invalid_languages` and
+  `accuracy_valid`; reports listing a language in `accuracy_invalid_languages` must not
+  be quoted as accuracy for that language. Real-world Hindi accuracy remains unvalidated.
+  Resolution path (needs an authorized environment change): install libraqm and rebuild
+  Pillow, or generate the corpus on a Linux manylinux-wheel environment.
 - No held-out split exists for the text extraction corpus (cases were written alongside patterns).
 - Hindi coverage is limited to five label variants and rendered Devanagari fonts.
+
+| [`SIH_READINESS.md`](SIH_READINESS.md) | SIH submission readiness from executed evidence: end-to-end flow verification, P0/P1 defects with owners, verified demo runbook, honest limitations. |
 
 ## First task
 

@@ -21,7 +21,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/requirements-dev.txt
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
       - name: Install test dependencies
         run: python -m pip install -r backend/requirements-dev.txt
       - name: Run backend tests
@@ -53,3 +55,89 @@ jobs:
         run: python -m pip install -r backend/requirements-dev.txt -r backend/requirements-ocr.txt
       - name: Run synthetic OCR engine smoke test
         run: python -m pytest -q backend/tests/test_ocr_engine_integration.py
+
+  real-infrastructure-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: aicte_test
+          POSTGRES_PASSWORD: aicte_test_pass
+          POSTGRES_DB: aicte_test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+      - name: Install dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+      - name: Apply Alembic migrations to fresh PostgreSQL
+        env:
+          DATABASE_URL: postgresql://aicte_test:aicte_test_pass@localhost:5432/aicte_test_db
+        run: |
+          python -m alembic -c backend/alembic.ini upgrade head
+      - name: Run real infrastructure integration test suite
+        env:
+          RUN_LIVE_INTEGRATION_TESTS: "true"
+          INTEGRATION_DATABASE_URL: postgresql://aicte_test:aicte_test_pass@localhost:5432/aicte_test_db
+          INTEGRATION_REDIS_URL: redis://localhost:6379/1
+          CELERY_BROKER_URL: redis://localhost:6379/1
+          DATABASE_URL: postgresql://aicte_test:aicte_test_pass@localhost:5432/aicte_test_db
+          REDIS_URL: redis://localhost:6379/1
+        run: |
+          python -m pytest -v backend/tests/integration
+      - name: Diagnostic dump on test failure
+        if: failure()
+        run: |
+          echo "Integration job failed. Inspecting container and process status..."
+
+  optional-clamav-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    services:
+      clamav:
+        image: clamav/clamav:latest
+        ports:
+          - 3310:3310
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+      - name: Install dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+      - name: Probe ClamAV daemon readiness and run live scanner test
+        run: |
+          python -m pytest -v backend/tests/integration/test_clamav_scanner_integration.py
+

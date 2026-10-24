@@ -62,6 +62,24 @@ def test_extracts_supported_hindi_institution_fields():
     assert fields["academic_year"].value == "2026-2027"
 
 
+def test_institution_name_minimum_length_is_strictly_enforced():
+    """Ensure regex does not backtrack over leading whitespace to extract < 3 characters."""
+    assert "institution_name" not in extract_institution_fields("Institution Name: AB")
+    assert "institution_name" not in extract_institution_fields("Institution Name: AB   ")
+    assert "institution_name" not in extract_institution_fields("Institution Name: A")
+    fields = extract_institution_fields("Institution Name: ABC")
+    assert fields["institution_name"].value == "ABC"
+
+
+def test_extracts_hindi_academic_session_variants():
+    """Support alternative Hindi terms for academic session and year."""
+    session_fields = extract_institution_fields("शैक्षणिक सत्र: 2026/2027")
+    assert session_fields["academic_year"].value == "2026-2027"
+
+    year_fields = extract_institution_fields("शैक्षिक वर्ष: 2026-2027")
+    assert year_fields["academic_year"].value == "2026-2027"
+
+
 @pytest.mark.parametrize("ambiguous", ["30/04/2026", "04/30/2026", "2026-02-30", "April 2026"])
 def test_ambiguous_or_invalid_dates_are_not_guessed(ambiguous):
     fields = extract_institution_fields(f"Valid Until: {ambiguous}", confidence=0.9)

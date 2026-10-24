@@ -6,6 +6,27 @@ evaluator keeps them visible instead of scoring them as passes or failures.
 Every row below was reproduced live against the current extractor on this
 branch; nothing here is inferred from tests alone.
 
+## Status update (2026-10-24, post-merge of `feature/backend-ocr-gap-fixes`)
+
+Backend commit `eec3a81` (merged to `main` in PR #7 and now merged into the
+AI/OCR branch) resolved **2 of the 17** defects:
+
+- ✅ `BND-002` (institution_name 3-character minimum enforced; captured value
+  must be non-space-first and trimmed ≥3/≤160).
+- ✅ `HI-005` (`शैक्षणिक सत्र` spelling added to the academic_year pattern).
+
+The corpus metadata followed in `ai` commit `7c15e01` style (mirrored by the
+merge): both `known_gap` flags were removed and both cases now score in the
+label corpus's scored denominator (extraction slice: 56/56 exact, 0 known
+gaps, verified live on the merged branch).
+
+**The remaining 15 corruption-slice cases were all re-verified as still
+failing** against the fixed extractor (evaluator `--check` exit 0, 15 known
+gaps reported, 15/15 scored cases exact). Everything below therefore describes
+today's state except for the two resolved rows, marked ✅ above and in the
+table comments; the PR acceptance criteria now apply to cases
+`CNL-001…CMIS-009`, `CLH-005`, `CCO-002/003/005` only.
+
 ## How to reproduce
 
 ```bash
@@ -92,40 +113,102 @@ in human output, `--check --help` wording) were fixed separately in commit
 `0d92cc0` and are not backend-owned. The corpora are synthetic, hand-written
 cases: they prove per-case behavior, not real-world OCR accuracy.
 
-## Real-engine evidence for the extractor gaps (2026-10-23)
+## New backend-owned finding (2026-10-24): LocalStorageBackend accepts Windows-drive path keys on POSIX
 
-The raster benchmark was run against real Tesseract 5.5.2 (`eng` + `hin`) on 24 synthetic
-rendered pages (3 languages x 2 layouts x 8 corruption types, seed 42). Report:
-`ai/reports/real_tesseract_5.5.2_count24_seed42.json`.
+`backend/tests/integration/test_security_and_failure_paths.py::
+test_storage_directory_traversal_prevention` fails on 1 of its 6 traversal keys:
+`C:\Windows\system32\cmd.exe`.
 
-Aggregate structured-field results on **clean** pages, i.e. with no image corruption at all:
+- Reproduce: `.venv/bin/python -m pytest -q
+  backend/tests/integration/test_security_and_failure_paths.py::test_storage_directory_traversal_prevention`
+  (fails on every POSIX host — Linux CI included).
+- Root cause (read-only inspection of `backend/app/core/storage.py`):
+  `LocalStorageBackend._resolve_key` rejects absolute POSIX paths, leading slashes,
+  and `..`/`.` components, but a Windows drive path (`C:\…`) has none of those. On
+  POSIX `os.path.isabs` is False for it and its `\`-split parts contain no `..`, so
+  it resolves to `base_dir/C:/Windows/system32/cmd.exe` and `put()` succeeds —
+  `pytest.raises(PathTraversalError)` then fails with DID NOT RAISE.
+  Verified key-by-key: the other 5 keys all raise.
+- Severity: medium-hardening (no user-facing write path today feeds raw keys to
+  `LocalStorageBackend`; the injectable backend accepts arbitrary keys, so every
+  future caller needs this guard).
+- Expected: reject keys containing a Windows drive-letter component (or any
+  backslash-separated segment resolving outside base_dir) with `PathTraversalError`,
+  consistently on every OS.
+- Attribution: backend-owned file (`backend/app/core/storage.py`, milestone B6) —
+  not modified by the AI/OCR workstream.
 
-| Language | Clean field micro-F1 | Corrupted field micro-F1 | Cases |
-|---|---:|---:|---:|
-| `en` | 0.667 | 0.400 | 8 |
-| `hi` | 0.000 | 0.000 | 8 |
-| `bilingual` | 0.000 | 0.000 | 8 |
+## New backend-owned finding (2026-10-24): test font path is not portable
 
-Reading: every Hindi-only and bilingual page loses **all** institutional fields even when the
-OCR text is clean, because `backend/app/ocr_pipeline.py` has no Hindi label coverage for
-these documents (`संस्थान`, `मान्यता तक`, `जारी करने की तिथि`) and no handling for
-`Label / लेबल:` bilingual lines. This is the same class as defects #2 and #11 in the table
-above and is covered by the acceptance criteria above - it is **not** a new defect id, it is
-the measured aggregate impact of the documented ones.
+`backend/tests/test_ocr_engine_integration.py::
+test_tesseract_reads_synthetic_institution_document` loads a hardcoded Linux
+font path and therefore fails on any non-Linux host that has Tesseract
+installed (the test's own `skipif` then stops skipping).
 
-Two AI-side defects were found and fixed while producing the measurement, so they are *not*
-backend work:
+- Reproduce: `.venv/bin/python -m pytest -q backend/tests/
+test_ocr_engine_integration.py` on macOS with `tesseract` in PATH.
+- Expected: the test itself resolves a usable font (e.g. falls back to a
+  bundled/system font list) or skips when no supported font is available.
+- Actual: `PIL.ImageFont.truetype("/usr/share/fonts/truetype/dejavu/
+  DejaVuSans.ttf", 58)` raises `OSError: cannot open resource` (macOS has no
+  `/usr/share/fonts` truetype tree).
+- Severity: low (test-only, no production extraction behavior); it flips the
+  repository suite from `224 passed, 1 skipped` to `1 failed, 224 passed` on
+  macOS hosts, so CI parity depends on it.
+- Attribution: backend-owned file — not modified by the AI/OCR workstream.
+  Evidence recorded here because the failure invalidates the historical
+  `pytest -q` full-suite counts reported for this branch.
 
-- Hindi pages were rendered with a Latin font when no Devanagari font was installed, and
-  `hi` cases were OCR'd with `-l hin` alone, which destroyed the Latin certificate numbers
-  and institution names. `hi` now maps to `hin+eng`; the renderer resolves a
-  Devanagari-capable font or marks the case unavailable.
-- `--language` did not actually override the per-case language mapping.
+## CI verification (2026-10-24): GitHub Actions on this branch and `main`
 
-Reproduce (real engine, Devanagari font required):
+Fetched check results for HEAD `580faf6` ([PR #10](https://github.com/rajaryan1111/aicte-compliance-ai/pull/10) state OPEN, MERGEABLE):
 
-```bash
-AICTE_DEVANAGARI_FONT=/path/to/NotoSansDevanagari.ttf \
-  python ai/raster_benchmark.py --count 24 --seed 42 --real-engine \
-  --json ai/reports/real_tesseract_5.5.2_count24_seed42.json
-```
+- **`backend-tests` check FAILURE** (run `40104526342`, 19 s): exactly the
+  Windows-drive traversal defect above on Linux CI —
+  `FAILED backend/tests/integration/test_security_and_failure_paths.py::
+  test_storage_directory_traversal_prevention - Failed: DID NOT RAISE
+  PathTraversalError`, suite `1 failed, 388 passed, 22 skipped`. Confirms the
+  finding is OS-independent despite the macOS-specific test page: the traversal
+  gap reproduces on every platform. The font-path test **passes on Linux CI**
+  as predicted by its section above (hard-coded Linux path resolves there).
+- **`real-infrastructure-integration` check FAILURE**: `ModuleNotFoundError:
+  No module named 'psycopg'` in the "Apply Alembic migrations to fresh
+  PostgreSQL" step. Root cause narrowed from the live stack trace (run
+  `40070848311`): SQLAlchemy resolved the **psycopg v3 dialect**
+  (`site-packages/sqlalchemy/dialects/postgresql/psycopg.py` → `import psycopg`),
+  but the installed environment only supplies the v2 driver
+  (`psycopg2-binary`, imported as `psycopg2`). **VERIFICATION (reproduced
+  locally in the project venv 2026-10-24): the URL is a plain
+  `postgresql://…`** — `.github/workflows/backend-tests.yml` sets
+  `DATABASE_URL: postgresql://aicte_test:…`, `backend/alembic/env.py` injects
+  `DATABASE_URL` into `sqlalchemy.url`, and no `+psycopg` suffix exists
+  anywhere. The v3 import happens because the project's SQLAlchemy **2.1.6**
+  resolves a bare `postgresql://` URL to its unified **psycopg (v3) dialect by
+  default** (the exact failing frame
+  `sqlalchemy/dialects/postgresql/psycopg.py:497 → import psycopg` reproduced
+  identically locally). The earlier hypothesis that the URL carries a
+  `postgresql+psycopg://` suffix was wrong and is corrected here.
+  Verified fix options (both validated locally; the implementing files are
+  backend/infra-owned — not modified by this workstream):
+  - **A (no new dependency, verified working)**: force the declared v2 driver —
+    normalize the URL to `postgresql+psycopg2://` in
+    `backend/alembic/env.py::get_url()` (and optionally
+    `backend/app/db/session.py::get_database_url()`), or pin
+    `SQLAlchemy>=2.0,<2.1` in `backend/requirements.txt`. Local venv proof:
+    `create_engine("postgresql+psycopg2://…")` selects `PGDialect_psycopg2`
+    with `psycopg2 2.9.13` under SQLAlchemy 2.1.6.
+  - **B (new dependency)**: add `psycopg[binary]` to `backend/requirements.txt`
+    to match the SQLAlchemy ≥ 2.1 default dialect.
+  Not an OCR or backend-logic defect on the OCR path; pre-existing on `main`
+  (same run proves it). Acceptance check: `python -m alembic -c
+  backend/alembic.ini upgrade head` against a live `DATABASE_URL` exits 0.
+  Owner correction note 2 (requirements intent): option A keeps the declared
+  dependency unchanged; option B changes a backend-owned requirements file —
+  both require the backend owner's authorization either way.
+- **`optional-ocr-integration` check SUCCESS** — the OCR-specific integration
+  gate for this workstream passes.
+- **Both failures pre-exist on `main`**: run `40070848311` (`main`, 06:36 UTC
+  same day) shows the identical traversal failure (`1 failed, 388 passed,
+  22 skipped`) and the identical psycopg migration error. PR #10 therefore
+  introduces **no new check failure**; merge-readiness is not degraded by the
+  branch. Both reds remain backend/CI-owner action items.

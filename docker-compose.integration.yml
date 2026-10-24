@@ -1,0 +1,49 @@
+# Docker Compose configuration for isolated AICTE Compliance AI integration testing.
+# Starts dedicated PostgreSQL, Redis and optional ClamAV services.
+# Usage:
+#   docker compose -f docker-compose.integration.yml up -d
+#   docker compose -f docker-compose.integration.yml down -v
+
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aicte_integration_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aicte_test}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aicte_test_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-aicte_test_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aicte_test} -d ${POSTGRES_DB:-aicte_test_db}"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: aicte_integration_redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  clamav:
+    image: clamav/clamav:latest
+    container_name: aicte_integration_clamav
+    ports:
+      - "${CLAMAV_PORT:-3310}:3310"
+    healthcheck:
+      test: ["CMD", "clamdscan", "--version"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    profiles:
+      - full

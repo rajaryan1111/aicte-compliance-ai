@@ -200,8 +200,10 @@ def test_multiple_corpora_are_scored_as_separate_slices():
         str(CORPUS_PATH.resolve().relative_to(REPO_ROOT)),
         str(CORRUPTION_CORPUS_PATH.resolve().relative_to(REPO_ROOT)),
     ]
-    assert [report["cases"] for report in reports] == [54, 15]
-    assert [report["exact_match_count"] for report in reports] == [54, 15]
+    # 56 scored: BND-002 and HI-005 migrated out of known-gap status once the
+    # backend fix landed (merge of origin/main, commit eec3a81).
+    assert [report["cases"] for report in reports] == [56, 15]
+    assert [report["exact_match_count"] for report in reports] == [56, 15]
     assert reports[0]["negative_false_positive_count"] == 0
     assert reports[1]["negative_false_positive_count"] == 0
     assert len(reports[1]["known_gaps"]) == 15
@@ -220,11 +222,19 @@ def test_scored_cases_pass_and_known_gaps_are_reported_as_failing():
     assert report["errors"] == [], "no scored case may raise"
     assert report["negative_false_positive_count"] == 0
     assert report["exact_match_count"] == report["cases"]
-    assert report["known_gaps"], "known defects must stay documented"
-    assert all(gap["still_failing"] for gap in report["known_gaps"]), (
-        "a known gap that now passes should have its known_gap flag removed"
-    )
-    assert all(gap["note"] for gap in report["known_gaps"])
+    if report["known_gaps"]:
+        assert all(gap["still_failing"] for gap in report["known_gaps"]), (
+            "a known gap that now passes should have its known_gap flag removed"
+        )
+        assert all(gap["note"] for gap in report["known_gaps"])
+
+
+def test_fixed_ocr_gaps_bnd002_and_hi005_remain_resolved():
+    cases = {c["case_id"]: evaluate_case(c) for c in load_corpus() if c["case_id"] in ("BND-002", "HI-005")}
+    assert cases["BND-002"].exact_match, "BND-002 must not extract sub-3-character institution name"
+    assert cases["BND-002"].extracted == {}
+    assert cases["HI-005"].exact_match, "HI-005 must extract 'शैक्षणिक सत्र' session"
+    assert cases["HI-005"].extracted == {"academic_year": "2026-2027"}
 
 
 # --- honesty --------------------------------------------------------------
@@ -287,7 +297,7 @@ def test_cli_reports_repeated_corpora_without_merging_them(tmp_path: Path):
     assert completed.returncode == 0, completed.stderr
     report = json.loads(output.read_text(encoding="utf-8"))
     assert len(report["corpora"]) == 2
-    assert [slice_report["cases"] for slice_report in report["corpora"]] == [54, 15]
+    assert [slice_report["cases"] for slice_report in report["corpora"]] == [56, 15]
     assert completed.stdout.count("synthetic corpus") == 2
 
 

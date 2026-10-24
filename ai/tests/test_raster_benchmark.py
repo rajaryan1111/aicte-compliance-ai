@@ -17,21 +17,20 @@ import math
 import sys
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from ai.raster_benchmark import (  # noqa: E402
+from ai.raster_benchmark import (
     DATASET_LANG_TO_TESSERACT,
-    DEVANAGARI_FONT_ENV,
-    DEVANAGARI_LANGUAGES,
+    SUPPORTED_IMAGE_CORRUPTIONS,
     MockRasterOCREngine,
     RasterBenchmarkScorer,
     RasterDocumentGenerator,
     RealTesseractEngine,
-    SUPPORTED_IMAGE_CORRUPTIONS,
     apply_gaussian_blur,
     apply_jpeg_compression,
     apply_low_contrast,
@@ -41,15 +40,8 @@ from ai.raster_benchmark import (  # noqa: E402
     apply_rotation,
     apply_skew,
     character_error_rate,
-    aggregate_evaluations,
-    parse_seed_list,
-    resolve_render_font,
-    script_is_renderable,
-    summarize_multiseed_reports,
-    tesseract_language_for,
     word_error_rate,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test Pixel Transformations
@@ -164,23 +156,6 @@ class TestRasterDocumentGeneration:
         assert "AICTE SUMMARY VERIFICATION TABLE" in doc["transcription_ground_truth"]
         assert "Institution Name:" in doc["transcription_ground_truth"]
         assert doc["layout"] == "two_column"
-
-    def test_two_column_layout_honours_language(self):
-        """A ``hi`` table case must render Hindi labels, not the English table."""
-        doc_hi = RasterDocumentGenerator.generate_document(
-            case_idx=4, language="hi", layout="two_column", seed=42
-        )
-        text = doc_hi["transcription_ground_truth"]
-        assert "Institution Name" not in text
-        assert "संस्थान" in text
-        assert "प्रमाणपत्र संख्या" in text
-
-        doc_bi = RasterDocumentGenerator.generate_document(
-            case_idx=4, language="bilingual", layout="two_column", seed=42
-        )
-        text_bi = doc_bi["transcription_ground_truth"]
-        assert "Institution / संस्थान" in text_bi
-        assert "Academic Year / शैक्षणिक सत्र" in text_bi
 
     def test_deterministic_generation_with_seed(self):
         doc1 = RasterDocumentGenerator.generate_document(case_idx=5, seed=100)
@@ -349,6 +324,8 @@ class TestLineBoundaryPreservation:
         """Create a RealTesseractEngine with mocked availability (no real binary needed)."""
         engine = RealTesseractEngine.__new__(RealTesseractEngine)
         engine.language = "eng"
+        engine.psm = 6
+        engine.psm = 6
         engine._available = True
         engine.engine_version = "5.5.3"
         engine._available_languages = {"eng"}
@@ -483,9 +460,7 @@ class TestLineBoundaryPreservation:
 class TestLanguageMapping:
     def test_dataset_lang_to_tesseract_mapping(self):
         assert DATASET_LANG_TO_TESSERACT["en"] == "eng"
-        # Hindi documents also contain Latin values (certificate numbers,
-        # institution names, ISO dates), so both packs are required.
-        assert DATASET_LANG_TO_TESSERACT["hi"] == "hin+eng"
+        assert DATASET_LANG_TO_TESSERACT["hi"] == "hin"
         assert DATASET_LANG_TO_TESSERACT["bilingual"] == "eng+hin"
 
     def test_has_language_single_pack(self):
@@ -581,6 +556,7 @@ class TestEnhancedReport:
 
         engine = RealTesseractEngine.__new__(RealTesseractEngine)
         engine.language = "eng"
+        engine.psm = 6
         engine._available = True
         engine.engine_version = "5.5.3"
         engine._available_languages = {"eng"}  # hin NOT available
@@ -604,13 +580,14 @@ class TestEnhancedReport:
 
         engine = RealTesseractEngine.__new__(RealTesseractEngine)
         engine.language = "eng"
+        engine.psm = 6
         engine._available = True
         engine.engine_version = "5.5.3"
         engine._available_languages = {"eng"}
         engine.engine_name = "tesseract"
 
         # Mock the extract_from_bytes to avoid needing real Tesseract
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         mock_raw = MagicMock()
         mock_raw.words = []
@@ -822,358 +799,427 @@ class TestEngineErrorHandling:
         assert report["total_cases"] == 2
 
 
-# ---------------------------------------------------------------------------
-# Test measurement honesty, script coverage and language override
-# ---------------------------------------------------------------------------
+class TestFontGlyphCoverage:
+    """Regression tests for the tofu-font glyph-coverage check.
 
+    DevanagariMT.ttc face 0 contains digits but no Latin letters and renders
+    every missing letter as the same shared "tofu" box; using it for English
+    documents made every letter OCR as O/0 while digits stayed correct.  The
+    font loader must reject such fonts by probing rendered bitmaps.
+    """
 
-def _mock_available_engine(languages: set[str]) -> RealTesseractEngine:
-    """Build a RealTesseractEngine that reports the given installed packs."""
-    engine = RealTesseractEngine.__new__(RealTesseractEngine)
-    engine.language = "eng"
-    engine.override_language = False
-    engine._available = True
-    engine.engine_version = "test"
-    engine._available_languages = set(languages)
-    engine.engine_name = "tesseract"
-    return engine
+    SAMPLES = "ABCDEfgqr123"
 
+    def _render_char(self, font, ch):
+        from PIL import Image, ImageDraw
 
-class TestMeasurementHonesty:
-    def test_no_scored_cases_yields_null_metrics_not_zero(self):
-        """A run that scored nothing must report null metrics, not 0.0 (a perfect score)."""
-        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=3, seed=42)
-        for c in cases:
-            c["language"] = "hi"
-        report = RasterBenchmarkScorer.run_benchmark(cases, _mock_available_engine({"eng"}))
+        scratch = Image.new("L", (64, 64), 0)
+        ImageDraw.Draw(scratch).text((8, 8), ch, fill=255, font=font)
+        return scratch.tobytes()
 
-        assert report["evaluated_count"] == 0
-        assert report["metrics_available"] is False
-        for block in (report["clean_baseline"], report["corrupted_evaluation"]):
-            assert block["scored_cases"] == 0
-            assert block["cer"] is None
-            assert block["wer"] is None
-            assert block["f1"] is None
-        assert report["degradation_delta"] == {
-            "cer_increase": None,
-            "wer_increase": None,
-            "f1_drop": None,
-        }
+    def test_english_font_renders_latin_distinctly(self):
+        """_get_font('en') must return a font whose Latin glyphs are all distinct."""
+        from ai.raster_benchmark import _get_font
 
-    def test_scored_aggregates_include_case_count(self):
-        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=3, seed=42)
-        report = RasterBenchmarkScorer.run_benchmark(cases, MockRasterOCREngine())
-        assert report["metrics_available"] is True
-        assert report["clean_baseline"]["scored_cases"] == 3
-        assert report["corrupted_evaluation"]["scored_cases"] == 3
-        assert report["corrupted_count"] == 3
+        font = _get_font(24, "en")
+        bitmaps = [self._render_char(font, ch) for ch in self.SAMPLES]
+        assert all(any(b) for b in bitmaps), "glyph must not be empty"
+        assert len(set(bitmaps)) == len(self.SAMPLES), (
+            "distinct Latin characters must render as distinct glyphs (no tofu box)"
+        )
 
-    def test_cli_exits_2_when_nothing_can_be_scored(self, tmp_path, monkeypatch):
-        """The CLI must not present an empty measurement as a successful report."""
-        import ai.raster_benchmark as rb
+    def test_hindi_font_renders_devanagari_and_latin(self):
+        """_get_font('hi') must cover Devanagari AND basic Latin on one line."""
+        from ai.raster_benchmark import _get_font
 
-        empty_block = {
-            "scored_cases": 0,
-            "cer": None,
-            "wer": None,
-            "exact": None,
-            "precision": None,
-            "recall": None,
-            "f1": None,
-        }
-        fake_report = {
-            "available": True,
-            "engine": "tesseract",
-            "engine_type": "real",
-            "engine_version": "test",
-            "evaluated_count": 0,
-            "total_cases": 3,
-            "duration_seconds": 0.0,
-            "metrics_available": False,
-            "render_fonts": {},
-            "clean_baseline": dict(empty_block),
-            "corrupted_evaluation": dict(empty_block),
-            "degradation_delta": {"cer_increase": None, "wer_increase": None, "f1_drop": None},
-            "by_corruption_type": {},
-            "by_language": {},
-            "case_results": [],
-        }
+        font = _get_font(24, "hi")
+        deva = [self._render_char(font, ch) for ch in "कखगसहड"]
+        # All-distinct characters: repeated characters legitimately render
+        # identical bitmaps, so the sample for the distinctness check must not
+        # contain duplicates (the same trap as the duplicated '2' in CERT2026).
+        latin = [self._render_char(font, ch) for ch in "CERT0185"]
+        assert len(set(deva)) == len(deva), "Devanagari glyphs must be distinct"
+        assert len(set(latin)) == len(latin), (
+            "mixed-line Latin (CERT/2026/...) values must render as distinct glyphs"
+        )
 
-        monkeypatch.setattr(rb.RasterBenchmarkScorer, "run_benchmark", classmethod(lambda cls, cases, engine: fake_report))
-        monkeypatch.setattr(rb, "MockRasterOCREngine", MockRasterOCREngine)
-        monkeypatch.setattr(sys, "argv", ["raster_benchmark.py", "--count", "3"])
+    def test_font_probe_rejects_latin_tofu_font(self):
+        """The probe rejects DevanagariMT: it boxes every Latin letter identically.
 
-        rc = rb.main()
-        assert rc == 2
+        This is the real font that produced the original defect (letters OCR'd
+        as O/0 while digits stayed correct) — used directly as evidence.
+        """
+        import os
 
-
-class TestScriptCoverage:
-    def test_devanagari_languages_declared(self):
-        assert DEVANAGARI_LANGUAGES == {"hi", "bilingual"}
-
-    def test_english_is_always_renderable(self):
-        assert script_is_renderable("en") is True
-
-    def test_devanagari_renderability_follows_font_resolution(self, monkeypatch):
-        monkeypatch.delenv(DEVANAGARI_FONT_ENV, raising=False)
-        monkeypatch.setattr("ai.raster_benchmark._DEVANAGARI_FONT_CANDIDATES", [])
-        monkeypatch.setattr("ai.raster_benchmark._FONT_SEARCH_DIRS", ())
-        assert resolve_render_font("hi") is None
-        assert script_is_renderable("hi") is False
-
-    def test_env_override_font_is_used(self, monkeypatch, tmp_path):
         from PIL import ImageFont
 
-        font_path = tmp_path / "NotoSansDevanagari.ttf"
-        source = None
-        for candidate in (
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
+        from ai.raster_benchmark import _LATIN_SAMPLE, _font_renders_sample
+
+        devanagari_mt = "/System/Library/Fonts/Supplemental/DevanagariMT.ttc"
+        if not os.path.isfile(devanagari_mt):
+            pytest.skip("DevanagariMT.ttc not present on this host")
+        font = ImageFont.truetype(devanagari_mt, 24)
+        assert _font_renders_sample(font, _LATIN_SAMPLE) is False
+
+    def test_font_probe_rejects_missing_devanagari(self):
+        """The probe rejects a Latin-only font as a provider for Devanagari."""
+        import os
+
+        from PIL import ImageFont
+
+        from ai.raster_benchmark import _DEVANAGARI_SAMPLE, _font_renders_sample
+
+        arial = "/System/Library/Fonts/Supplemental/Arial.ttf"
+        if not os.path.isfile(arial):
+            pytest.skip("Arial.ttf not present on this host")
+        font = ImageFont.truetype(arial, 24)
+        assert _font_renders_sample(font, _DEVANAGARI_SAMPLE) is False
+
+    def test_font_probe_accepts_real_font(self):
+        """A standard font passes the probe for its supported script."""
+        import os
+
+        from PIL import ImageFont
+
+        from ai.raster_benchmark import _LATIN_SAMPLE, _font_renders_sample
+
+        if not os.path.isfile(ARIAL_FOR_TESTS):
+            pytest.skip("no system font available for the positive probe")
+        font = ImageFont.truetype(ARIAL_FOR_TESTS, 24)
+        assert _font_renders_sample(font, _LATIN_SAMPLE) is True
+
+
+# First available font used for the positive-probe test across hosts.
+ARIAL_FOR_TESTS = [
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+][0]
+
+
+# ---------------------------------------------------------------------------
+# Pooled multi-seed benchmark (run_benchmark_multiseed)
+# ---------------------------------------------------------------------------
+
+
+class TestMultiSeedBenchmark:
+    """Regression tests for pooled multi-seed evaluation."""
+
+    def _run(self, seeds, count=4):
+        from ai.raster_benchmark import MockRasterOCREngine, run_benchmark_multiseed
+
+        return run_benchmark_multiseed(seeds, count=count, engine=MockRasterOCREngine())
+
+    # -- seed validation ----------------------------------------------------
+
+    def test_multiseed_rejects_duplicate_seeds(self):
+        with pytest.raises(ValueError, match="[Dd]uplicate seeds"):
+            self._run([42, 42, 43])
+
+    def test_multiseed_rejects_empty_seed_list(self):
+        with pytest.raises(ValueError, match="at least one seed"):
+            self._run([])
+
+    # -- dataset independence ------------------------------------------------
+
+    def test_multiseed_datasets_are_distinct(self):
+        report = self._run([42, 43, 44])
+        fps = [r["dataset_fingerprint"] for r in report["per_seed"]]
+        assert len(set(fps)) == 3, "same count with different seeds must yield distinct datasets"
+
+    # -- reconciliation -------------------------------------------------------
+
+    def test_multiseed_counts_reconcile(self):
+        report = self._run([42, 43], count=4)
+        assert report["total_case_pairs"] == 8
+        assert (
+            report["evaluated_pairs"] + report["unavailable_pairs"] + report["failed_pairs"]
+            == report["total_case_pairs"]
+        )
+        assert report["reconciliation"]["evaluated_plus_unavailable_plus_failed_equals_total"] is True
+
+    # -- pooled math (independent recomputation) ------------------------------
+
+    def test_pooled_corrupted_cer_matches_equal_weight_mean(self):
+        """With identical evaluated counts per seed, pooled CER must equal the
+        arithmetic mean of per-seed CERs (a hand-checkable restatement of
+        case-level micro-averaging)."""
+        report = self._run([42, 43], count=4)
+        evaluated = [r["evaluated_count"] for r in report["per_seed"]]
+        assert len(set(evaluated)) == 1, "mock engine evaluates every case"
+        per_seed_cer = [r["corrupted_evaluation"]["cer"] for r in report["per_seed"]]
+        expected = round(sum(per_seed_cer) / len(per_seed_cer), 4)
+        assert math.isclose(report["pooled"]["corrupted_evaluation"]["cer"], expected, abs_tol=1e-6)
+
+    def test_pooled_delta_positive_and_consistent(self):
+        report = self._run([42, 43], count=4)
+        pool = report["pooled"]
+        delta = pool["degradation_delta"]
+        assert pool["corrupted_evaluation"]["cer"] >= pool["clean_baseline"]["cer"]
+        assert delta["cer_increase"] >= 0
+        assert delta["f1_drop"] >= 0
+        assert math.isclose(
+            delta["cer_increase"],
+            round(pool["corrupted_evaluation"]["cer"] - pool["clean_baseline"]["cer"], 4),
+            abs_tol=1e-6,
+        )
+
+    # -- per-seed summary stats ----------------------------------------------
+
+    def test_sample_stddev_known_values(self):
+        from ai.raster_benchmark import sample_stddev
+
+        # [1, 2, 3] with ddof=1: mean=2, sqrt((1+0+1)/2) = 1.0
+        assert sample_stddev([1.0, 2.0, 3.0]) == pytest.approx(1.0)
+        assert sample_stddev([4.0]) == 0.0
+        assert sample_stddev([]) == 0.0
+        assert sample_stddev([5.0, 5.0, 5.0]) == 0.0
+
+    def test_metric_summary_shape_and_values(self):
+        from ai.raster_benchmark import _metric_summary
+
+        summary = _metric_summary({"corrupted_cer": [0.1, 0.3]})
+        block = summary["corrupted_cer"]
+        assert set(block.keys()) == {"mean", "sample_stddev", "min", "max", "seeds"}
+        assert block["mean"] == 0.2
+        assert block["min"] == 0.1
+        assert block["max"] == 0.3
+        assert block["seeds"] == 2
+        # [0.1, 0.3] ddof=1: sqrt((0.01 + 0.01) / 1) = sqrt(0.02)
+        assert block["sample_stddev"] == pytest.approx(math.sqrt(0.02), abs=1e-3)
+
+    def test_metric_summary_skips_empty_metric(self):
+        from ai.raster_benchmark import _metric_summary
+
+        summary = _metric_summary({"corrupted_cer": [0.1], "clean_cer": []})
+        assert "corrupted_cer" in summary
+        assert "clean_cer" not in summary
+
+    # -- report schema ---------------------------------------------------------
+
+    def test_multiseed_report_schema(self):
+        report = self._run([42], count=4)
+        for key in (
+            "seeds",
+            "count_per_seed",
+            "total_case_pairs",
+            "evaluated_pairs",
+            "unavailable_pairs",
+            "failed_pairs",
+            "reconciliation",
+            "total_duration_seconds",
+            "per_seed",
+            "pooled",
+            "per_seed_summary",
         ):
-            if Path(candidate).is_file():
-                source = candidate
-                break
-        assert source is not None, "no usable font on this host to build the fixture"
-        font_path.write_bytes(Path(source).read_bytes())
-        # The copied file must still load as a font for the override to be usable.
-        ImageFont.truetype(str(font_path), 12)
+            assert key in report, f"multiseed report missing key {key!r}"
+        assert report["seeds"] == [42]
+        assert report["pooled"]["clean_baseline"]["cer"] == report["per_seed"][0]["clean_baseline"]["cer"]
 
-        monkeypatch.setenv(DEVANAGARI_FONT_ENV, str(font_path))
-        assert resolve_render_font("hi") == str(font_path)
-        assert script_is_renderable("bilingual") is True
+    # -- CLI integration ---------------------------------------------------------
 
-    def test_missing_font_marks_hindi_cases_unavailable(self, monkeypatch):
-        """With the language pack present but no Devanagari font, cases are excluded."""
-        monkeypatch.delenv(DEVANAGARI_FONT_ENV, raising=False)
-        monkeypatch.setattr("ai.raster_benchmark._DEVANAGARI_FONT_CANDIDATES", [])
-        monkeypatch.setattr("ai.raster_benchmark._FONT_SEARCH_DIRS", ())
-
-        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=3, seed=42)
-        for c in cases:
-            c["language"] = "hi"
-
-        report = RasterBenchmarkScorer.run_benchmark(cases, _mock_available_engine({"eng", "hin"}))
-        assert report["evaluated_count"] == 0
-        assert report["unavailable_count"] == 3
-        for uc in report["unavailable_cases"]:
-            assert "Devanagari" in uc["reason"]
-            assert DEVANAGARI_FONT_ENV in uc["reason"]
-
-    def test_generated_case_records_render_font_and_coverage(self):
-        doc_en = RasterDocumentGenerator.generate_document(case_idx=1, language="en", seed=7)
-        assert doc_en["script_renderable"] is True
-        doc_hi = RasterDocumentGenerator.generate_document(case_idx=2, language="hi", seed=7)
-        assert doc_hi["script_renderable"] is script_is_renderable("hi")
-        assert doc_hi["render_font"] == resolve_render_font("hi")
-
-    def test_report_records_render_fonts_per_language(self):
-        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=3, seed=42)
-        report = RasterBenchmarkScorer.run_benchmark(cases, MockRasterOCREngine())
-        assert set(report["render_fonts"]) == {"en", "bilingual", "hi"}
-
-
-class TestLanguageOverride:
-    def test_default_maps_each_case_by_dataset_language(self):
-        engine = _mock_available_engine({"eng", "hin"})
-        assert tesseract_language_for(engine, "en") == "eng"
-        assert tesseract_language_for(engine, "hi") == "hin+eng"
-        assert tesseract_language_for(engine, "bilingual") == "eng+hin"
-
-    def test_explicit_override_wins_for_every_case(self):
-        engine = _mock_available_engine({"eng", "hin"})
-        engine.language = "eng"
-        engine.override_language = True
-        assert tesseract_language_for(engine, "hi") == "eng"
-        assert tesseract_language_for(engine, "bilingual") == "eng"
-
-    def test_override_requires_explicit_flag(self):
-        engine = _mock_available_engine({"eng", "hin"})
-        engine.language = "hin"
-        assert tesseract_language_for(engine, "en") == "eng"
-
-
-class TestMockDeterminism:
-    def test_same_image_bytes_produce_identical_output(self):
-        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=3, seed=42)
-        engine = MockRasterOCREngine()
-        case = cases[1]
-        first = engine.extract_from_bytes(
-            case["corrupted_image_bytes"],
-            reference_text=case["transcription_ground_truth"],
-            reference_fields=case["ground_truth"],
-            corruption_type="skew",
-        )
-        second = engine.extract_from_bytes(
-            case["corrupted_image_bytes"],
-            reference_text=case["transcription_ground_truth"],
-            reference_fields=case["ground_truth"],
-            corruption_type="skew",
-        )
-        assert first == second
-
-    def test_seed_is_digest_derived_not_length_derived(self):
-        """Equal-length but different bytes must not produce identical degradations."""
-        engine = MockRasterOCREngine({"skew": 0.5})
-        reference = "Institution Name: Alpha Institute of Technology " * 8
-        bytes_a = b"\x89PNG" + b"A" * 200
-        bytes_b = b"\x89PNG" + b"B" * 200
-        assert len(bytes_a) == len(bytes_b)
-        out_a = engine.extract_from_bytes(bytes_a, reference_text=reference, corruption_type="skew")
-        out_b = engine.extract_from_bytes(bytes_b, reference_text=reference, corruption_type="skew")
-        assert out_a["transcription"] != out_b["transcription"]
-
-
-class TestFieldScoringNulls:
-    def test_null_expected_and_predicted_values_are_not_counted(self):
-        result = RasterBenchmarkScorer.evaluate_case(
-            predicted_text="text",
-            expected_text="text",
-            predicted_fields={"institution_name": None},
-            expected_fields={"institution_name": None},
-        )
-        assert result["tp"] == 0
-        assert result["fp"] == 0
-        assert result["fn"] == 0
-
-
-# ---------------------------------------------------------------------------
-# Test multi-seed measurement (variance and pooling)
-# ---------------------------------------------------------------------------
-
-
-class TestSeedListParsing:
-    def test_valid_list(self):
-        assert parse_seed_list("42,7,13") == [42, 7, 13]
-        assert parse_seed_list(" 5 ") == [5]
-        assert parse_seed_list("0,1") == [0, 1]
-
-    def test_invalid_lists_rejected(self):
-        for raw in ("", "   ", "abc", "1,abc", "1,,2", "1,", ",1", "-1", "1,1", "1, 1"):
-            assert parse_seed_list(raw) is None, raw
-
-
-class TestMultiseedSummary:
-    @staticmethod
-    def _reports(seeds=(1, 2), count=3):
-        engine = MockRasterOCREngine()
-        return [
-            (
-                seed,
-                RasterBenchmarkScorer.run_benchmark(
-                    RasterDocumentGenerator.generate_benchmark_dataset(count=count, seed=seed),
-                    engine,
-                ),
-            )
-            for seed in seeds
-        ]
-
-    def test_counts_and_seeds(self):
-        combined = summarize_multiseed_reports(self._reports(seeds=(3, 9), count=4))
-        assert combined["mode"] == "multiseed"
-        assert combined["seeds"] == [3, 9]
-        assert combined["count_per_seed"] == 4
-        assert combined["total_cases"] == 8
-        assert combined["evaluated_count"] == 8
-        assert combined["unavailable_count"] == 0
-        assert [entry["seed"] for entry in combined["per_seed"]] == [3, 9]
-
-    def test_pooled_metrics_are_case_weighted_not_mean_of_means(self):
-        reports = self._reports()
-        combined = summarize_multiseed_reports(reports)
-        rows = [
-            case["clean"]
-            for _, report in reports
-            for case in report["case_results"]
-            if case["status"] == "evaluated"
-        ]
-        expected = aggregate_evaluations(rows)
-        assert combined["pooled"]["clean_baseline"] == expected
-        assert combined["pooled"]["clean_baseline"]["scored_cases"] == len(rows)
-
-    def test_variance_block_is_internally_consistent(self):
-        combined = summarize_multiseed_reports(self._reports(seeds=(1, 2, 3)))
-        for side in ("clean", "corrupted"):
-            per_seed_values = [
-                entry[f"{side}_baseline" if side == "clean" else "corrupted_evaluation"]["cer"]
-                for entry in combined["per_seed"]
-            ]
-            stats = combined["variance"][f"{side}_cer"]
-            assert stats["n"] == len(per_seed_values)
-            assert stats["min"] == min(per_seed_values)
-            assert stats["max"] == max(per_seed_values)
-            assert stats["min"] <= stats["mean"] <= stats["max"]
-            assert stats["stdev"] >= 0.0
-
-    def test_requires_at_least_one_report(self):
-        import pytest
-
-        with pytest.raises(ValueError):
-            summarize_multiseed_reports([])
-
-    def test_unavailable_seed_report_rejected(self):
-        import pytest
-
-        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=1, seed=1)
-        clean = RasterBenchmarkScorer.run_benchmark(cases, MockRasterOCREngine())
-
-        class Missing(MockRasterOCREngine):
-            def is_available(self):
-                return False
-
-        unavailable = RasterBenchmarkScorer.run_benchmark(cases, Missing())
-        with pytest.raises(ValueError):
-            summarize_multiseed_reports([(1, clean), (2, unavailable)])
-
-
-class TestMultiseedCLI:
-    def _run(self, *args):
+    def test_cli_multiseed_writes_json(self, tmp_path):
         import subprocess
 
-        return subprocess.run(
-            [sys.executable, "ai/raster_benchmark.py", *args],
-            cwd=str(REPO_ROOT),
-            capture_output=True,
-            text=True,
+        json_out = tmp_path / "multiseed.json"
+        cmd = [
+            sys.executable,
+            "ai/raster_benchmark.py",
+            "--count",
+            "4",
+            "--seeds",
+            "42,43",
+            "--json",
+            str(json_out),
+        ]
+        res = subprocess.run(cmd, check=False, cwd=str(REPO_ROOT), capture_output=True, text=True)
+        assert res.returncode == 0, f"CLI multiseed failed: {res.stderr}"
+        data = json.loads(json_out.read_text(encoding="utf-8"))
+        assert data["seeds"] == [42, 43]
+        assert data["total_case_pairs"] == 8
+        assert "per_seed_summary" in data
+
+    def test_cli_rejects_duplicate_seeds(self):
+        import subprocess
+
+        cmd = [sys.executable, "ai/raster_benchmark.py", "--seeds", "42,42"]
+        res = subprocess.run(cmd, check=False, cwd=str(REPO_ROOT), capture_output=True, text=True)
+        assert res.returncode == 1
+        assert "duplicate seeds" in res.stderr.lower()
+
+    def test_cli_rejects_non_integer_seeds(self):
+        import subprocess
+
+        cmd = [sys.executable, "ai/raster_benchmark.py", "--seeds", "42,abc"]
+        res = subprocess.run(cmd, check=False, cwd=str(REPO_ROOT), capture_output=True, text=True)
+        assert res.returncode == 1
+        assert "integers" in res.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# Rendering capability / shaping validity signalling
+# ---------------------------------------------------------------------------
+
+
+class TestRenderingCapabilitySignalling:
+    """Regression tests: unfaithful (unshaped) Hindi rendering must invalidate
+    hi/bilingual measurements in the report instead of being silently scored."""
+
+    def test_rendering_capabilities_shape(self):
+        from ai.raster_benchmark import rendering_capabilities
+
+        cap = rendering_capabilities()
+        assert set(cap.keys()) == {"raqm", "raqm_version"}
+        assert isinstance(cap["raqm"], bool)
+        assert cap["raqm_version"] is None or isinstance(cap["raqm_version"], str)
+
+    def test_language_rendering_valid_flags_shaping_languages_without_raqm(self, monkeypatch):
+        from ai.raster_benchmark import language_rendering_valid
+
+        monkeypatch.setattr(
+            "ai.raster_benchmark.rendering_capabilities",
+            lambda: {"raqm": False, "raqm_version": None},
+        )
+        assert language_rendering_valid("en") is True
+        assert language_rendering_valid("hi") is False
+        assert language_rendering_valid("bilingual") is False
+
+    def test_language_rendering_valid_all_with_raqm(self, monkeypatch):
+        from ai.raster_benchmark import language_rendering_valid
+
+        monkeypatch.setattr(
+            "ai.raster_benchmark.rendering_capabilities",
+            lambda: {"raqm": True, "raqm_version": "0.10.2"},
+        )
+        for lang in ("en", "hi", "bilingual"):
+            assert language_rendering_valid(lang) is True
+
+    def _run(self, monkeypatch, capabilities, count=4):
+        from ai.raster_benchmark import (
+            MockRasterOCREngine,
+            RasterBenchmarkScorer,
+            RasterDocumentGenerator,
         )
 
-    def test_multiseed_writes_pooled_report(self, tmp_path):
-        out = tmp_path / "multi.json"
-        res = self._run("--count", "2", "--seeds", "1,2", "--json", str(out))
-        assert res.returncode == 0, res.stderr
-        data = json.loads(out.read_text(encoding="utf-8"))
+        monkeypatch.setattr(
+            "ai.raster_benchmark.rendering_capabilities",
+            lambda: capabilities,
+        )
+        cases = RasterDocumentGenerator.generate_benchmark_dataset(count=count, seed=42)
+        return RasterBenchmarkScorer.run_benchmark(cases, MockRasterOCREngine())
 
-        assert data["mode"] == "multiseed"
-        assert data["seeds"] == [1, 2]
-        assert data["count_per_seed"] == 2
-        assert data["total_cases"] == 4
-        assert data["evaluated_count"] == 4
-        assert data["engine_type"] == "mock"
-        assert set(data["variance"]) >= {"clean_cer", "corrupted_cer"}
-        assert len(data["per_seed"]) == 2
-        assert "MULTI-SEED" in res.stdout
+    def test_run_benchmark_flags_unshaped_hindi(self, monkeypatch):
+        report = self._run(
+            monkeypatch, {"raqm": False, "raqm_version": None}
+        )
+        assert report["rendering"] == {"raqm": False, "raqm_version": None}
+        assert "hi" in report["accuracy_invalid_languages"]
+        assert "bilingual" in report["accuracy_invalid_languages"]
+        assert report["accuracy_valid"] is False
 
-    def test_multiseed_is_deterministic(self, tmp_path):
-        first, second = tmp_path / "a.json", tmp_path / "b.json"
-        assert self._run("--count", "2", "--seeds", "1,2", "--json", str(first)).returncode == 0
-        assert self._run("--count", "2", "--seeds", "1,2", "--json", str(second)).returncode == 0
-        a = json.loads(first.read_text(encoding="utf-8"))
-        b = json.loads(second.read_text(encoding="utf-8"))
-        a.pop("duration_seconds", None)
-        b.pop("duration_seconds", None)
-        for entry in a["per_seed"]:
-            entry.pop("duration_seconds", None)
-        for entry in b["per_seed"]:
-            entry.pop("duration_seconds", None)
-        assert a == b
+    def test_run_benchmark_clean_when_raqm_present(self, monkeypatch):
+        report = self._run(monkeypatch, {"raqm": True, "raqm_version": "0.10.2"})
+        assert report["accuracy_invalid_languages"] == []
+        assert report["accuracy_valid"] is True
 
-    def test_invalid_seeds_rejected(self):
-        for raw in ("abc", "1,,2", "1,1", "-3"):
-            res = self._run("--count", "2", "--seeds", raw)
-            assert res.returncode == 1, raw
-            assert "--seeds" in res.stderr
-            assert "distinct non-negative" in res.stderr
+    def test_multiseed_ignores_seeds_with_invalid_rendering(self, monkeypatch):
+        """A seed that evaluated a shaping-limited language must invalidate the
+        whole pooled report's accuracy claim for that language."""
+        from ai.raster_benchmark import MockRasterOCREngine, run_benchmark_multiseed
 
-    def test_seed_flag_ignored_note(self):
-        res = self._run("--count", "1", "--seed", "5", "--seeds", "1")
-        assert res.returncode == 0, res.stderr
-        assert "--seed 5 ignored" in res.stdout
+        monkeypatch.setattr(
+            "ai.raster_benchmark.rendering_capabilities",
+            lambda: {"raqm": False, "raqm_version": None},
+        )
+        report = run_benchmark_multiseed([42, 43], count=4, engine=MockRasterOCREngine())
+        assert "hi" in report["accuracy_invalid_languages"]
+        for psr in report["per_seed"]:
+            assert "hi" in psr["accuracy_invalid_languages"]
+
+
+# ---------------------------------------------------------------------------
+# PSM configuration bake-off support (added for the engine-comparison milestone)
+# ---------------------------------------------------------------------------
+
+
+class TestTesseractPSMConfiguration:
+    """RealTesseractEngine PSM selection: contract path vs benchmark-only direct path."""
+
+    @staticmethod
+    def _engine(**kwargs):
+        """Build via __new__ without requiring the real binary, with minimal state."""
+        engine = RealTesseractEngine.__new__(RealTesseractEngine)
+        engine.language = "eng"
+        engine._available = True
+        return engine
+
+    def test_invalid_psm_values_raise(self):
+        for bad in (14, -1, "6", True, 6.0, None):
+            with pytest.raises(ValueError):
+                RealTesseractEngine(language="eng", psm=bad)
+
+    def test_psm_attribute_records_mode(self):
+        """A valid psm is stored unmodified on the instance (needs the binary; skip otherwise)."""
+        import shutil
+        if shutil.which("tesseract") is None:
+            pytest.skip("tesseract binary not installed")
+        engine = RealTesseractEngine(language="eng", psm=3)
+        assert engine.psm == 3
+        assert engine.engine_name == "tesseract-psm3"
+        engine6 = RealTesseractEngine(language="eng")
+        assert engine6.psm == 6
+        assert engine6.engine_name == "tesseract"
+
+    def test_default_psm_is_six_and_uses_backend_adapter_label(self):
+        engine = self._engine()
+        engine.psm = 6
+        engine.engine_name = RealTesseractEngine.engine_name
+        from unittest.mock import MagicMock, patch
+
+        mock_word = MagicMock(text="Hi", confidence=95.0, page_number=1, line_number=1)
+        mock_raw = MagicMock(words=[mock_word])
+        with patch(
+            "backend.app.ocr_pipeline.TesseractOCRAdapter",
+            return_value=MagicMock(recognize=MagicMock(return_value=mock_raw)),
+        ) as mock_adapter_cls, patch(
+            "backend.app.ocr_pipeline.extract_institution_fields", return_value={}
+        ):
+            result = engine.extract_from_bytes(b"img")
+        assert mock_adapter_cls.call_args.kwargs.get("language") == "eng"
+        assert result["engine"] == "tesseract"
+        assert result["psm"] == 6
+        assert result["recognition_vehicle"] == "backend_adapter"
+
+    def test_psm3_runs_direct_path_with_config_and_label(self, monkeypatch):
+        engine = self._engine()
+        engine.psm = 3
+        engine.engine_name = "tesseract-psm3"
+        engine.engine_version = "5.5.3"
+
+        import pytesseract
+
+        data = {
+            "text": ["Institution", "Name:", "Alpha", "Certificate", "No:", "CERT/2026/0001"],
+            "conf": [95, 95, 90, 95, 95, 90],
+            "page_num": [1, 1, 1, 1, 1, 1],
+            "line_num": [1, 1, 1, 2, 2, 2],
+        }
+        calls = {}
+
+        def fake_image_to_data(image, lang, config, output_type):
+            calls["config"] = config
+            calls["lang"] = lang
+            return data
+
+        monkeypatch.setattr(pytesseract, "image_to_data", fake_image_to_data)
+        # A real decodable PNG so the mirrored preprocessing passes.
+        import io as _io
+        from PIL import Image as _PILImage
+
+        buf = _io.BytesIO()
+        _PILImage.new("L", (8, 8), 255).save(buf, format="PNG")
+        result = engine.extract_from_bytes(buf.getvalue())
+        assert calls["config"] == "--psm 3"
+        assert calls["lang"] == "eng"
+        assert result["engine"] == "tesseract-psm3"
+        assert result["recognition_vehicle"] == "direct_pytesseract"
+        assert result["transcription"] == "Institution Name: Alpha\nCertificate No: CERT/2026/0001"

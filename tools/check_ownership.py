@@ -59,6 +59,7 @@ SHARED_ROOT_FILES: frozenset[str] = frozenset(
         ".gitignore",
         ".env.example",
         ".python-version",
+        "docker-compose.integration.yml",
     }
 )
 
