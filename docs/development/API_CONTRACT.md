@@ -4,6 +4,60 @@
 `/openapi.json`; the two are not the same thing — see
 [Versioning](#versioning-and-compatibility).
 
+> ## Reconciliation addendum 2026-10-25 — read before the historical sections below
+>
+> The sections below this notice describe the **0.1.0-era surface** and are preserved as
+> historical record. The implementation is far ahead of that snapshot. Everything in this
+> addendum was verified by execution at integration-branch head `a1784a0` (PR #6) on
+> 2026-10-25: fresh local boot (migrations applied, demo account seeded through
+> `tools/demo/seed_demo.py`), real HTTP requests, OpenAPI dump, plus the full local pytest
+> suite (456+ tests, 459 observed in CI at this head when the font-dependent engine test runs
+> on Linux) and the live-infra CI job (real PostgreSQL + Redis, run `40129151372`).
+>
+> **Implemented HTTP surface (verified live).** `GET /openapi.json` publishes **25 paths /
+> 29 operations**, OpenAPI 3.1.0:
+>
+> - `GET /health`, `GET /health/ready` (readiness: DB reachable, Alembic revision
+>   `g7b8c9d0e1f2` reported, `users` table present; 503 with reasons otherwise)
+> - `POST /api/v1/validate` (see below — unchanged semantics)
+> - `POST /api/v1/auth/token`, `GET /api/v1/auth/me`
+> - `POST|GET /api/v1/applications`, `GET|PATCH /api/v1/applications/{id}`
+> - `POST|GET /api/v1/applications/{id}/documents`, document detail, version list,
+>   per-version processing status, and `/download`
+> - `POST /api/v1/applications/{id}/validate`, validation-run list/detail, findings list/detail,
+>   `GET /api/v1/applications/{id}/findings`, `GET /api/v1/reviews/queue`,
+>   `POST .../findings/{fid}/actions`, review summary
+> - audit packages: create/list/detail/`PATCH-style` download + `POST /api/v1/audit-packages/verify`
+>
+> **Authentication is enforced.** Reproduced live this session: `POST /api/v1/auth/token` with
+> the seeded credentials → 177-character JWT; `GET /api/v1/applications` with no token → **401**;
+> with `Bearer garbage` → **401**. The assumption section below ("None are implemented",
+> "every endpoint is anonymous") is historical and wrong today.
+>
+> **Tenant isolation / RBAC / persistence are enforced and tested** with real PostgreSQL in the
+> CI integration job (`test_cross_institution_access_denial`,
+> `test_postgres_multi_tenant_isolation`, RBAC refusal tests, rollback-guarantee tests).
+>
+> **The `/api/v1/validate` description below is still accurate** and its semantics have not
+> drifted: it remains `caller_supplied_checklist_only`, returns
+> `preliminary_checks_passed|attention_required`, uses no AICTE rule set, and was reproduced
+> this session (`{"status":"attention_required",...}` with a missing document).
+>
+> **Upload/scanner processing** lives on `POST /api/v1/applications/{id}/documents` → extraction
+> via a processing job; a without-verdict upload fails closed (`SCAN_UNAVAILABLE`,
+> `retry_wait`) and never reaches OCR — verified live on the branch (fail-closed e2e).
+>
+> **Frontend consumers** must use the runtime contract, not this document. The frontend
+> `api.ts` client's 9 captured fixture cases replay OK against the live API
+> (`frontend/tools/verify_fixtures.py` — re-run this session).
+>
+> **Not implemented to date (unchanged, still true):** rate limiting, a stable application
+> error envelope (4xx bodies remain framework-format; treat as opaque), public unauthenticated
+> upload/OCR HTTP endpoints, psycopg-v3 dial support (declared DBAPI is pinned psycopg2), and
+> public-documents rules routes. Remaining known limits: deployed ClamAV daemon absent (owner
+> provisioning), durable deployed storage pending a persistent disk, retention/deletion
+> controls not implemented.
+
 Every item below is labelled:
 
 - **implemented** — exists in code and has tests; the label cites the file and the
