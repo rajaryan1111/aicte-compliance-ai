@@ -133,6 +133,21 @@ jobs:
           CLAMAV_PORT: "3321"
         run: |
           python -m pytest -v backend/tests/integration
+      # The same command the owner runs in a Render shell after deploying, run
+      # here on every PR against real PostgreSQL, Redis and a scanner. It fails
+      # the build if the deployment path regresses (unmigrated schema, missing
+      # tables, unreadable DATABASE_URL, a scanner that cannot return a verdict),
+      # which is exactly the class of failure that made the deployed login screen
+      # unusable while /health reported "ok".
+      - name: Deployment preflight smoke test against the live services
+        env:
+          DATABASE_URL: postgresql://aicte_test:aicte_test_pass@localhost:5432/aicte_test_db
+          REDIS_URL: redis://localhost:6379/1
+          CLAMAV_HOST: 127.0.0.1
+          CLAMAV_PORT: "3321"
+          STORAGE_LOCAL_DIR: /tmp/aicte-ci-storage
+        run: |
+          python tools/deploy/preflight.py
       - name: Diagnostic dump on test failure
         if: failure()
         run: |

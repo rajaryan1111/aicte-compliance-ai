@@ -167,7 +167,7 @@ def _query(engine, sql: str):
         return None
 
 
-def check_database(url: str | None, checks: Checks) -> None:
+def check_database(url: str | None, checks: Checks, require_accounts: bool = False) -> None:
     if url is None:
         for name in ("database", "migrations", "tables", "accounts"):
             checks.add(name, WARN, "skipped: no usable DATABASE_URL")
@@ -216,11 +216,18 @@ def check_database(url: str | None, checks: Checks) -> None:
             count = counts[0] if counts else 0
             if count:
                 checks.add("accounts", PASS, f"{count} user account(s) provisioned")
-            else:
+            elif require_accounts:
                 checks.add(
                     "accounts",
                     FAIL,
                     "no users: run tools/demo/seed_demo.py against this database",
+                )
+            else:
+                checks.add(
+                    "accounts",
+                    WARN,
+                    "no users yet: nobody can log in until seed_demo.py has run "
+                    "(pass --require-accounts to treat this as a failure)",
                 )
         else:
             checks.add("accounts", WARN, "skipped: users table absent")
@@ -337,6 +344,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scanner-port", type=int, default=None)
     parser.add_argument("--storage-dir", default=None)
     parser.add_argument(
+        "--require-accounts",
+        action="store_true",
+        help="treat 'no user accounts provisioned' as a failure (use for a real "
+        "deployment; CI databases legitimately have none at this point)",
+    )
+    parser.add_argument(
         "--skip",
         action="append",
         default=[],
@@ -347,7 +360,7 @@ def main(argv: list[str] | None = None) -> int:
 
     checks = Checks()
     url = check_database_configuration(checks)
-    check_database(url, checks)
+    check_database(url, checks, require_accounts=args.require_accounts)
     if "redis" not in args.skip:
         check_redis(checks, args.redis_url)
     if "scanner" not in args.skip:
