@@ -11,7 +11,7 @@ from sqlalchemy import engine_from_config, pool
 from backend.app.db.base import Base
 # Import models so all tables are registered on Base.metadata
 from backend.app.db import models  # noqa: F401
-from backend.app.db.session import get_database_url
+from backend.app.db.session import get_database_url, normalize_database_url
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -26,7 +26,13 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    return os.getenv("DATABASE_URL", get_database_url())
+    """Return the migration URL with an explicit PostgreSQL DBAPI.
+
+    ``normalize_database_url`` keeps a bare ``postgresql://`` DATABASE_URL
+    (the documented CI form) pointing at psycopg2 rather than inheriting
+    SQLAlchemy's default DBAPI, which changed to psycopg v3 in 2.1.
+    """
+    return normalize_database_url(os.getenv("DATABASE_URL", get_database_url()))
 
 
 def run_migrations_offline() -> None:
