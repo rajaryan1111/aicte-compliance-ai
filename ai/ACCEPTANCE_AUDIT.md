@@ -54,3 +54,28 @@ Labels: `PASS` (reproducible evidence), `PARTIAL`, `BLOCKED_EXTERNAL`,
 - `git diff --check` clean; only `ai/**` files changed by the workstream.
 - No backend/frontend/docs/.github file modified by AI/OCR work.
 - Historical benchmark artifacts preserved; new artifacts use descriptive names.
+
+## Status update (2026-10-25) — two blocker rows above are now fixed on this branch
+
+The two rows below are dated audit entries, preserved as written; their live status changed on
+this branch and is re-verified here:
+
+- **Windows-drive storage-key traversal — FIXED on this branch** by `e509a93` (a colon anywhere
+  in a storage key is now refused on every host OS, `backend/app/core/storage.py`), with
+  regression tests first shown to fail against the pre-fix code (`test_storage_key_hardening.py`).
+  Detailed before/after in `ai/WORKSTREAM_HANDOFF.md` §2.1 (B-2). Still **open on `main`**
+  (`e88a5bf`, run `40115512499`: the same traversal test fails) until PR #6 merges.
+- **psycopg-v3 migration-job failure — FIXED on this branch** by `e509a93` + `6f431d5`
+  (`normalize_database_url` pinning the declared psycopg2 DBAPI at every URL consumer, including
+  the integration harness), with a live real-PostgreSQL before/after reproduction; §2.1 (B-1).
+  Still **open on `main`** until PR #6 merges. The root cause documented below and in
+  `ai/BACKEND_HANDOFF.md` (SQLAlchemy ≥ 2.1 default dialect) is what the fix addresses.
+
+Post-fix verification at this branch's head (fresh session, isolated worktree, Python 3.12 venv,
+macOS): `pytest -q` → **459 passed, 22 skipped, 1 failed**; the single local failure is the
+already-documented font-path portability defect (backend-owned, passes on Linux CI). Targeted
+set for both fixes: **51 passed**. `pytest -q ai/tests` → **248 passed, 1 skipped**. CI on head
+`0e4624a`: run `40128878853`, **all four GitHub jobs pass** including `backend-tests` and
+`real-infrastructure-integration` (the two jobs red on `main`). The 15 corruption gaps, the
+font-path defect, Hindi/bilingual `BLOCKED_EXTERNAL`, real-document `NOT_AVAILABLE` and Phase 0
+remain unchanged and open.

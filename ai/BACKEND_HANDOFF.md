@@ -212,3 +212,30 @@ Fetched check results for HEAD `580faf6` ([PR #10](https://github.com/rajaryan11
   22 skipped`) and the identical psycopg migration error. PR #10 therefore
   introduces **no new check failure**; merge-readiness is not degraded by the
   branch. Both reds remain backend/CI-owner action items.
+
+## Status update (2026-10-25) — the two defects above are fixed on this branch
+
+The entries above are preserved as written when the defects were open. They were fixed in
+backend/infra-owned code **with owner authorization** on this branch (`e509a93` for both the
+Windows-drive rejection and the psycopg2 DBAPI pinning; `6f431d5` for the integration-harness
+call site — the last consumer still constructing its own engine). Full before/after evidence,
+including a live real-PostgreSQL reproduction of the exact CI migration command (pre-fix:
+`ModuleNotFoundError: No module named 'psycopg'`, exit 1 → post-fix: exit 0, 16 tables,
+revision `g7b8c9d0e1f2`), is in `ai/WORKSTREAM_HANDOFF.md` §2.1 (B-1, B-2).
+
+Current live state, re-verified 2026-10-25:
+
+- **On `main` (`e88a5bf`): both defects still present** — run `40115512499` shows the identical
+  traversal failure on `main`. Until PR #6 merges, `main`'s `backend-tests` and
+  `real-infrastructure-integration` stay red for these pre-existing causes.
+- **On this branch (`f9cabc3` → `0e4624a`): both fixed and green** — CI run `40127097414`
+  (head `f9cabc3`, backend-tests pass, live-infra pass) and run `40128878853` (head `0e4624a`,
+  all four jobs pass). Local targeted regression set (URL normalization + storage hardening +
+  production guard + review validation + retry sweeper): **51 passed**; full suite on macOS:
+  459 passed, 22 skipped, 1 failed — the one local failure is the font-path portability defect
+  documented above (backend-owned, passes on Linux CI; this session confirmed it live in the
+  arena venv as `OSError: cannot open resource` on this host).
+- **Still open, backend-owned, unchanged:** the 15 corruption-slice gaps in §66-block table,
+  the test font-path portability defect above, and the deployed-configuration steps in
+  `docs/development/OWNER_ACTIONS.md` §6 (Owner action: Render `DATABASE_URL` / `JWT_SECRET_KEY` /
+  health-check path / redeploy). Neither defect touches the OCR path; no AI-owned file involved.
