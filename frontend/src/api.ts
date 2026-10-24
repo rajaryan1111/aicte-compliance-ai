@@ -67,19 +67,20 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set('Content-Type', 'application/json');
   }
 
+  // Name the target in the failure message. A bare "cannot reach the API"
+  // sent operators hunting for a backend outage when the real problem was a
+  // build-time base URL pointing at the wrong origin, so the URL is worth
+  // showing (it is public configuration, never a secret).
+  const target = `${BASE}${path}`;
   let response: Response;
   try {
-    response = await fetch(`${BASE}${path}`, { ...init, headers });
+    response = await fetch(target, { ...init, headers });
   } catch {
     throw new ApiError(
       0,
-      'Cannot reach the API. Is the backend running and the proxy configured?',
+      `Cannot reach the API at ${target}. Check that the backend is running and ` +
+        'that this origin is allowed to call it (CORS).',
     );
-  }
-
-  if (response.status === 401) {
-    setToken(null);
-    throw new ApiError(401, 'Session expired or credentials rejected. Please sign in again.');
   }
 
   const text = await response.text();
@@ -90,6 +91,18 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       data = text;
     }
+  }
+
+  if (response.status === 401) {
+    // The server's message is already deliberately generic ("Incorrect username
+    // or password."), so surfacing it is safe and more useful than replacing
+    // every 401 with "session expired" -- which is what made a rejected sign-in
+    // look like an unrelated authentication fault.
+    setToken(null);
+    throw new ApiError(
+      401,
+      describe(data, 'Session expired or credentials rejected. Please sign in again.'),
+    );
   }
 
   if (!response.ok) {

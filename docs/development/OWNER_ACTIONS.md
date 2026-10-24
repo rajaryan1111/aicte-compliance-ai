@@ -195,3 +195,64 @@ review.
 
 Until those exist and are security-tested, production is **NO-GO**; passing tests do not
 change that.
+
+---
+
+## 6. Render deployment — exact remaining steps (verified 2026-10-25)
+
+Context: the deployed login screen reported *"Cannot reach the API. Is the backend running
+and the proxy configured?"*, and the backend log showed
+`sqlite3.OperationalError: no such table: users`. Two independent defects, both now fixed in
+code, plus configuration that only the dashboard owner can set.
+
+### What the code now does (no dashboard action needed)
+
+| Behaviour | Where |
+|---|---|
+| Refuses to start on a deployed platform with a missing or SQLite `DATABASE_URL`, instead of serving a healthy-looking API over an empty file | `backend/app/db/session.py` |
+| Applies Alembic migrations at startup when deployed (`MIGRATE_ON_START`, default on), and fails startup if migration fails | `backend/app/db/migrations.py`, `backend/app/main.py` |
+| `GET /health/ready` reports engine family, Alembic revision, `users` table presence and reasons, returning **503** when not ready (never echoes the URL) | `backend/app/main.py` |
+| CORS allowlist configurable via `CORS_ALLOW_ORIGINS` (exact origins, `*` refused), defaulting to the preview origin | `backend/app/main.py` |
+| Frontend network error names the URL it tried; a 401 now shows the server's message instead of a blanket "session expired" | `frontend/src/api.ts` |
+
+### Steps that need the Render dashboard (in this order)
+
+1. **Backend → Environment → `DATABASE_URL`** = the **Internal Database URL** of
+   `dpg-dbefnlo473hc73d5or0g-a` (Postgres → *Connect* → *Internal*). Do not paste it into
+   GitHub, an issue, or a chat.
+2. **Backend → Environment → `CORS_ALLOW_ORIGINS`** = `https://aicte-compliance-frontend-preview.onrender.com`
+   (comma-separate additional origins; no wildcard, no trailing slash needed).
+3. **Backend → Environment → `JWT_SECRET_KEY`** must be set (≥32 chars). Signing raises
+   `RuntimeError` without it, so a missing key shows up as 500s on login.
+4. **Backend → Health Check Path** = `/health/ready`. This is what marks the service unhealthy
+   while the database is unreachable or unmigrated, instead of advertising a working API.
+5. **Backend → redeploy** the branch head. Startup logs should show
+   `Applying database migrations to head` followed by `Database is at Alembic revision …` on the
+   first deploy and no migration lines afterwards.
+6. **Frontend → Environment → `VITE_API_BASE_URL`** = `https://aicte-compliance-api-preview.onrender.com`
+   then **Manual Deploy → Clear build cache & deploy**. This variable is baked into the bundle at
+   build time (`frontend/src/api.ts`), so changing it without a rebuild changes nothing.
+7. **Provision the demo account** against the Render database, from a machine that can reach it
+   (Render Shell or a trusted host):
+   `DATABASE_URL=<internal url> JWT_SECRET_KEY=<same key> python tools/demo/seed_demo.py --username demo_operator --password '<strong temporary password>'`
+   The script creates the institution, the user (bcrypt hash) and an `institution_admin`
+   membership. Share the password privately — never in the repository.
+
+### Verify after deploying
+
+```
+curl -s <backend>/health/ready          # expect 200, "status":"ready", users_table_present:true
+curl -s -D- -o /dev/null -X OPTIONS <backend>/api/v1/auth/token \
+  -H 'Origin: https://aicte-compliance-frontend-preview.onrender.com' \
+  -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: content-type'
+# expect 200 + access-control-allow-origin: that exact origin
+```
+
+### Still NOT claimed
+
+Nothing in this repository proves the Render services are configured as above — this environment
+has no network route to `*.onrender.com` and no Render integration. The Redis/Key Value instance
+has persistence disabled and no Celery worker is verified; document storage is a local directory
+unless `STORAGE_LOCAL_DIR` points at a mounted disk; and the ClamAV scanner is not deployed, so
+uploads would park in `retry_wait` with `SCANNER_UNAVAILABLE` (fail-closed, not clean). Keep
+public uploads disabled until storage, scanning and a worker are verified.
