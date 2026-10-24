@@ -220,8 +220,11 @@ code, plus configuration that only the dashboard owner can set.
 1. **Backend → Environment → `DATABASE_URL`** = the **Internal Database URL** of
    `dpg-dbefnlo473hc73d5or0g-a` (Postgres → *Connect* → *Internal*). Do not paste it into
    GitHub, an issue, or a chat.
-2. **Backend → Environment → `CORS_ALLOW_ORIGINS`** = `https://aicte-compliance-frontend-preview.onrender.com`
-   (comma-separate additional origins; no wildcard, no trailing slash needed).
+2. **Backend → Environment → `CORS_ALLOW_ORIGINS`** = the origins that actually serve the UI,
+   comma-separated. Both `https://aicte-compliance-frontend.vercel.app` and
+   `https://aicte-compliance-frontend-preview.onrender.com` are allowed by default; set this
+   variable only if the deployed origins differ (Vercel *preview* URLs are per-commit and need
+   listing explicitly; wildcards and prefix rules are refused).
 3. **Backend → Environment → `JWT_SECRET_KEY`** must be set (≥32 chars). Signing raises
    `RuntimeError` without it, so a missing key shows up as 500s on login.
 4. **Backend → Health Check Path** = `/health/ready`. This is what marks the service unhealthy
@@ -238,12 +241,27 @@ code, plus configuration that only the dashboard owner can set.
    The script creates the institution, the user (bcrypt hash) and an `institution_admin`
    membership. Share the password privately — never in the repository.
 
-### Verify after deploying
+### Verify after deploying — one command
+
+Run this in the backend's Render Shell. It checks the database configuration, connectivity,
+migration revision against the code's head, required tables, provisioned accounts, Redis, the
+scanner and storage, prints PASS/FAIL per item, redacts every connection string, and exits
+non-zero if anything required fails:
+
+```
+python tools/deploy/preflight.py
+```
+
+Expected last line: `RESULT: READY (required checks passed; WARN items are documented limitations)`.
+WARN on storage means the instance has an ephemeral disk; WARN on scanner means uploads will park
+in `retry_wait` (fail-closed, never clean).
+
+Then the two HTTP checks:
 
 ```
 curl -s <backend>/health/ready          # expect 200, "status":"ready", users_table_present:true
 curl -s -D- -o /dev/null -X OPTIONS <backend>/api/v1/auth/token \
-  -H 'Origin: https://aicte-compliance-frontend-preview.onrender.com' \
+  -H 'Origin: https://aicte-compliance-frontend.vercel.app' \
   -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: content-type'
 # expect 200 + access-control-allow-origin: that exact origin
 ```
