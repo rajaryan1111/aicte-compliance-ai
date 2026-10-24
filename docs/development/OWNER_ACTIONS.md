@@ -289,7 +289,7 @@ To add it, create a **Background Worker** service in Render with the same branch
 the same build command as the API, and:
 
 ```
-celery -A backend.app.worker.celery_app.celery_app worker --loglevel=info
+celery -A backend.app.worker.celery_app.celery_app worker --beat --loglevel=info
 ```
 
 It must receive `DATABASE_URL`, `CELERY_BROKER_URL` (or `REDIS_URL`),
@@ -297,6 +297,14 @@ It must receive `DATABASE_URL`, `CELERY_BROKER_URL` (or `REDIS_URL`),
 service. Do **not** set `CELERY_TASK_ALWAYS_EAGER` on it: eager mode runs tasks
 inside whatever process calls `.delay()`, which is a test convenience and would
 make the worker idle.
+
+`--beat` runs the scheduler in the same process, which is what re-dispatches jobs
+whose retry backoff has elapsed (`sweep_due_retries_task`, every
+`RETRY_SWEEP_INTERVAL_SECONDS`, default 30s). Without a beat, a job that fails
+transiently stays in `retry_wait` forever: the backoff is recorded but nothing
+acts on it. With more than one worker, run a single separate
+`celery -A backend.app.worker.celery_app.celery_app beat` service instead of `-B`
+on every worker, so the sweep is not scheduled multiple times.
 
 Redis durability is not required for correctness here, and the free Key Value
 instance has persistence disabled — that is acceptable because Redis is only the
@@ -328,6 +336,18 @@ files. Either mount a persistent disk on the web service and set
 `STORAGE_LOCAL_DIR` inside it, or treat uploads as demo-only. There is no object
 storage backend in this codebase yet; adding one is a feature, not a
 configuration change.
+
+**Smallest secure option** (recommended while the prototype stays on one
+instance): one Render persistent disk on the web service, mounted at
+`/var/lib/aicte-compliance`, with `STORAGE_LOCAL_DIR=/var/lib/aicte-compliance`
+and file permissions left to the service user. Disks require a paid instance
+type and are attached to a single service, so the API and any future worker must
+run in the same service (or share an object store) for the worker to read
+uploads. Disks are not a backup: `docs/development/RECOVERY_AND_BACKUP.md` still
+applies, and uploaded institutional documents must not be stored here until
+retention, deletion and access-review requirements are signed off. Do not add an
+S3 client pre-emptively — it would be unreferenced code until the owner decides
+on a bucket and credentials.
 
 ### Cost, durability and expiry
 
