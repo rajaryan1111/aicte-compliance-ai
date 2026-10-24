@@ -348,3 +348,36 @@ demonstrable, and the limitations that remain (no real institutional documents, 
 accuracy, regulatory checks correctly `not_run`, two red CI jobs owned by `backend/`) are documented
 rather than hidden. This addendum does not change any metric, threshold or ground truth, and does
 not claim real-world OCR accuracy or regulatory compliance from synthetic data.
+
+---
+
+## Addendum 2026-10-25 — §5.4 and §5.5 are now fixed on this branch
+
+The closing paragraph of the 2026-10-24 addendum above marked §5.4 (Windows drive-qualified
+storage keys) and §5.5 (SQLAlchemy 2.1 psycopg-v3 default dialect) as *still open*. They were
+open **when that paragraph was written** (the addendum landed at `aaab2b4`, before the fixes).
+They are now closed on this branch by `e509a93` and `6f431d5` with regression tests that were
+first shown to fail against the pre-fix code; `WORKSTREAM_HANDOFF.md` §2.1 documents both fixes
+with before/after evidence. The addendum's verdict and every other statement above are preserved
+as written, superseded only where this note explicitly says so.
+
+Re-verified by execution on 2026-10-25 (this session's fresh evidence, not carried over):
+
+| Check | Exact command | Result |
+|---|---|---|
+| PR state | `gh pr view 6` | OPEN, `mergeable: MERGEABLE`, `mergeStateStatus: CLEAN`, head `f9cabc3`, 50 files / 35 commits, no review decision recorded |
+| PR CI (all green, incl. the jobs red on `main`) | `gh pr checks 6` (run `40127097414`) | `backend-tests`, `optional-ocr-integration`, `optional-clamav-integration`, `real-infrastructure-integration`, Vercel — **all pass**; CI backend suite logged `459 passed, 23 skipped` |
+| CI on `main` after PR #10 merged | run `40115512499` at `e88a5bf` | `backend-tests` FAIL (`test_storage_directory_traversal_prevention` DID NOT RAISE), `real-infrastructure-integration` FAIL — i.e. §5.4/§5.5 are live defects **on `main`** and are fixed only by this PR |
+| Local backend suite (macOS, Python 3.12 fresh venv) | `python -m pytest -q` | **459 passed, 22 skipped, 1 failed** — the sole local failure is `test_ocr_engine_integration.py::test_tesseract_reads_synthetic_institution_document` with `OSError: cannot open resource` (Pillow font load): the test's font path exists on Linux but not on this macOS host. Same class as the font-path portability defect already documented for backend; **unchanged, backend-owned**, and it passes on Linux CI (this exact test passes in run `40127097414`) |
+| Targeted regression set for both fixes | `pytest backend/tests/test_database_url_normalization.py backend/tests/test_storage_key_hardening.py backend/tests/test_production_database_guard.py backend/tests/test_review_api.py::test_record_review_action_validation_errors backend/tests/test_retry_sweeper.py` | **51 passed** |
+| AI suite | `python -m pytest -q ai/tests` | **248 passed, 1 skipped** |
+| Frontend contract fixtures | `python frontend/tools/verify_fixtures.py` | `fixtures OK: 9 case(s) match the live API (contract 0.1.0-draft)` |
+| Secret scan of the entire PR diff | `gh pr diff 6` | Only localhost test credentials (`aicte_test`), placeholders and documentation text; no real secret, token or credential |
+| Live Vercel frontend | HTTPS GET + bundle inspection | HTTP 200; the production bundle embeds exactly `https://aicte-compliance-api-preview.onrender.com` as the API base and no secret |
+| Live Render frontend preview | HTTPS GET | HTTP 200 |
+| Live Render API preview (`/health`, `/health/ready`) | HTTPS GET, 60 s timeout each | **No response — connection timeout both times.** The API service is not serving. Consistent with `docs/development/OWNER_ACTIONS.md` §6: the remaining deployment steps are Render-dashboard-only (DATABASE_URL, JWT_SECRET_KEY, health check path, redeploy) and require the owner. Not fixed by any code on any branch |
+
+**State of the two former P1s, precisely:** fixed on this branch (green CI proved on each head with
+the fix: `e509a93` run `40118334411` for B-2, later runs for the harness layer, final head
+`f9cabc3` run `40127097414` all-green); **still present on `main`** until this PR merges.
+The demo-relevant verdict remains `READY_WITH_DOCUMENTED_LIMITATIONS`, unchanged.
