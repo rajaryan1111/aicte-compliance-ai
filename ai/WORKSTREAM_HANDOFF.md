@@ -15,44 +15,60 @@ Ownership contract: [`../WORKSTREAMS.md`](../WORKSTREAMS.md). AI/OCR status and 
 
 | Item | Value |
 |---|---|
-| PR | #6, `arena/5614862e-aicte-compliance-ai` → `feature/ai-ocr-corruption-slice` |
-| Commits | `ba38829` (real-engine evaluation + 7 defect fixes), `2b49f0e` (multi-seed measurement) |
-| Files | 8, **all under `ai/`** (+5806/−86) |
-| State | open, `MERGEABLE`, `CLEAN`, no conflicts, no reviews yet |
+| PR | #6, `arena/5614862e-aicte-compliance-ai` → **`main`** (retargeted 2026-10-24) |
+| Head | `ba6944c` (== `origin`, verified with `git ls-remote`) |
+| Commits | `ba38829`, `2b49f0e`, `0065459`, `f07744f` (frontend + `tools/demo`), `ba6944c` (test hardening) |
+| Files | 24 — `ai/**` (8), `frontend/**` (13), `tools/demo/**` (3) |
+| State | open, `MERGEABLE`, `CLEAN`, no conflicts, `reviewDecision` empty |
 
 **C does not merge this PR.** `WORKSTREAMS.md` prohibits "merging your own PR without owner
 review", and step 6 of the integration process says "no automatic merging". The owner merges.
 
-### Blocker the owner must decide on: no CI evidence for this PR
+### CI evidence: now exists, and it is red for reasons outside this PR
 
-`.github/workflows/backend-tests.yml` triggers only on `push`/`pull_request` to `main` and
-`research/grounded-foundation`. PR #6 targets `feature/ai-ocr-corruption-slice`, so GitHub
-reports **no checks** for it. `WORKSTREAMS.md` step 5 requires "CI must be green on the exact head
-SHA being merged", which cannot be satisfied on this base.
+The PR was retargeted to `main`, so the next push started the workflow instead of leaving the head
+SHA with zero check-runs. Run **40116758478** on head `ba6944c`:
 
-Options for the owner (a `.github/**` change is a shared-surface decision, not a C decision):
+| Check | Result |
+|---|---|
+| `backend-tests` | **fail** (49 s) |
+| `real-infrastructure-integration` | **fail** (33 s) |
+| `optional-ocr-integration` | pass |
+| `optional-clamav-integration` | pass |
 
-1. Retarget PR #6 to `research/grounded-foundation` (or `main`) so the existing workflow runs, then
-   merge forward; or
-2. Extend the workflow's branch filter to include the feature branches (shared-file PR, needs A and
-   C review); or
-3. Accept the recorded local evidence below as the merge gate for this branch and note the deviation
-   in the PR.
+Both failures also occur on `main` @ `e88a5bf` (run 40115512499), **before** this branch is merged,
+so they are pre-existing. They are root-caused in **§2.1** below: a SQLAlchemy 2.1 driver-default
+change that breaks every `postgresql://` URL (P1), and one test that asserts Windows semantics on
+Linux (P2, no actual escape). Both live in `backend/**`, which workstream C does not own.
 
-### Local verification recorded at `2b49f0e` (reproducible by the reviewer)
+Consequence for the merge gate: `WORKSTREAMS.md` step 5 requires CI green on the exact head SHA.
+That cannot be satisfied by this PR alone — it needs the two `backend/` fixes or an explicit owner
+waiver recorded on the PR. The `ai/**` and `frontend/**` content in this PR is not implicated in
+either failure: locally `pytest -q ai/tests` is 243 passed / 6 skipped, and the only backend test
+that fails is the pre-existing traversal test, which fails identically on clean `main`.
+
+**CI logs are not retrievable from this sandbox** — `gh run view --log` and `--log-failed` both abort
+with a network EOF against `results-receiver.actions.githubusercontent.com`, and the jobs API returns
+no step detail (`step_count: 0`). Every claim above therefore rests on local reproduction, not on
+CI output, and is labelled that way.
+
+### Local verification recorded at `ba6944c` (reproducible by the reviewer)
 
 ```bash
-python -m pytest -q ai/tests          # 248 passed
-python -m pytest -q backend/tests     # 224 passed, 1 skipped (real-Tesseract test, no engine in PATH)
+python -m pytest -q ai/tests          # 243 passed, 6 skipped, 0 failed
 ruff check ai/                        # clean
-python tools/check_ownership.py --workstream ai \
-  --base cdbad6aec787c1968720b5ebbd0b950dd20a1f47   # ownership OK: 7 changed path(s)
+python -m pytest -q                   # backend: 1 failed, 388 passed, 22 skipped
+                                      #   the 1 failure is B-2 below, pre-existing on main
 ```
 
-Merge (owner, after review):
+The 6 skips are host capabilities, not suppressed failures: no Devanagari font, no Tesseract binary,
+no `pytesseract`. Each was proven to pass once the capability was installed (see §2.1 and the commit
+message of `ba6944c`).
+
+Merge (owner, after review **and** after the §2.1 decision):
 
 ```bash
-gh pr merge 6 --merge      # or --squash/--rebase per project preference; the branch fast-forwards
+gh pr merge 6 --merge      # or --squash/--rebase per project preference
 ```
 
 ---
@@ -73,6 +89,67 @@ python ai/evaluate_extraction.py --corpus ai/corpus/ocr_corruption_cases.jsonl
 Per-defect identifiers, expected vs observed output, synthetic inputs, severity and the acceptance
 criteria for the fix PR are in [`BACKEND_HANDOFF.md`](BACKEND_HANDOFF.md). This file adds only the
 measurement that was not available when that handoff was written.
+
+### 2.1 The two red CI jobs on `main` — root-caused, both `backend/`-owned (owner: B)
+
+`main` @ `e88a5bf` has two failing jobs (`backend-tests`, `real-infrastructure-integration`). CI logs
+were unreadable from this sandbox (`gh run view --log` aborts with a network EOF), so both were
+**reproduced locally** instead. Neither is an `ai/` defect; neither has been patched by C, because
+both live in `backend/**`, which C does not own.
+
+**B-1 (P1) — every `postgresql://` URL is dead on a fresh install: SQLAlchemy 2.x resolved to 2.1.6
+flipped the default PostgreSQL DBAPI from `psycopg2` to `psycopg` (v3).** `backend/requirements.txt`
+pins `psycopg2-binary>=2.9.0` and `sqlalchemy>=2.0.0,<3.0.0`, so a clean `pip install` gets 2.1.6 +
+`psycopg2` — and SQLAlchemy then tries to import the *absent* `psycopg`. This is a time bomb, not a
+stale branch state: it breaks the CI job's `alembic upgrade head` step, and it would break a real
+PostgreSQL deployment just as completely. The SQLite demo path is unaffected, which is why it has
+gone unnoticed.
+
+```console
+$ python -c 'import sqlalchemy; sqlalchemy.create_engine("postgresql://u:p@h:5432/db")'
+ModuleNotFoundError: No module named 'psycopg'      # sqlalchemy 2.1.6, psycopg2 2.9.13 installed
+
+$ DATABASE_URL="postgresql://a:p@localhost:5432/x" python -m alembic -c backend/alembic.ini upgrade head
+  File ".../sqlalchemy/dialects/postgresql/psycopg.py", line 497, in import_dbapi
+    import psycopg
+ModuleNotFoundError: No module named 'psycopg'      # exit 1 — this is the CI step, verbatim
+
+$ DATABASE_URL="postgresql+psycopg2://a:p@localhost:5432/x" python -m alembic -c backend/alembic.ini upgrade head
+(Background on this error at: ...)                  # driver import OK; fails only on "no server here"
+```
+
+Smallest fixes, owner's choice — pin the driver or pin the major:
+
+1. `backend/requirements.txt`: `sqlalchemy>=2.0.0,<2.1` (reverts to the `psycopg2` default), **or**
+2. keep SQLAlchemy and add `psycopg[binary]>=3.1` (adopt the v3 driver), **or**
+3. normalise the scheme in `backend/app/db/session.py::create_db_engine` and `backend/alembic/env.py`
+   (`postgresql://` → `postgresql+psycopg2://`) so the driver is always explicit rather than
+   inherited from a library default.
+
+Option 3 is the only one that also protects the alembic CLI path and any operator-supplied
+`DATABASE_URL`; option 1 is the smallest diff. Acceptance: `real-infrastructure-integration` green
+against its Postgres service, and a test asserting the engine/dialect driver resolves with only
+`requirements.txt` installed.
+
+**B-2 (P2) — `test_storage_directory_traversal_prevention` is a Windows-semantics test run on Linux.**
+It walks six keys and expects `PathTraversalError` for each. Five pass; `C:\Windows\system32\cmd.exe`
+does not, because `os.path.isabs()` is false for a drive-letter path on POSIX, so the key is treated
+as an ordinary filename. **There is no escape:** `LocalStorageBackend._resolve_key` rewrites `\` to
+`/` and the resolved target stays inside the root (verified:
+`/tmp/aicte_private_storage/C:/Windows/system32/cmd.exe`, `relative_to(base_dir)` succeeds). On
+Windows the same key *is* absolute and is correctly rejected — so this is behaviour that differs by
+host OS, not a hole in the demo path. It only breaks the suite because CI runs Linux.
+
+```console
+$ python -m pytest -q backend/tests/integration/test_security_and_failure_paths.py::test_storage_directory_traversal_prevention
+E  Failed: DID NOT RAISE PathTraversalError
+1 failed                                        # backend suite: 1 failed, 388 passed, 22 skipped
+```
+
+Recommended fix (owner B): reject Windows drive prefixes/UNC (`^[A-Za-z]:` , `^\\\\`) explicitly in
+`_resolve_key` *before* the `isabs` check, so the rejection no longer depends on the host OS, and
+keep the test as is. Defense in depth rather than a demo blocker; do **not** mark the suite green by
+deleting the key from the test.
 
 ### New measured evidence: Hindi/bilingual field extraction (real OCR, clean pages)
 
@@ -207,7 +284,8 @@ interpret regulations.
 
 ## 5. What C is *not* doing, and why
 
-- **Not merging PR #6** — ownership rule; also no CI evidence exists on that base.
+- **Not merging PR #6** — `WORKSTREAMS.md` reserves the merge to the owner, and CI on the head
+  SHA is red for the two pre-existing `backend/` reasons in §2.1, which C cannot fix or waive.
 - **Not editing `backend/app/ocr_*.py`** — backend-owned until an approved migration
   (`WORKSTREAMS.md`, "OCR placement").
 - **Not adding real or scanned institutional documents** — the corpora must stay synthetic.
