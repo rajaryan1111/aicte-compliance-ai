@@ -495,3 +495,50 @@ def test_alembic_migration_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyP
         )
 
     engine.dispose()
+
+
+# --- Schema contract shared with the live PostgreSQL integration suite ---
+
+
+def test_validation_evidence_schema_matches_repository_contract() -> None:
+    """Pin the column names the live integration suite writes through.
+
+    ``backend/tests/integration/test_postgres_migrations_and_persistence.py``
+    builds validation runs, findings and review actions through the repositories
+    with real PostgreSQL. That suite is skipped unless
+    ``RUN_LIVE_INTEGRATION_TESTS`` is set, so a drift between the models and the
+    repositories would otherwise stay invisible in the default job -- which is
+    exactly how a set of guessed column names survived there unnoticed.
+
+    This guard needs no infrastructure: it checks the ORM columns and the
+    repository keyword arguments together.
+    """
+    import inspect
+
+    from backend.app.repositories.review_audit_repository import ReviewAuditRepository
+    from backend.app.repositories.validation_repository import ValidationRepository
+
+    run_columns = ValidationRun.__table__.columns
+    assert "consumed_version_ids" in run_columns
+    assert "consumed_document_versions" not in run_columns
+    # Provenance: a run may not be persisted without the date it was evaluated against.
+    assert run_columns["evaluation_date"].nullable is False
+    assert "evaluation_date" in inspect.signature(ValidationRepository.create_run).parameters
+
+    finding_columns = Finding.__table__.columns
+    for column in ("code", "summary", "evidence", "severity", "status"):
+        assert column in finding_columns
+    # Neither of these ever existed; the document type lives in the evidence JSON.
+    assert "finding_code" not in finding_columns
+    assert "message" not in finding_columns
+    assert "code" in inspect.signature(ValidationRepository.create_finding).parameters
+    assert "summary" in inspect.signature(ValidationRepository.create_finding).parameters
+
+    action_columns = ReviewAction.__table__.columns
+    for column in ("rationale", "comment", "metadata_payload", "new_status"):
+        assert column in action_columns
+    assert "justification" not in action_columns
+    assert "resolution_outcome" not in action_columns
+    action_params = inspect.signature(ReviewAuditRepository.create_review_action).parameters
+    assert "rationale" in action_params
+    assert "metadata_payload" in action_params

@@ -67,19 +67,66 @@ def test_cross_institution_access_denial(
     token_b = login_b.json()["access_token"]
     headers_b = {"Authorization": f"Bearer {token_b}"}
 
-    # User B tries to read App A -> 403 Forbidden
-    res = live_api_client.get(f"/api/v1/applications/{app_a.id}", headers=headers_b)
-    assert res.status_code == 403
-    assert "Forbidden" in res.json().get("detail", "")
+    login_a = live_api_client.post(
+        "/api/v1/auth/token", json={"username": user_a.username, "password": "Password123!"}
+    )
+    headers_a = {"Authorization": f"Bearer {login_a.json()['access_token']}"}
 
-    # User B tries to upload to App A -> 403 Forbidden
+    # Cross-tenant access is denied with 404, not 403.
+    #
+    # This is the intended contract, documented in backend/app/api/deps.py:
+    # a foreign tenant's resource is concealed as "not found" so an attacker
+    # cannot probe for the existence of other institutions' applications, while
+    # a *role permission* failure inside the caller's own tenant stays 403.
+    # Returning 403 here would confirm the resource exists and leak its
+    # ownership boundary, so 404 is deliberately preserved -- do not "fix" this
+    # by changing the API to 403.
+    concealed_details = ("Application not found.", "Resource not found or access denied.")
+
+    res = live_api_client.get(f"/api/v1/applications/{app_a.id}", headers=headers_b)
+    assert res.status_code == 404
+    assert res.json().get("detail") in concealed_details
+    # The denial must not disclose the owning institution or the resource's existence.
+    assert str(inst_a.id) not in res.text
+
+    # The same concealment applies to writes, not just reads.
     upload_res = live_api_client.post(
         f"/api/v1/applications/{app_a.id}/documents",
         headers=headers_b,
         data={"document_type": "land_record"},
         files={"file": ("test.pdf", b"%PDF-1.4 mock", "application/pdf")},
     )
-    assert upload_res.status_code == 403
+    assert upload_res.status_code == 404
+    assert upload_res.json().get("detail") in concealed_details
+
+    # Tenant isolation must also hold in the other direction.
+    reverse = live_api_client.get(f"/api/v1/applications/{app_b.id}", headers=headers_a)
+    assert reverse.status_code == 404
+
+    # Intra-tenant role denial is NOT concealed: an auditor in their own
+    # institution lacks application:update, which is a 403 Forbidden.
+    auditor = UserRepository.create(
+        live_postgres_session, username=f"auditor_{ts}", hashed_password=pwd_hash
+    )
+    live_postgres_session.commit()
+    UserRepository.create_membership(
+        live_postgres_session, user_id=auditor.id, institution_id=inst_a.id, role=ROLE_AUDITOR
+    )
+    live_postgres_session.commit()
+
+    login_auditor = live_api_client.post(
+        "/api/v1/auth/token",
+        json={"username": auditor.username, "password": "Password123!"},
+    )
+    headers_auditor = {"Authorization": f"Bearer {login_auditor.json()['access_token']}"}
+
+    denied = live_api_client.patch(
+        f"/api/v1/applications/{app_a.id}",
+        headers=headers_auditor,
+        json={"academic_year": "2027-2028"},
+    )
+    assert denied.status_code == 403
+    assert "Forbidden" in denied.json().get("detail", "")
 
     # Clean up
     live_postgres_session.delete(inst_a)
@@ -145,10 +192,25 @@ def test_authentication_rejection_invalid_or_expired_token(
     assert res1.status_code == 401
     assert "credentials were not provided" in res1.json()["detail"].lower()
 
-    # 2. Corrupted/tampered token
-    res2 = live_api_client.get("/api/v1/applications/1", headers={"Authorization": "Bearer not.a.valid.jwt.token"})
+    # 2. Corrupted/tampered token.
+    #
+    # The response is deliberately generic ("Could not validate authentication
+    # credentials.") rather than echoing a parser error or token material: a
+    # specific "invalid signature" / "malformed segment" reason would tell an
+    # attacker which part of their forged token to iterate on.  The 401 plus
+    # WWW-Authenticate challenge is the contract; see api/deps.py:get_current_user
+    # and the matching unit test in tests/test_auth_rbac.py.
+    forged = "not.a.valid.jwt.token"
+    res2 = live_api_client.get(
+        "/api/v1/applications/1", headers={"Authorization": f"Bearer {forged}"}
+    )
     assert res2.status_code == 401
-    assert "invalid" in res2.json()["detail"].lower()
+    assert res2.json()["detail"] == "Could not validate authentication credentials."
+    assert res2.headers.get("WWW-Authenticate") == "Bearer"
+    # No token material or parser detail may be echoed back.
+    assert forged not in res2.text
+    for leaked in ("signature", "segment", "decode", "PyJWT", "jwt.exceptions"):
+        assert leaked.lower() not in res2.text.lower()
 
     # 3. Expired token
     ts = int(_utc_now().timestamp())
