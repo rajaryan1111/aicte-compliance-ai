@@ -194,24 +194,17 @@ app.include_router(audit_packages_router, prefix="/api/v1", tags=["audit-package
 
 
 
-# Explicitly allow the deployed frontend origin(s); never use wildcard origins
-# with credentials. Configure FRONTEND_ORIGINS as a comma-separated allowlist.
-import os as _os
+# The frontend is hosted on a separate Render static-site origin. Keep this
+# explicit and credential-free: the client sends its JWT in Authorization.
 from fastapi.middleware.cors import CORSMiddleware as _CORSMiddleware
 
-_frontend_origins = [
-    origin.strip()
-    for origin in _os.getenv("FRONTEND_ORIGINS", "").split(",")
-    if origin.strip()
-]
-if _frontend_origins:
-    app.add_middleware(
-        _CORSMiddleware,
-        allow_origins=_frontend_origins,
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "Prefer"],
-    )
+app.add_middleware(
+    _CORSMiddleware,
+    allow_origins=["https://aicte-compliance-frontend-preview.onrender.com"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Prefer"],
+)
 
 
 @app.get("/", include_in_schema=False)
@@ -222,7 +215,7 @@ def service_landing_page() -> dict[str, object]:
         "status": "prototype",
         "docs": "/docs",
         "health": "/health",
-        "frontend": _os.getenv("FRONTEND_PUBLIC_URL", ""),
+        "frontend": "https://aicte-compliance-frontend-preview.onrender.com",
         "notice": (
             "Advisory prototype only. Results do not establish AICTE compliance "
             "or document authenticity. Use synthetic demo data only."
