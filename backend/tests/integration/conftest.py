@@ -20,7 +20,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from backend.app.db.session import get_db
+from backend.app.db.session import get_db, normalize_database_url
 from backend.app.main import app
 
 # Integration test environment flags
@@ -30,7 +30,11 @@ RUN_LIVE_INTEGRATION_TESTS = (
 DEFAULT_PG_URL = "postgresql://aicte_test:aicte_test_pass@localhost:5432/aicte_test_db"
 DEFAULT_REDIS_URL = "redis://localhost:6379/1"
 
-POSTGRES_URL = os.getenv("INTEGRATION_DATABASE_URL", os.getenv("DATABASE_URL", DEFAULT_PG_URL))
+# Normalised like the application does, so this harness uses the pinned
+# psycopg2 driver instead of inheriting SQLAlchemy's bare-scheme default (psycopg v3).
+POSTGRES_URL = normalize_database_url(
+    os.getenv("INTEGRATION_DATABASE_URL", os.getenv("DATABASE_URL", DEFAULT_PG_URL))
+)
 REDIS_URL = os.getenv("INTEGRATION_REDIS_URL", os.getenv("REDIS_URL", DEFAULT_REDIS_URL))
 CLAMAV_HOST = os.getenv("AICTE_CLAMAV_HOST", "localhost")
 CLAMAV_PORT = int(os.getenv("AICTE_CLAMAV_PORT", "3310"))
