@@ -317,3 +317,34 @@ yielded **0 fields**; only the label-correct version produced 5.
 
 Nothing in this report enables a regulatory rule. Phase 0 gates 2, 3 and 4 remain open; the
 `not_run` regulatory checks are correct behaviour and must stay that way until those gates close.
+
+---
+
+### Addendum 2026-10-24 — status of the P0s above
+
+The verdict above is preserved as written (it is the audit trail of that review). Three of the P0s
+it names have since been closed on this branch; one has not. Current state, re-verified by execution:
+
+| P0 from §5 | Current status | Evidence |
+|---|---|---|
+| "no frontend" | **closed** | `frontend/` (React 18 + TS + Vite) committed in `f07744f`, `npm run build` clean |
+| "no way to create a user" | **closed** | `tools/demo/seed_demo.py` seeds a reviewer account; login returns 200 through the Vite proxy |
+| "no documented path to process a document without Redis or a scanner" | **closed** | `tools/demo/` + `CELERY_TASK_ALWAYS_EAGER=true` + `dev_scanner_testdouble.py`; runbook in `tools/demo/README.md` |
+| "no CI evidence on the PR" | **closed** | PR #6 retargeted to `main`; run 40116758478 now reports 4 checks on head `ba6944c` |
+
+The end-to-end flow (health → login → create application → upload → process → validate → review) was
+re-verified through the frontend's Vite proxy on port 5173, including the fail-closed path: with the
+scanner down, `validate` returns `SCANNER_UNAVAILABLE` and extraction does **not** run.
+
+**Still open, and still outside workstream C's ownership:** §5.4 (Windows drive-letter key rejected
+only on Windows) and §5.5 (SQLAlchemy 2.1 resolves bare `postgresql://` to the absent `psycopg` v3).
+§5.5 is confirmed as the live cause of the `real-infrastructure-integration` job failing on both
+`main` and this PR — reproduced with the CI step's exact `DATABASE_URL`. Neither defect touches the
+SQLite-backed demo path, so neither blocks the demo; both block a green CI and a PostgreSQL
+deployment. See `WORKSTREAM_HANDOFF.md` §2.1 for the reproductions and candidate patches.
+
+**The demo-relevant verdict is therefore `READY_WITH_DOCUMENTED_LIMITATIONS`** — the application is
+demonstrable, and the limitations that remain (no real institutional documents, synthetic-only
+accuracy, regulatory checks correctly `not_run`, two red CI jobs owned by `backend/`) are documented
+rather than hidden. This addendum does not change any metric, threshold or ground truth, and does
+not claim real-world OCR accuracy or regulatory compliance from synthetic data.
