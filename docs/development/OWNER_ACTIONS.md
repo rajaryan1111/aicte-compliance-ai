@@ -253,6 +253,9 @@ python tools/deploy/preflight.py
 ```
 
 Expected last line: `RESULT: READY (required checks passed; WARN items are documented limitations)`.
+For a deployment that must actually let someone log in, add `--require-accounts` so a database with
+no provisioned user fails the check instead of warning. (CI runs the same tool with the same
+command on every PR against real PostgreSQL, Redis and a scanner, so this path cannot silently rot.)
 WARN on storage means the instance has an ephemeral disk; WARN on scanner means uploads will park
 in `retry_wait` (fail-closed, never clean).
 
@@ -274,3 +277,62 @@ has persistence disabled and no Celery worker is verified; document storage is a
 unless `STORAGE_LOCAL_DIR` points at a mounted disk; and the ClamAV scanner is not deployed, so
 uploads would park in `retry_wait` with `SCANNER_UNAVAILABLE` (fail-closed, not clean). Keep
 public uploads disabled until storage, scanning and a worker are verified.
+
+### Background worker and Redis — what is and is not durable
+
+Nothing runs Celery in the current deployment. Without a worker, an upload is
+accepted, written to storage, and its `processing_jobs` row stays `queued`
+forever — the UI will show it as pending. The web process alone cannot satisfy the
+"jobs complete" guarantee.
+
+To add it, create a **Background Worker** service in Render with the same branch,
+the same build command as the API, and:
+
+```
+celery -A backend.app.worker.celery_app.celery_app worker --loglevel=info
+```
+
+It must receive `DATABASE_URL`, `CELERY_BROKER_URL` (or `REDIS_URL`),
+`JWT_SECRET_KEY` and `CLAMAV_HOST`/`CLAMAV_PORT` — the identical values as the web
+service. Do **not** set `CELERY_TASK_ALWAYS_EAGER` on it: eager mode runs tasks
+inside whatever process calls `.delay()`, which is a test convenience and would
+make the worker idle.
+
+Redis durability is not required for correctness here, and the free Key Value
+instance has persistence disabled — that is acceptable because Redis is only the
+task *transport*. Application data lives in PostgreSQL, and every dispatch also
+writes an `outbox_messages` row there. A Redis restart therefore loses only
+in-flight deliveries; the outbox retains the record and pending messages can be
+redispatched. Do not describe Redis as application storage or a backup.
+
+### Malware scanning — still absent, and fail-closed
+
+No ClamAV daemon is deployed. With `CLAMAV_HOST` unset or unreachable, uploads are
+stored but their job parks in `retry_wait` with `last_error_code =
+SCANNER_UNAVAILABLE`; the version never reaches `clean` and never reaches OCR.
+That is the intended fail-closed behaviour, not a bug to work around, and the CI
+test double must never be pointed at production.
+
+Options, cheapest first: (a) keep uploads disabled and demo login → application →
+metadata only; (b) run a clamd container on a paid plan and set `CLAMAV_HOST`/
+`CLAMAV_PORT` to it, then confirm `python tools/deploy/preflight.py` reports
+`PASS scanner`. Either way, do not claim working malware scanning until the
+scanner returns a verdict in the deployed environment.
+
+### Document storage — ephemeral on the current plan
+
+Documents are written to a local directory (`STORAGE_LOCAL_DIR`, defaulting to a
+temporary path). On an ephemeral instance they disappear on the next deploy or
+restart, while the database rows survive — leaving records pointing at missing
+files. Either mount a persistent disk on the web service and set
+`STORAGE_LOCAL_DIR` inside it, or treat uploads as demo-only. There is no object
+storage backend in this codebase yet; adding one is a feature, not a
+configuration change.
+
+### Cost, durability and expiry
+
+The PostgreSQL instance observed earlier was on a free plan with an expiry date
+(23 Nov 2026) recorded by the owner. Re-check the plan and expiry in the
+dashboard before relying on it: expiring free-tier infrastructure is not durable
+production storage, and this document makes no claim about its current state.
+Backups/restore steps are in `docs/development/RECOVERY_AND_BACKUP.md`.
