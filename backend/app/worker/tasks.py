@@ -77,7 +77,38 @@ def sweep_due_retries_task(limit: int = 50) -> dict[str, Any]:
                 logger.exception("Failed to re-dispatch retry job %s", job.id)
         if due:
             logger.info("Retry sweep: %s due, %s dispatched", len(due), dispatched)
-        return {"due": len(due), "dispatched": dispatched}
+
+        # Outbox recovery: republish publish-failed messages (broker unreachable,
+        # TLS negotiation failure) before they strand their background job
+        # forever. Capped by max_retries so a permanently malformed payload
+        # cannot retry indefinitely. dispatch_outbox_message marks the message
+        # published (or failed again with an incremented retry_count).
+        outbox_redispatched = 0
+        try:
+            from backend.app.core.dispatcher import dispatch_outbox_message
+            from backend.app.repositories.outbox_repository import OutboxRepository
+
+            failed_messages = OutboxRepository.get_retryable_failed_messages(db)
+            for msg in failed_messages:
+                try:
+                    if dispatch_outbox_message(db, msg):
+                        outbox_redispatched += 1
+                except Exception:  # upper bound: sweep must not die on one message
+                    logger.exception("Failed to redispatch outbox message %s", msg.id)
+            if failed_messages:
+                logger.info(
+                    "Outbox recovery: %s failed message(s), %s republished",
+                    len(failed_messages),
+                    outbox_redispatched,
+                )
+        except Exception:
+            logger.exception("Outbox recovery sweep failed")
+
+        return {
+            "due": len(due),
+            "dispatched": dispatched,
+            "outbox_redispatched": outbox_redispatched,
+        }
     finally:
         db.close()
 

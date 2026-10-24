@@ -24,7 +24,15 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.app.db.base import Base
-from backend.app.db.models import Application, Document, DocumentVersion, Institution, ProcessingJob
+from backend.app.db.models import (
+    Application,
+    Document,
+    DocumentVersion,
+    Institution,
+    OutboxMessage,
+    ProcessingJob,
+)
+from backend.app.repositories.outbox_repository import OutboxRepository
 from backend.app.repositories.processing_job_repository import ProcessingJobRepository
 from backend.app.worker import tasks as worker_tasks
 from backend.app.worker.celery_app import celery_app
@@ -121,7 +129,7 @@ def test_only_due_retry_jobs_are_dispatched(session_factory, dispatched) -> None
 
     result = sweep_due_retries_task()
 
-    assert result == {"due": 1, "dispatched": 1}
+    assert result == {"due": 1, "dispatched": 1, "outbox_redispatched": 0}
     assert dispatched == [due.id]
 
 
@@ -146,7 +154,7 @@ def test_a_broker_error_does_not_abort_the_sweep(session_factory, monkeypatch: p
     # Both were attempted; only the successful one counts as dispatched, and the
     # failure did not stop the second job from being handed to the broker.
     assert attempted == [first.id, second.id]
-    assert result == {"due": 2, "dispatched": 1}
+    assert result == {"due": 2, "dispatched": 1, "outbox_redispatched": 0}
 
 
 def test_sweep_does_not_bypass_the_atomic_claim(session_factory, dispatched) -> None:
@@ -175,6 +183,98 @@ def test_sweep_does_not_bypass_the_atomic_claim(session_factory, dispatched) -> 
         db.close()
 
     assert second_claim is None, "a duplicate delivery must not process an already-claimed job"
+
+
+# ---------------------------------------------------------------------------
+# Outbox recovery: failed publish messages must not strand their job forever.
+
+# ``mark_failed`` documents that a failed message is "preserved for the
+# recovery worker", but until now the sweep only looked at ``pending``
+# messages, so a broker outage during publish left the message failed forever
+# and its document queued with zero attempts. The sweep may now republish
+# retryable failed messages; these tests pin the properties.
+
+
+def _build_failed_outbox(factory) -> tuple[Any, str]:
+    """Persist job + outbox message, marking the message failed (as real broker outage would)."""
+    job = _build_job(factory, state="queued", suffix="outbox")
+    db = factory()
+    try:
+        msg = OutboxRepository.create_message(
+            db,
+            topic="document_processing",
+            payload={"job_id": job.id, "document_version_id": 1},
+        )
+        OutboxRepository.mark_failed(db, msg.id, "Retry limit exceeded while trying to reconnect to the Celery result store")
+        db.commit()
+        return job, msg.id
+    finally:
+        db.close()
+
+
+def test_failed_outbox_message_is_republished_by_the_sweep(session_factory, dispatched) -> None:
+    job, msg_id = _build_failed_outbox(session_factory)
+
+    result = sweep_due_retries_task()
+
+    assert result["outbox_redispatched"] == 1
+    assert job.id in dispatched  # the stranded job was handed to the broker again
+    db = session_factory()
+    try:
+        saved = db.get(OutboxMessage, msg_id)
+        assert saved is not None and saved.status == "published"
+    finally:
+        db.close()
+
+
+def test_outbox_republish_failure_records_the_error_and_retries_later(
+    session_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job, msg_id = _build_failed_outbox(session_factory)
+
+    def broken_delay(job_id: str, *args: Any, **kwargs: Any) -> None:
+        raise ConnectionError("broker down again")
+
+    monkeypatch.setattr(worker_tasks.process_document_job_task, "delay", broken_delay)
+
+    result = sweep_due_retries_task()
+
+    assert result["outbox_redispatched"] == 0
+    db = session_factory()
+    try:
+        saved = db.get(OutboxMessage, msg_id)
+        assert saved is not None
+        assert saved.status == "failed"
+        assert saved.retry_count == 2  # original failure + this sweep's failure
+        assert "broker down again" in (saved.last_error or "")
+        # Still below the cap, so the next sweep gets another chance.
+        assert saved in OutboxRepository.get_retryable_failed_messages(db)
+    finally:
+        db.close()
+
+
+def test_outbox_republish_stops_at_the_retry_cap(session_factory, monkeypatch: pytest.MonkeyPatch) -> None:
+    job, msg_id = _build_failed_outbox(session_factory)
+
+    def publish_only(job_id: str, *args: Any, **kwargs: Any) -> None:
+        raise ConnectionError("broker permanently down for this test")
+
+    monkeypatch.setattr(worker_tasks.process_document_job_task, "delay", publish_only)
+
+    # Exhaust the retry budget with repeated failed sweeps.
+    for _ in range(5):
+        sweep_due_retries_task()
+
+    db = session_factory()
+    try:
+        saved = db.get(OutboxMessage, msg_id)
+        assert saved is not None
+        assert saved.status == "failed"
+        assert saved.retry_count >= 5
+        # At the cap the message is no longer offered for redispatch.
+        assert OutboxRepository.get_retryable_failed_messages(db) == []
+    finally:
+        db.close()
 
 
 def test_beat_schedule_includes_the_retry_sweep() -> None:
