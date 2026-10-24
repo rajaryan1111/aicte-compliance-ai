@@ -14,17 +14,18 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageFont
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from ai.raster_benchmark import (
+from ai.raster_benchmark import (  # noqa: E402  (module import follows sys.path setup)
     DATASET_LANG_TO_TESSERACT,
     SUPPORTED_IMAGE_CORRUPTIONS,
     MockRasterOCREngine,
@@ -829,8 +830,32 @@ class TestFontGlyphCoverage:
         )
 
     def test_hindi_font_renders_devanagari_and_latin(self):
-        """_get_font('hi') must cover Devanagari AND basic Latin on one line."""
-        from ai.raster_benchmark import _get_font
+        """_get_font('hi') must cover Devanagari AND basic Latin on one line.
+
+        Environment precondition: at least one installed system font must
+        actually contain Devanagari glyphs.  This host (and a stock Linux CI
+        runner) ships DejaVu/Liberation only, none of which cover Devanagari,
+        so ``_get_font('hi')`` legitimately falls back to a Latin font.  That
+        is the documented reason Hindi/bilingual raster measurements are
+        flagged invalid rather than measured.  Skip explicitly instead of
+        asserting a capability the host does not have -- the assertion below
+        still runs in full wherever a Devanagari font is installed.
+        """
+        from ai.raster_benchmark import _SYSTEM_FONT_CANDIDATES, _DEVANAGARI_SAMPLE, _font_renders_sample, _get_font
+
+        has_devanagari_font = False
+        for path in _SYSTEM_FONT_CANDIDATES:
+            if not os.path.isfile(path):
+                continue
+            try:
+                candidate = ImageFont.truetype(path, 24)
+            except Exception:
+                continue
+            if _font_renders_sample(candidate, _DEVANAGARI_SAMPLE):
+                has_devanagari_font = True
+                break
+        if not has_devanagari_font:
+            pytest.skip("no installed system font covers Devanagari on this host")
 
         font = _get_font(24, "hi")
         deva = [self._render_char(font, ch) for ch in "कखगसहड"]
@@ -942,13 +967,31 @@ class TestMultiSeedBenchmark:
     def test_pooled_corrupted_cer_matches_equal_weight_mean(self):
         """With identical evaluated counts per seed, pooled CER must equal the
         arithmetic mean of per-seed CERs (a hand-checkable restatement of
-        case-level micro-averaging)."""
+        case-level micro-averaging).
+
+        Tolerance note: the per-seed CERs read from the report are already
+        rounded to 4 decimals, so re-averaging those rounded values can differ
+        from the pooled value by up to one unit in the last place (1e-4).  A
+        tie at the 4th decimal (e.g. per-seed 0.2763 / 0.2792 -> mean 0.27775)
+        previously tripped a 1e-6 tolerance.  The bound below is therefore
+        exactly one rounding unit, and the extra invariant keeps the check
+        meaningful: a weighting/pooling error would push the pooled value
+        outside the per-seed range, which the tolerance alone could not catch.
+        """
         report = self._run([42, 43], count=4)
         evaluated = [r["evaluated_count"] for r in report["per_seed"]]
         assert len(set(evaluated)) == 1, "mock engine evaluates every case"
         per_seed_cer = [r["corrupted_evaluation"]["cer"] for r in report["per_seed"]]
+        pooled_cer = report["pooled"]["corrupted_evaluation"]["cer"]
         expected = round(sum(per_seed_cer) / len(per_seed_cer), 4)
-        assert math.isclose(report["pooled"]["corrupted_evaluation"]["cer"], expected, abs_tol=1e-6)
+        assert math.isclose(pooled_cer, expected, abs_tol=1e-4), (
+            f"pooled CER {pooled_cer} must equal the equal-weight mean {expected} "
+            "within one 4-decimal rounding unit"
+        )
+        assert min(per_seed_cer) - 1e-4 <= pooled_cer <= max(per_seed_cer) + 1e-4, (
+            "pooled CER must lie within the per-seed range when every seed "
+            "evaluates the same number of cases"
+        )
 
     def test_pooled_delta_positive_and_consistent(self):
         report = self._run([42, 43], count=4)
@@ -1190,12 +1233,17 @@ class TestTesseractPSMConfiguration:
         assert result["recognition_vehicle"] == "backend_adapter"
 
     def test_psm3_runs_direct_path_with_config_and_label(self, monkeypatch):
+        # pytesseract is an OPTIONAL runtime dependency (backend/requirements-ocr.txt),
+        # deliberately absent from requirements-dev.txt. Skip when it is not
+        # installed rather than failing the whole AI suite.
+        pytesseract = pytest.importorskip(
+            "pytesseract", reason="optional OCR dependency not installed"
+        )
+
         engine = self._engine()
         engine.psm = 3
         engine.engine_name = "tesseract-psm3"
         engine.engine_version = "5.5.3"
-
-        import pytesseract
 
         data = {
             "text": ["Institution", "Name:", "Alpha", "Certificate", "No:", "CERT/2026/0001"],
