@@ -290,7 +290,12 @@ app.include_router(audit_packages_router, prefix="/api/v1", tags=["audit-package
 # second preview URL is a code change and a redeploy. Credentials are disabled:
 # this API authenticates with a bearer token in the Authorization header, not
 # with cookies, so no wildcard-with-credentials footgun is needed or allowed.
+# Vercel preview *deployments* get a URL per commit and must be added to
+# CORS_ALLOW_ORIGINS explicitly. No regex prefix match is offered on purpose:
+# *.vercel.app subdomains are claimable by anyone, so a prefix rule would let a
+# third party host code that reads authenticated responses from this API.
 _DEFAULT_CORS_ORIGINS = (
+    "https://aicte-compliance-frontend.vercel.app",
     "https://aicte-compliance-frontend-preview.onrender.com",
     "http://localhost:5173",
     "http://127.0.0.1:5173",

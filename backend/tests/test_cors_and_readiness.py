@@ -29,6 +29,10 @@ from backend.app.db.models import Base
 from backend.app.main import _cors_origins, app
 
 FRONTEND_ORIGIN = "https://aicte-compliance-frontend-preview.onrender.com"
+# The UI is also served from Vercel; both deployed origins must be able to call
+# the API, and a regression in either one shows up as the same opaque browser
+# network error.
+VERCEL_ORIGIN = "https://aicte-compliance-frontend.vercel.app"
 
 
 @pytest.fixture()
@@ -41,18 +45,21 @@ def client() -> TestClient:
 # ---------------------------------------------------------------------------
 
 
-def test_preflight_for_the_frontend_origin_is_allowed(client: TestClient) -> None:
+@pytest.mark.parametrize("origin", [FRONTEND_ORIGIN, VERCEL_ORIGIN])
+def test_preflight_for_each_deployed_frontend_origin_is_allowed(
+    client: TestClient, origin: str
+) -> None:
     response = client.options(
         "/api/v1/auth/token",
         headers={
-            "Origin": FRONTEND_ORIGIN,
+            "Origin": origin,
             "Access-Control-Request-Method": "POST",
             "Access-Control-Request-Headers": "content-type",
         },
     )
 
     assert response.status_code == 200, response.text
-    assert response.headers["access-control-allow-origin"] == FRONTEND_ORIGIN
+    assert response.headers["access-control-allow-origin"] == origin
     assert "POST" in response.headers["access-control-allow-methods"]
     assert "content-type" in response.headers["access-control-allow-headers"].lower()
 
