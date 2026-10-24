@@ -31,12 +31,12 @@ review", and step 6 of the integration process says "no automatic merging". The 
 The PR was retargeted to `main`, so the next push started the workflow instead of leaving the head
 SHA with zero check-runs. Two runs are now recorded; the second is after the `backend/` fixes.
 
-| Check | `ba6944c` (run 40116758478) | `e509a93` (run 40118334411) |
-|---|---|---|
-| `backend-tests` | **fail** (49 s) | **pass** (1 m 5 s) |
-| `real-infrastructure-integration` | **fail** (33 s) | **fail** (36 s) — no longer the driver |
-| `optional-ocr-integration` | pass | pass |
-| `optional-clamav-integration` | pass | pass |
+| Check | `ba6944c` (40116758478) | `e509a93` (40118334411) | `d75685e` (40119352966) |
+|---|---|---|---|
+| `backend-tests` | **fail** (49 s) | **pass** (1 m 5 s) | **pass** (51 s) |
+| `real-infrastructure-integration` | **fail** (33 s) | **fail** (36 s) — no longer the driver | **fail** (1 m 12 s) — Redis/Celery cluster |
+| `optional-ocr-integration` | pass | pass | pass |
+| `optional-clamav-integration` | pass | pass | pass |
 
 Both original failures also occurred on `main` @ `e88a5bf` (run 40115512499), **before** this branch
 is merged, so they were pre-existing rather than introduced here. They are root-caused and **fixed**
@@ -44,9 +44,9 @@ in **§2.1**: a SQLAlchemy 2.1 driver-default change that broke every `postgresq
 one test asserting Windows path semantics on Linux (P2, no actual escape). The remaining red job is
 a different, newly-surfaced set of latent test defects, also listed in §2.1 and also `backend/`-owned.
 
-Consequence for the merge gate: `WORKSTREAMS.md` step 5 requires CI green on the exact head SHA, so
-the PR is not mergeable on CI evidence alone until the four latent failures in §2.1 are resolved or
-the owner records a waiver. The `ai/**` and `frontend/**` content is not implicated: locally
+Consequence for the merge gate: `WORKSTREAMS.md` step 5 requires CI green on the exact head SHA. The
+four PostgreSQL failures are fixed and the default suite is green, but the infra job stays red on the
+Redis/Celery cluster described in §2.1, which is outside the authorization this branch was given. The `ai/**` and `frontend/**` content is not implicated: locally
 `pytest -q ai/tests` is 243 passed / 6 skipped, and `pytest -q` is 425 passed / 22 skipped / 0 failed.
 
 **CI logs are not retrievable from this sandbox** — `gh run view --log`, `--log-failed`, and the
@@ -154,27 +154,83 @@ valid-key cases passed before *and* after, which is the check that the guard did
 `optional-ocr-integration` pass, `optional-clamav-integration` pass,
 `real-infrastructure-integration` **still fail** — and the reason is no longer the driver.
 
-#### What fixing B-1 uncovered (owner: B, **outside this fix's scope**)
+#### The four latent failures B-1 uncovered — **fixed** at `d75685e`
 
-With the driver working, the live integration suite runs for the first time and four **latent**
-failures surface. None is a PostgreSQL compatibility problem; all are test-vs-implementation drift:
+With the driver working, the live integration suite ran for the first time and four latent failures
+appeared. All four were **test-vs-implementation drift**, not product defects: every application
+contract involved was internally consistent and already pinned by unit tests, so the fix belongs in
+the tests and **no file under `backend/app/` was changed**.
+
+| Test | What was actually wrong | Resolution |
+|---|---|---|
+| `test_postgres_multi_tenant_isolation` | `ApplicationRepository.list_by_institution` returns `(records, total)`; the test iterated the tuple, so each element was a list | unpack the tuple; also assert the total equals the page length |
+| `test_postgres_validation_run_snapshots_and_reviews` | invented names: `consumed_document_versions`, `finding_code`, `message`, `justification`, `resolution_outcome`, `document_type` | rewritten against the real contracts — `ValidationRun.consumed_version_ids`, `Finding.code`/`.summary` with the document type in the `evidence` JSON, `ReviewAction.rationale` with `resolution_outcome` inside `metadata_payload` — and routed through `ValidationRepository.create_run` / `create_finding` / `ReviewAuditRepository.create_review_action`, which is how the orchestration and review services write them |
+| `test_cross_institution_access_denial` | asserted 403; the API returns 404 | see below |
+| `test_authentication_rejection_invalid_or_expired_token` | asserted the substring `"invalid"` in a deliberately generic message | see below |
+
+**The 404 was correct and is preserved.** `backend/app/api/deps.py` documents the split: a *foreign
+tenant's* resource is concealed as not-found so an attacker cannot probe for other institutions'
+applications, while a *role-permission* failure inside the caller's own tenant stays 403. Changing
+the API to 403 to satisfy the old assertion would have confirmed resource existence and leaked the
+ownership boundary, so the API was left alone. The test now asserts 404 for cross-tenant reads *and*
+writes, that no tenant id is disclosed, that isolation holds in both directions — and keeps a real
+403 case (an auditor in their own institution attempting `application:update`, which that role
+lacks), so both controls remain covered.
+
+**The generic auth message was correct and is preserved.** `"Could not validate authentication
+credentials."` is intentional: a specific parser error would tell an attacker which part of a forged
+token to iterate on. `tests/test_auth_rbac.py` already pins that wording, so the integration test was
+the outlier. It now asserts the exact message plus the `WWW-Authenticate: Bearer` challenge and that
+no token material or parser detail is echoed back.
+
+One further layer surfaced while fixing the second test: `ValidationRun.evaluation_date` is NOT NULL
+with no model default **on purpose** — `ValidationRepository.create_run` requires it so a run cannot
+be persisted without recording the date it was evaluated against, and the orchestration service
+supplies `evaluation_date or _utc_now().date()`. The test had bypassed the repository entirely.
+
+Regression coverage added: `test_validation_evidence_schema_matches_repository_contract` in
+`tests/test_persistence.py` pins the model columns and the repository keywords together. It needs no
+infrastructure, because the live suite is skipped without `RUN_LIVE_INTEGRATION_TESTS` — which is
+precisely how these guessed column names survived unnoticed.
+
+**Measured before/after** (real PostgreSQL, `pgserver`; real Redis, see below):
+
+| Run | Result |
+|---|---|
+| before `d75685e` | 4 failed, 10 passed, 1 skipped, 7 errors |
+| after `d75685e`, PostgreSQL only | **14 passed, 1 skipped, 7 errors** (errors = Redis absent) |
+| after `d75685e`, PostgreSQL + real Redis | 6 failed, 15 passed, 1 skipped — see the next subsection |
+
+#### Newly surfaced: the Redis/Celery worker cluster (owner: B, **not fixed**)
+
+Running the previously-unreachable Redis tests (real Redis 6.2.14 started locally from the
+`redislite` wheel; CI uses `redis:7-alpine`) exposes a **different** cluster that the driver error had
+been hiding. It is outside this fix's authorization, so it is documented rather than changed:
 
 | Test | Observed |
 |---|---|
-| `test_postgres_multi_tenant_isolation` | `AttributeError: 'list' object has no attribute 'id'` — the repository returns rows, the test assumes ORM objects |
-| `test_postgres_validation_run_snapshots_and_reviews` | `TypeError: 'consumed_document_versions' is an invalid keyword argument for ValidationRun` |
-| `test_cross_institution_access_denial` | `assert 404 == 403` — the API returns 404 (non-enumerable) where the test expects 403; this may be the *stronger* security posture, so the expectation may be the stale side |
-| `test_authentication_rejection_invalid_or_expired_token` | asserts the substring `"invalid"`, receives `"Could not validate authentication credentials."` |
+| `test_document_job_dispatched_and_processed_by_real_worker` | job never reaches a terminal state within 15 s |
+| `test_outbox_broker_failure_and_redispatch_recovery`, `test_retry_and_backoff_on_transient_error`, `test_duplicate_task_delivery_idempotency`, `test_permanent_malware_detection_reaches_terminal_failure` | same 15 s timeout, plus `assert 'retry_wait' in ('completed', 'partial')` |
+| `test_full_application_workflow_end_to_end` | `KeyError: 'document_id'` — upload response shape |
 
-Local live run: `RUN_LIVE_INTEGRATION_TESTS=true` + real PostgreSQL → **10 passed, 1 skipped,
-4 failed, 7 errors**; the 7 errors are Redis-dependent (`redis://localhost:6379/1` is not running
-here) and in CI that service exists, so those are expected to run there. Status of those seven
-against real Redis is **unverified locally** and is not claimed.
+Root cause of the first group: `backend/app/worker/celery_app.py` defaults
+`task_always_eager` to **true when pytest is importable**
+(`default_eager = "true" if is_pytest else "false"`). The `live_celery_worker` fixture sets
+`CELERY_TASK_ALWAYS_EAGER=false` only in the **subprocess** environment, so in the test process
+`.delay()` still runs the task inline, no message ever reaches Redis, and the worker it spawns idles.
+Setting `CELERY_TASK_ALWAYS_EAGER=false` for the pytest process changes the outcome — and reveals
+the next problem: with eager off the results are **non-deterministic** (one test passed on one run,
+then the same five failed on the next, identical code), consistent with the fixture's fixed
+`time.sleep(2.0)` worker-readiness window racing a real worker start.
 
-These four are deliberately **not** fixed here: two of them hinge on intentional behaviour
-(403-vs-404 disclosure semantics), which is an owner decision, not a driver fix.
+This is a fragile-harness defect, not evidence that background processing is broken: the worker boots
+and registers both tasks, connects to Redis and reports ready (verified manually). The CI job
+(`real-infrastructure-integration`) sets no `CELERY_TASK_ALWAYS_EAGER`, so it hits the same default.
+**Fixing it needs decisions this fix was not authorized to take** — whether the suite should force
+non-eager via `conftest.py`, whether the worker fixture should poll for readiness instead of sleeping,
+and whether CI needs a ClamAV service for the malware-path tests.
 
-**Test totals after the fix:** `pytest -q` (live tests off) → **425 passed, 22 skipped, 0 failed**
+**Test totals after all fixes:** `pytest -q` (live tests off) → **426 passed, 22 skipped, 0 failed**
 (was 388 / 22 / **1**); `pytest -q ai/tests` → **243 passed, 6 skipped, 0 failed**; `ruff check .` →
 clean; frontend production build unchanged (`index-BNJNb1ey.js` 161.10 kB, `index-DUURRiLi.css`
 9.50 kB); extraction evaluation still **56/56 exact** with 0 spurious extractions on 20 negative
@@ -314,12 +370,13 @@ interpret regulations.
 
 ## 5. What C is *not* doing, and why
 
-- **Not merging PR #6** — `WORKSTREAMS.md` reserves the merge to the owner. B-1 and B-2 are fixed
-  (§2.1), but CI on the head SHA is still red for the four latent test defects that fixing B-1
-  uncovered; C cannot fix or waive those without a further scope decision.
-- **Not fixing the four latent integration defects in §2.1** — they surfaced only because B-1 was
-  fixed, and at least one (`404` vs `403`) is an intentional-security-posture question, which is an
-  owner decision rather than a driver fix.
+- **Not merging PR #6** — `WORKSTREAMS.md` reserves the merge to the owner. B-1, B-2 and the four
+  latent PostgreSQL test defects are fixed (§2.1), but CI stays red for the Redis/Celery cluster,
+  which C cannot fix or waive without a further scope decision.
+- **Not fixing the Redis/Celery worker cluster in §2.1** — it surfaced only after the PostgreSQL
+  fixes made those tests reachable, and resolving it needs decisions on forcing non-eager execution,
+  replacing a fixed sleep with readiness polling, and whether the malware-path tests need a live
+  scanner in CI. Those are harness/CI design choices for the owner of the integration suite.
 - **Not editing `backend/app/ocr_*.py`** — backend-owned until an approved migration
   (`WORKSTREAMS.md`, "OCR placement").
 - **Not adding real or scanned institutional documents** — the corpora must stay synthetic.
