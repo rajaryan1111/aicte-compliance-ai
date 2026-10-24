@@ -46,6 +46,42 @@ def process_document_job_task(self: Any, job_id: str) -> dict[str, Any]:
         db.close()
 
 
+@celery_app.task(name="backend.app.worker.tasks.sweep_due_retries_task")
+def sweep_due_retries_task(limit: int = 50) -> dict[str, Any]:
+    """Re-dispatch jobs whose retry backoff has elapsed.
+
+    Without this, ``retry_wait`` is a terminal state in practice: a transient
+    scanner or I/O failure parks the job with a ``scheduled_for`` timestamp and
+    nothing ever picks it up again, so the document is never scanned and no
+    terminal state is ever reached. The repository lookup
+    (``get_retryable_jobs``) already existed but had no caller.
+
+    Dispatch deliberately does not touch the job's state: ``claim_job`` performs
+    the atomic queued/retry_wait -> scanning transition, so a second consumer
+    (duplicate delivery, overlapping sweep, or two workers) simply gets ``None``
+    and the job is processed exactly once.
+    """
+    from backend.app.repositories.processing_job_repository import (
+        ProcessingJobRepository,
+    )
+
+    db = get_worker_session()
+    try:
+        due = ProcessingJobRepository.get_retryable_jobs(db)
+        dispatched = 0
+        for job in due[:limit]:
+            try:
+                process_document_job_task.delay(job.id)
+                dispatched += 1
+            except Exception:  # broker hiccup: the next sweep retries it
+                logger.exception("Failed to re-dispatch retry job %s", job.id)
+        if due:
+            logger.info("Retry sweep: %s due, %s dispatched", len(due), dispatched)
+        return {"due": len(due), "dispatched": dispatched}
+    finally:
+        db.close()
+
+
 @celery_app.task(name="backend.app.worker.tasks.validate_application_task", bind=True, max_retries=3)
 def validate_application_task(
     self: Any,

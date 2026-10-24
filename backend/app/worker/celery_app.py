@@ -34,6 +34,15 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=False,
     broker_connection_timeout=1.0,
     broker_transport_options={"max_retries": 1},
+    # Periodic re-dispatch of jobs whose retry backoff has elapsed. The schedule
+    # is only active when a beat is running (`celery worker -B`, or a separate
+    # `celery beat` service); without it, retry_wait jobs are never retried.
+    beat_schedule={
+        "sweep-due-retries": {
+            "task": "backend.app.worker.tasks.sweep_due_retries_task",
+            "schedule": float(os.getenv("RETRY_SWEEP_INTERVAL_SECONDS", "30")),
+        }
+    },
 )
 
 celery_app.autodiscover_tasks(["backend.app.worker"])
