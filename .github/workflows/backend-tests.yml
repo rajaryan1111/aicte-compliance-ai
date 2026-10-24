@@ -100,6 +100,26 @@ jobs:
           DATABASE_URL: postgresql://aicte_test:aicte_test_pass@localhost:5432/aicte_test_db
         run: |
           python -m alembic -c backend/alembic.ini upgrade head
+      # The intake pipeline refuses to continue without a malware verdict, so a
+      # scanner must be reachable for the worker tests to reach a terminal state.
+      # This job previously had none: every upload hit SCAN_UNAVAILABLE, the job
+      # parked in retry_wait, and the worker tests timed out.
+      #
+      # Port 3321 deliberately, NOT 3310: tests/integration/test_clamav_scanner_integration.py
+      # probes 3310 for a REAL ClamAV daemon and asserts EICAR detection. Pointing
+      # it at a double that answers "OK" to everything would make that test assert
+      # nothing, so it must keep skipping here and stay covered by the dedicated
+      # optional-clamav-integration job below.
+      - name: Start scanner test double (answers "clean"; performs NO scanning)
+        run: |
+          python tools/demo/dev_scanner_testdouble.py --host 127.0.0.1 --port 3321 &
+          for i in $(seq 1 40); do
+            if python -c "import socket,sys; s=socket.socket(); s.settimeout(0.5); sys.exit(0 if s.connect_ex(('127.0.0.1', 3321)) == 0 else 1)"; then
+              echo "scanner test double is listening on 3321"; exit 0
+            fi
+            sleep 0.5
+          done
+          echo "scanner test double failed to start" >&2; exit 1
       - name: Run real infrastructure integration test suite
         env:
           RUN_LIVE_INTEGRATION_TESTS: "true"
@@ -108,6 +128,9 @@ jobs:
           CELERY_BROKER_URL: redis://localhost:6379/1
           DATABASE_URL: postgresql://aicte_test:aicte_test_pass@localhost:5432/aicte_test_db
           REDIS_URL: redis://localhost:6379/1
+          # Application-level scanner target (the test double above).
+          CLAMAV_HOST: 127.0.0.1
+          CLAMAV_PORT: "3321"
         run: |
           python -m pytest -v backend/tests/integration
       - name: Diagnostic dump on test failure
