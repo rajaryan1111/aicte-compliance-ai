@@ -302,7 +302,7 @@ def list_application_documents(
         required_permission=PERMISSION_APPLICATION_READ,
     )
 
-    docs = DocumentRepository.list_documents(db, application_id)
+    docs = DocumentRepository.list_documents_for_application(db, application_id)
     doc_reads: list[DocumentRead] = []
     for doc in docs:
         read_obj = DocumentRead.model_validate(doc)
