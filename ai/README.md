@@ -49,6 +49,7 @@ external AI provider is introduced by this work.
 | [`BACKEND_HANDOFF.md`](BACKEND_HANDOFF.md) | 17 documented extraction defects owned by the backend workstream. |
 | [`WORKSTREAM_HANDOFF.md`](WORKSTREAM_HANDOFF.md) | Review-only handoff: PR/branch delivery, backend extraction evidence, Phase 6 (accessibility, demo, deployment) and the six Phase 0 research gates, with owners. |
 | [`research/phase-0-closure-record.md`](research/phase-0-closure-record.md) | Phase 0 research closure record (2026-10-24): gate-by-gate status, official evidence, access blockers and owner decisions. Proposal for `docs/research/`. |
+| [`SIH_READINESS.md`](SIH_READINESS.md) | SIH submission readiness (2026-10-24), executed-evidence only: end-to-end flow verification against `main`, P0/P1 defects with owners and minimal fixes, verified demo runbook, and the honest limitations. Verdict `NOT_READY — P0 BLOCKER REMAINS` (no frontend). |
 
 ## OCR benchmark: metric definitions
 
