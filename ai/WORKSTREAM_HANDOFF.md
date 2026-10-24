@@ -1,9 +1,11 @@
 # Workstream handoff — what remains, who owns it, what evidence closes it
 
 **Audience:** repository owner, backend workstream (B), frontend workstream (A), shared integration.
-**Author:** workstream C (AI/OCR), 2026-10-23.
-**Scope:** review-only. This file changes nothing outside `ai/**`; it records the state of work that
-is **not** owned by C so the owners can act on it.
+**Author:** workstream C (AI/OCR), 2026-10-23; updated 2026-10-24.
+**Scope:** originally review-only. C's default boundary is `ai/**`; the two `backend/` fixes recorded
+in §2.1 were made under explicit owner authorization covering **only** those two defects (B-1, B-2)
+and their regression tests. Everything else described here remains owned by the named workstream and
+was not touched by C.
 
 Ownership contract: [`../WORKSTREAMS.md`](../WORKSTREAMS.md). AI/OCR status and limits:
 [`README.md`](README.md), [`EVALUATION.md`](EVALUATION.md). Backend extraction defects:
@@ -27,43 +29,45 @@ review", and step 6 of the integration process says "no automatic merging". The 
 ### CI evidence: now exists, and it is red for reasons outside this PR
 
 The PR was retargeted to `main`, so the next push started the workflow instead of leaving the head
-SHA with zero check-runs. Run **40116758478** on head `ba6944c`:
+SHA with zero check-runs. Two runs are now recorded; the second is after the `backend/` fixes.
 
-| Check | Result |
-|---|---|
-| `backend-tests` | **fail** (49 s) |
-| `real-infrastructure-integration` | **fail** (33 s) |
-| `optional-ocr-integration` | pass |
-| `optional-clamav-integration` | pass |
+| Check | `ba6944c` (run 40116758478) | `e509a93` (run 40118334411) |
+|---|---|---|
+| `backend-tests` | **fail** (49 s) | **pass** (1 m 5 s) |
+| `real-infrastructure-integration` | **fail** (33 s) | **fail** (36 s) — no longer the driver |
+| `optional-ocr-integration` | pass | pass |
+| `optional-clamav-integration` | pass | pass |
 
-Both failures also occur on `main` @ `e88a5bf` (run 40115512499), **before** this branch is merged,
-so they are pre-existing. They are root-caused in **§2.1** below: a SQLAlchemy 2.1 driver-default
-change that breaks every `postgresql://` URL (P1), and one test that asserts Windows semantics on
-Linux (P2, no actual escape). Both live in `backend/**`, which workstream C does not own.
+Both original failures also occurred on `main` @ `e88a5bf` (run 40115512499), **before** this branch
+is merged, so they were pre-existing rather than introduced here. They are root-caused and **fixed**
+in **§2.1**: a SQLAlchemy 2.1 driver-default change that broke every `postgresql://` URL (P1), and
+one test asserting Windows path semantics on Linux (P2, no actual escape). The remaining red job is
+a different, newly-surfaced set of latent test defects, also listed in §2.1 and also `backend/`-owned.
 
-Consequence for the merge gate: `WORKSTREAMS.md` step 5 requires CI green on the exact head SHA.
-That cannot be satisfied by this PR alone — it needs the two `backend/` fixes or an explicit owner
-waiver recorded on the PR. The `ai/**` and `frontend/**` content in this PR is not implicated in
-either failure: locally `pytest -q ai/tests` is 243 passed / 6 skipped, and the only backend test
-that fails is the pre-existing traversal test, which fails identically on clean `main`.
+Consequence for the merge gate: `WORKSTREAMS.md` step 5 requires CI green on the exact head SHA, so
+the PR is not mergeable on CI evidence alone until the four latent failures in §2.1 are resolved or
+the owner records a waiver. The `ai/**` and `frontend/**` content is not implicated: locally
+`pytest -q ai/tests` is 243 passed / 6 skipped, and `pytest -q` is 425 passed / 22 skipped / 0 failed.
 
-**CI logs are not retrievable from this sandbox** — `gh run view --log` and `--log-failed` both abort
-with a network EOF against `results-receiver.actions.githubusercontent.com`, and the jobs API returns
-no step detail (`step_count: 0`). Every claim above therefore rests on local reproduction, not on
-CI output, and is labelled that way.
+**CI logs are not retrievable from this sandbox** — `gh run view --log`, `--log-failed`, and the
+per-job logs endpoint all abort with a network EOF (the log blobs redirect to
+`*.blob.core.windows.net`, which is outside the sandbox's allowlist). The jobs API also returns no
+step detail (`step_count: 0`). Every claim above therefore rests on local reproduction and on the
+check conclusions GitHub reports, not on CI output, and is labelled that way.
 
-### Local verification recorded at `ba6944c` (reproducible by the reviewer)
+### Local verification recorded at `e509a93` (reproducible by the reviewer)
 
 ```bash
 python -m pytest -q ai/tests          # 243 passed, 6 skipped, 0 failed
-ruff check ai/                        # clean
-python -m pytest -q                   # backend: 1 failed, 388 passed, 22 skipped
-                                      #   the 1 failure is B-2 below, pre-existing on main
+ruff check .                          # clean
+python -m pytest -q                   # backend: 425 passed, 22 skipped, 0 failed
+python ai/evaluate_extraction.py --corpus ai/corpus/extraction_cases.jsonl   # 56/56 exact
+cd frontend && npm run build          # 161.10 kB JS / 9.50 kB CSS, unchanged
 ```
 
 The 6 skips are host capabilities, not suppressed failures: no Devanagari font, no Tesseract binary,
-no `pytesseract`. Each was proven to pass once the capability was installed (see §2.1 and the commit
-message of `ba6944c`).
+no `pytesseract`. Each was proven to pass once the capability was installed (see the commit messages
+of `ba6944c` and `e509a93`, and §2.1).
 
 Merge (owner, after review **and** after the §2.1 decision):
 
@@ -90,66 +94,92 @@ Per-defect identifiers, expected vs observed output, synthetic inputs, severity 
 criteria for the fix PR are in [`BACKEND_HANDOFF.md`](BACKEND_HANDOFF.md). This file adds only the
 measurement that was not available when that handoff was written.
 
-### 2.1 The two red CI jobs on `main` — root-caused, both `backend/`-owned (owner: B)
+### 2.1 The two red CI jobs — fixed, verified, and what they were hiding
 
-`main` @ `e88a5bf` has two failing jobs (`backend-tests`, `real-infrastructure-integration`). CI logs
-were unreadable from this sandbox (`gh run view --log` aborts with a network EOF), so both were
-**reproduced locally** instead. Neither is an `ai/` defect; neither has been patched by C, because
-both live in `backend/**`, which C does not own.
+Both defects were reproduced on clean `main` (`e88a5bf`) and are now fixed on this branch with
+owner authorization (commit `e509a93`), each with regression tests that were first shown to fail
+against the pre-fix code.
 
-**B-1 (P1) — every `postgresql://` URL is dead on a fresh install: SQLAlchemy 2.x resolved to 2.1.6
-flipped the default PostgreSQL DBAPI from `psycopg2` to `psycopg` (v3).** `backend/requirements.txt`
-pins `psycopg2-binary>=2.9.0` and `sqlalchemy>=2.0.0,<3.0.0`, so a clean `pip install` gets 2.1.6 +
-`psycopg2` — and SQLAlchemy then tries to import the *absent* `psycopg`. This is a time bomb, not a
-stale branch state: it breaks the CI job's `alembic upgrade head` step, and it would break a real
-PostgreSQL deployment just as completely. The SQLite demo path is unaffected, which is why it has
-gone unnoticed.
+**B-1 (P1) — every `postgresql://` URL was dead on a fresh install. FIXED.**
 
-```console
-$ python -c 'import sqlalchemy; sqlalchemy.create_engine("postgresql://u:p@h:5432/db")'
-ModuleNotFoundError: No module named 'psycopg'      # sqlalchemy 2.1.6, psycopg2 2.9.13 installed
+SQLAlchemy resolves to 2.1.6, which changed the default PostgreSQL DBAPI for the bare
+`postgresql://` scheme from `psycopg2` to `psycopg` (v3). `backend/requirements.txt` pins
+`psycopg2-binary` and the documented `DATABASE_URL` format is a bare `postgresql://…`, so the
+driver was imported at engine construction and failed with
+`ModuleNotFoundError: No module named 'psycopg'` before any connection was attempted.
 
-$ DATABASE_URL="postgresql://a:p@localhost:5432/x" python -m alembic -c backend/alembic.ini upgrade head
-  File ".../sqlalchemy/dialects/postgresql/psycopg.py", line 497, in import_dbapi
-    import psycopg
-ModuleNotFoundError: No module named 'psycopg'      # exit 1 — this is the CI step, verbatim
+The fix (`normalize_database_url` in `backend/app/db/session.py`) makes the DBAPI explicit at every
+point where a URL is consumed: `create_db_engine`, Alembic's `get_url`, and the integration
+harness's `POSTGRES_URL`. The documented bare form keeps working, `sqlite://` is untouched, an
+operator can still opt into psycopg v3 by naming it, and `get_database_url()` still returns what was
+configured (so the existing contract in `test_persistence.py` is unchanged).
 
-$ DATABASE_URL="postgresql+psycopg2://a:p@localhost:5432/x" python -m alembic -c backend/alembic.ini upgrade head
-(Background on this error at: ...)                  # driver import OK; fails only on "no server here"
-```
+The integration harness was the last call site: it built its own engine from `POSTGRES_URL`, so
+after the application fix that job still failed with the same error, one layer down.
 
-Smallest fixes, owner's choice — pin the driver or pin the major:
-
-1. `backend/requirements.txt`: `sqlalchemy>=2.0.0,<2.1` (reverts to the `psycopg2` default), **or**
-2. keep SQLAlchemy and add `psycopg[binary]>=3.1` (adopt the v3 driver), **or**
-3. normalise the scheme in `backend/app/db/session.py::create_db_engine` and `backend/alembic/env.py`
-   (`postgresql://` → `postgresql+psycopg2://`) so the driver is always explicit rather than
-   inherited from a library default.
-
-Option 3 is the only one that also protects the alembic CLI path and any operator-supplied
-`DATABASE_URL`; option 1 is the smallest diff. Acceptance: `real-infrastructure-integration` green
-against its Postgres service, and a test asserting the engine/dialect driver resolves with only
-`requirements.txt` installed.
-
-**B-2 (P2) — `test_storage_directory_traversal_prevention` is a Windows-semantics test run on Linux.**
-It walks six keys and expects `PathTraversalError` for each. Five pass; `C:\Windows\system32\cmd.exe`
-does not, because `os.path.isabs()` is false for a drive-letter path on POSIX, so the key is treated
-as an ordinary filename. **There is no escape:** `LocalStorageBackend._resolve_key` rewrites `\` to
-`/` and the resolved target stays inside the root (verified:
-`/tmp/aicte_private_storage/C:/Windows/system32/cmd.exe`, `relative_to(base_dir)` succeeds). On
-Windows the same key *is* absolute and is correctly rejected — so this is behaviour that differs by
-host OS, not a hole in the demo path. It only breaks the suite because CI runs Linux.
+Verified against a **real PostgreSQL server** (bundled PostgreSQL via the `pgserver` package,
+started locally on `localhost:5432` with the CI's credentials; TCP, trust auth). The exact CI
+migration command now succeeds:
 
 ```console
-$ python -m pytest -q backend/tests/integration/test_security_and_failure_paths.py::test_storage_directory_traversal_prevention
-E  Failed: DID NOT RAISE PathTraversalError
-1 failed                                        # backend suite: 1 failed, 388 passed, 22 skipped
+$ DATABASE_URL="postgresql://aicte_test:aicte_test_pass@localhost:5432/aicte_test_db" \
+    python -m alembic -c backend/alembic.ini upgrade head
+INFO  [alembic.runtime.migration] Running upgrade  -> 80f49ac7e2e2, initial_persistence_foundation
+... (all 7 revisions) ...
+INFO  [alembic.runtime.migration] Running upgrade f6a7b8c9d0e1 -> g7b8c9d0e1f2, audit_packages
+EXIT=0     # 16 tables created, alembic_version = g7b8c9d0e1f2
 ```
 
-Recommended fix (owner B): reject Windows drive prefixes/UNC (`^[A-Za-z]:` , `^\\\\`) explicitly in
-`_resolve_key` *before* the `isabs` check, so the rejection no longer depends on the host OS, and
-keep the test as is. Defense in depth rather than a demo blocker; do **not** mark the suite green by
-deleting the key from the test.
+Pre-fix control, same command, same shell: `import psycopg` → `ModuleNotFoundError`, exit 1. So this
+is a genuine before/after, not an assertion about driver initialisation alone. The offline form
+(`upgrade head --sql`, exit 0) is also now a regression test, since it needs no server.
+
+**B-2 (P2) — Windows drive-qualified keys were refused only on Windows. FIXED.**
+
+`LocalStorageBackend._resolve_key` relied on `os.path.isabs()`, which treats `C:\Windows\…` as
+absolute only on Windows. On POSIX the key was stored as a literal filename. Containment was never
+violated (the resolved path stayed inside `base_dir`), but the refusal depended on the host OS,
+which is why `test_storage_directory_traversal_prevention` failed on Linux and passed on Windows.
+
+A colon anywhere in the key is now refused, on every host: it is what carries Windows path meaning
+(drive-qualified, drive-relative, and NTFS alternate data streams). Opaque keys from
+`generate_storage_key()` never contain one, and backslash separator normalisation for valid keys is
+preserved. The pre-existing failing test is **unchanged** and now passes; `exists()` keeps its
+documented behaviour of reporting an unsafe key as absent rather than raising.
+
+Pre-fix control: `backend/tests/test_storage_key_hardening.py` → 8 failed on clean `main`. The
+valid-key cases passed before *and* after, which is the check that the guard did not over-reach.
+
+**CI on `e509a93` (run 40118334411):** `backend-tests` **pass** (was failing — B-2 confirmed),
+`optional-ocr-integration` pass, `optional-clamav-integration` pass,
+`real-infrastructure-integration` **still fail** — and the reason is no longer the driver.
+
+#### What fixing B-1 uncovered (owner: B, **outside this fix's scope**)
+
+With the driver working, the live integration suite runs for the first time and four **latent**
+failures surface. None is a PostgreSQL compatibility problem; all are test-vs-implementation drift:
+
+| Test | Observed |
+|---|---|
+| `test_postgres_multi_tenant_isolation` | `AttributeError: 'list' object has no attribute 'id'` — the repository returns rows, the test assumes ORM objects |
+| `test_postgres_validation_run_snapshots_and_reviews` | `TypeError: 'consumed_document_versions' is an invalid keyword argument for ValidationRun` |
+| `test_cross_institution_access_denial` | `assert 404 == 403` — the API returns 404 (non-enumerable) where the test expects 403; this may be the *stronger* security posture, so the expectation may be the stale side |
+| `test_authentication_rejection_invalid_or_expired_token` | asserts the substring `"invalid"`, receives `"Could not validate authentication credentials."` |
+
+Local live run: `RUN_LIVE_INTEGRATION_TESTS=true` + real PostgreSQL → **10 passed, 1 skipped,
+4 failed, 7 errors**; the 7 errors are Redis-dependent (`redis://localhost:6379/1` is not running
+here) and in CI that service exists, so those are expected to run there. Status of those seven
+against real Redis is **unverified locally** and is not claimed.
+
+These four are deliberately **not** fixed here: two of them hinge on intentional behaviour
+(403-vs-404 disclosure semantics), which is an owner decision, not a driver fix.
+
+**Test totals after the fix:** `pytest -q` (live tests off) → **425 passed, 22 skipped, 0 failed**
+(was 388 / 22 / **1**); `pytest -q ai/tests` → **243 passed, 6 skipped, 0 failed**; `ruff check .` →
+clean; frontend production build unchanged (`index-BNJNb1ey.js` 161.10 kB, `index-DUURRiLi.css`
+9.50 kB); extraction evaluation still **56/56 exact** with 0 spurious extractions on 20 negative
+cases. `requirements-dev.txt` is unchanged — no new runtime dependency was introduced for any of
+this; the PostgreSQL server was started only to verify, outside the repo.
 
 ### New measured evidence: Hindi/bilingual field extraction (real OCR, clean pages)
 
@@ -284,8 +314,12 @@ interpret regulations.
 
 ## 5. What C is *not* doing, and why
 
-- **Not merging PR #6** — `WORKSTREAMS.md` reserves the merge to the owner, and CI on the head
-  SHA is red for the two pre-existing `backend/` reasons in §2.1, which C cannot fix or waive.
+- **Not merging PR #6** — `WORKSTREAMS.md` reserves the merge to the owner. B-1 and B-2 are fixed
+  (§2.1), but CI on the head SHA is still red for the four latent test defects that fixing B-1
+  uncovered; C cannot fix or waive those without a further scope decision.
+- **Not fixing the four latent integration defects in §2.1** — they surfaced only because B-1 was
+  fixed, and at least one (`404` vs `403`) is an intentional-security-posture question, which is an
+  owner decision rather than a driver fix.
 - **Not editing `backend/app/ocr_*.py`** — backend-owned until an approved migration
   (`WORKSTREAMS.md`, "OCR placement").
 - **Not adding real or scanned institutional documents** — the corpora must stay synthetic.
