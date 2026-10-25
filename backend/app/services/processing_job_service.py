@@ -160,6 +160,11 @@ class ProcessingJobService:
                 version=version,
                 file_bytes=file_bytes,
                 expected_institution_id=inst_code,
+                expected_institution_name=(
+                    app_rec.institution.display_name
+                    if app_rec and app_rec.institution
+                    else None
+                ),
             )
 
             # ==================================================================

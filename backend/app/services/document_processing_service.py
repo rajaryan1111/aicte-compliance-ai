@@ -46,6 +46,7 @@ class DocumentProcessingService:
         version: DocumentVersion,
         file_bytes: bytes,
         expected_institution_id: str | None = None,
+        expected_institution_name: str | None = None,
     ) -> list[ExtractedField]:
         """Extract fields from validated bytes and run preliminary consistency checks."""
         extracted_fields: list[ExtractedField] = []
@@ -109,6 +110,7 @@ class DocumentProcessingService:
             version=version,
             extracted_fields=extracted_fields,
             expected_institution_id=expected_institution_id,
+            expected_institution_name=expected_institution_name,
         )
 
         db.commit()
@@ -155,6 +157,7 @@ class DocumentProcessingService:
         version: DocumentVersion,
         extracted_fields: list[ExtractedField],
         expected_institution_id: str | None,
+        expected_institution_name: str | None = None,
     ) -> None:
         """Run preliminary consistency checks on extracted fields and attach advisory findings."""
         findings_to_create: list[dict[str, str]] = []
@@ -194,28 +197,37 @@ class DocumentProcessingService:
                     }),
                 })
 
-        # 3. Institution ID / name mismatch
-        if expected_institution_id:
-            extracted_inst = None
-            if "institution_name" in fields_dict:
-                extracted_inst = fields_dict["institution_name"].normalized_value
-            elif "application_reference" in fields_dict:
-                extracted_inst = fields_dict["application_reference"].normalized_value
-            elif "institution_id" in fields_dict:
-                extracted_inst = fields_dict["institution_id"].normalized_value
+        # 3. Institution identity consistency: compare like with like.
+        # Prefer an explicit ID when present; otherwise compare the extracted
+        # name only when the caller supplied the canonical display name.
+        expected_id = str(expected_institution_id or "").strip()
+        expected_name = str(expected_institution_name or "").strip()
+        observed = None
+        expected_value = None
+        observed_field = None
 
-            expected_str = str(expected_institution_id).strip().lower()
-            if extracted_inst and extracted_inst.strip().lower() != expected_str:
+        if fields_dict.get("institution_id") and fields_dict["institution_id"].normalized_value:
+            observed_field = "institution_id"
+            observed = fields_dict["institution_id"].normalized_value.strip()
+            expected_value = expected_id
+        elif fields_dict.get("institution_name") and fields_dict["institution_name"].normalized_value:
+            observed_field = "institution_name"
+            observed = fields_dict["institution_name"].normalized_value.strip()
+            expected_value = expected_name or None
+
+        if observed and expected_value:
+            if observed.casefold() != expected_value.casefold():
                 findings_to_create.append({
                     "code": "INSTITUTION_MISMATCH",
                     "severity": "warning",
                     "summary": (
-                        f"Extracted institution identifier '{extracted_inst}' does not match "
-                        f"expected '{expected_institution_id}'."
+                        f"Extracted {observed_field} '{observed}' does not match "
+                        f"expected value '{expected_value}'."
                     ),
                     "evidence": json.dumps({
-                        "extracted": extracted_inst,
-                        "expected": expected_institution_id,
+                        "field_name": observed_field,
+                        "extracted": observed,
+                        "expected": expected_value,
                     }),
                 })
 

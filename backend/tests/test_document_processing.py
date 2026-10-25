@@ -173,7 +173,8 @@ def test_advisory_finding_institution_mismatch(db_session: Session):
         db_session,
         version=version,
         file_bytes=pdf_bytes,
-        expected_institution_id="Expected Inst",
+        expected_institution_id="INST-EXPECTED-99",
+            expected_institution_name="Expected Inst",
     )
 
     findings = list(db_session.scalars(select(Finding).where(Finding.document_version_id == version.id)).all())
