@@ -27,6 +27,52 @@ today's state except for the two resolved rows, marked ✅ above and in the
 table comments; the PR acceptance criteria now apply to cases
 `CNL-001…CMIS-009`, `CLH-005`, `CCO-002/003/005` only.
 
+## Status update (2026-10-25, `arena/677eccaa-aicte-compliance-ai`, PR #11)
+
+**All 15 remaining corruption-slice gaps are resolved**, and both
+backend-owned findings below are fixed. The table and reproductions under
+this section are retained as the historical audit record; the case list it
+describes is now the scored regression corpus.
+
+- Resolved in `5a4061c` (`fix(ocr): resolve the 15 documented extraction gaps;
+  re-score corruption corpus`): `CNL-001…004`, `CMIS-001…004`, `CMIS-007…009`,
+  `CLH-005`, `CCO-002/003/005`. Per the acceptance criteria above, every
+  `known_gap` flag was removed in the same commit so the cases migrated into
+  the scored denominator.
+- Resolved in `e9569e6`: the `LocalStorageBackend` Windows-drive traversal
+  defect (volume-qualified keys are now rejected with `PathTraversalError` on
+  every platform; `test_storage_directory_traversal_prevention` passes).
+- Resolved in `437e447`: the test font path is now portable
+  (`backend/tests/test_ocr_engine_integration.py` probes a cross-platform font
+  candidate list and skips with a reason when none is present), alongside
+  three raster-suite CI-parity fixes.
+- Resolved in `889d9eb`: the psycopg root cause below is fixed by
+  `normalize_database_url()` (bare `postgresql://`/`postgres://` URLs resolve
+  to the installed `psycopg2` driver at every engine-construction site;
+  two regression tests pin the behavior).
+
+Acceptance evidence for the extractor rework (old extractor + flagged corpora
+as a stored baseline report vs this branch):
+
+```bash
+python ai/evaluate_extraction.py --corpus ai/corpus/extraction_cases.jsonl \
+  --corpus ai/corpus/ocr_corruption_cases.jsonl --check --compare <baseline>
+```
+
+- `extraction_cases.jsonl`: 56/56 exact, micro F1 1.000
+- `ocr_corruption_cases.jsonl`: 30/30 exact (the 15 former gaps re-scored),
+  micro F1 1.000; negative false positives 0 of 7 slice negatives (0 of 27
+  across both corpora)
+- `--check --compare` exits 0: no NEW REGRESSIONS and no NEW negative false
+  positives; the diff records only the 15 gap→scored migrations and the
+  corpus-byte change.
+
+The label-level recovery (letter confusions, doubled separators, zero-width
+characters, rejoined wrapped labels) is conservative and applied to labels
+only; values are still parsed strictly (ISO dates only, identifier charset,
+3–160 character names). Wrong-value cases (`CMIS-007`, `CNL-003`) now end in
+the correct value.
+
 ## How to reproduce
 
 ```bash
