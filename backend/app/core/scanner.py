@@ -36,6 +36,9 @@ class MalwareScanner(Protocol):
     def scan(self, data: bytes, filename: str | None = None) -> ScanResult:
         """Scan file data for malware. Fails safe by never reporting clean on error."""
 
+    def is_available(self) -> bool:
+        """True only when a real scanning engine can positively scan right now."""
+
 
 class ClamAVScanner:
     """ClamAV clamd daemon client via INSTREAM socket protocol."""
@@ -111,6 +114,22 @@ class ClamAVScanner:
                 details=f"ClamAV connection failure: {exc}",
             )
 
+    def is_available(self) -> bool:
+        """True when the configured clamd daemon answers zPING.
+
+        Used by ``GET /health/ready``: readiness must not report a healthy
+        scan gate when the daemon is unreachable (uploads would all fail
+        closed into quarantine).
+        """
+        if not self.host:
+            return False
+        try:
+            with socket.create_connection((self.host, self.port), timeout=self.timeout) as sock:
+                sock.sendall(b"zPING\0")
+                return b"PONG" in sock.recv(1024)
+        except OSError:
+            return False
+
 
 class QuarantineScanner:
     """Default fallback scanner when no external malware engine is configured.
@@ -124,6 +143,10 @@ class QuarantineScanner:
             scanner_name="quarantine_default",
             details="No active scanning daemon configured. File remains quarantined pending security scan.",
         )
+
+    def is_available(self) -> bool:
+        """The quarantine fallback is never a usable scan gate: fail-closed only."""
+        return False
 
 
 _default_scanner: MalwareScanner | None = None

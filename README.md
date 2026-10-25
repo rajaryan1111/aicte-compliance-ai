@@ -118,14 +118,23 @@ shared document storage are completed and security-tested. Testing uses syntheti
 data only; no real institutional or personal documents are stored.
 
 **Deployment note (as of 2026-10-25):** the codebase supports a dedicated Celery
-worker (`python -m celery -A backend.app.worker.celery_app worker`), a real
-ClamAV daemon (`CLAMAV_HOST`/`CLAMAV_PORT`) and PostgreSQL
-(`DATABASE_URL`), and CI exercises the full pipeline against real PostgreSQL,
-Redis and ClamAV services. The Render preview services have **not** been verified
-end-to-end from this workspace (no Render API access here): the backend preview
-URL answered with Render's cold-start page on 2026-10-25, and there is no
-configured worker service, no scanner daemon and no durable shared storage
-visible in the repository's deployment configuration.
+worker (`python -m celery -A backend.app.worker.celery_app worker --beat` —
+exactly one instance runs `--beat`; it schedules the 30s recovery sweep that
+re-dispatches undelivered outbox messages, due `retry_wait` jobs and lost
+queued jobs), a real ClamAV daemon (`CLAMAV_HOST`/`CLAMAV_PORT`), PostgreSQL
+(`DATABASE_URL`) and a strict readiness endpoint (`GET /health/ready`, which
+reports `ready` only when the database, the migrated schema, a positively
+scanning malware engine and writable private storage all pass). CI exercises
+the full pipeline against real PostgreSQL, Redis and ClamAV services. The
+Render preview services have **not** been verified end-to-end from this
+workspace (no Render API access here): the backend preview URL answered with
+Render's cold-start page on 2026-10-25, and there is no configured worker
+service, no scanner daemon and no durable shared storage there yet. The exact
+owner runbook — `render.yaml` blueprint (single Docker service with clamd +
+worker + API sharing one durable disk), post-deploy verification checklist,
+and the disposition of the obsolete Vercel `aicte-compliance-frontend`
+integration — is in
+[`docs/development/DEPLOYMENT.md`](docs/development/DEPLOYMENT.md).
 
 ## Quick start and a five-minute demo
 

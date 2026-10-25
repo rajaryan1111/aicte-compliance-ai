@@ -1,0 +1,69 @@
+# Render Blueprint for the AICTE Compliance AI backend.
+# Full runbook and verification checklist: docs/development/DEPLOYMENT.md.
+#
+# Architecture note — read before editing this file:
+# this is intentionally ONE Docker service that runs the API, the Celery
+# worker (with embedded beat for the recovery sweep) and a local ClamAV
+# daemon. The storage backend is local-disk (backend/app/core/storage.py) and
+# a Render disk attaches to exactly one service — a separate worker service
+# could NOT see the API's uploads, which would break processing silently.
+# One service with one disk is the only architecture that gives API and worker
+# genuinely shared, durable, private storage with the currently implemented
+# storage backend. Do not split the worker out while STORAGE_LOCAL_DIR is the
+# only backend.
+#
+# Unverified-by-authoring note: plan names below are Render's standard names
+# as of 2026-10 and may need adjusting to your account's catalogue when the
+# blueprint is first applied; Render's blueprint editor validates the file on
+# import and will point at anything that has changed.
+
+databases:
+  - name: aicte-compliance-db
+    plan: basic-256mb
+    databaseName: aicte_compliance
+    user: aicte_compliance
+
+services:
+  - type: web
+    name: aicte-compliance-api
+    runtime: docker
+    repo: https://github.com/rajaryan1111/aicte-compliance-ai
+    # Point at the branch that contains this file (main once the delivery PR
+    # has merged; the delivery branch until then).
+    branch: main
+    # Paid instance: the free tier sleeps, which would stall the worker and
+    # the recovery sweep between requests. Do not use free for real processing.
+    plan: starter
+    # Liveness only (fixed 200): health-check failures trigger restarts, and a
+    # scanner-less boot must restart-loop via the fail-closed entrypoint rather
+    # than a health path. Strict dependency readiness lives at GET /health/ready.
+    healthCheckPath: /health
+    disk:
+      name: document-storage
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: aicte-compliance-db
+          property: connectionString
+      # Provision a Render Key Value (Redis) instance on PRIVATE networking
+      # (never public — no 0.0.0.0/0 allowlist) and paste its INTERNAL redis
+      # URL into these two variables in the dashboard. `sync: false` keeps the
+      # blueprint from overwriting the value you paste.
+      - key: CELERY_BROKER_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      # Generated once by Render (>=32 chars). Rotate in the dashboard if it
+      # is ever exposed; never commit a real value.
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      # The scan gate is the clamd in this same container (loopback only).
+      - key: CLAMAV_HOST
+        value: 127.0.0.1
+      - key: CLAMAV_PORT
+        value: "3310"
+      # Durable private document storage on the attached disk.
+      - key: STORAGE_LOCAL_DIR
+        value: /data

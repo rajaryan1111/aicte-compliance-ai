@@ -1,8 +1,15 @@
 from datetime import date, datetime, timezone
 from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import inspect, text
+from sqlalchemy.orm import Session
+
+from backend.app.core.scanner import get_malware_scanner
+from backend.app.core.storage import get_storage_backend
+from backend.app.db.session import get_db
 
 app = FastAPI(
     title="AICTE Compliance Assistant",
@@ -69,6 +76,30 @@ class HealthResponse(BaseModel):
     service: Literal["aicte-compliance-assistant"]
 
 
+class ReadinessCheck(BaseModel):
+    """One dependency probe inside ``GET /health/ready``."""
+
+    name: Literal["database", "schema", "malware_scanner", "storage"]
+    ok: bool
+    detail: str
+
+
+class ReadinessResponse(BaseModel):
+    """Response of ``GET /health/ready`` — strict deployment readiness.
+
+    ``ready`` means every gate the document pipeline depends on actually
+    works: the database answers queries, the intake schema is migrated, a
+    real malware engine can positively scan (the fail-closed quarantine
+    fallback is *not* ready — it is safe but cannot process anything), and
+    private storage accepts writes. HTTP 200 when ready, 503 otherwise.
+    Details name the failing component only; they never echo configuration,
+    URLs or credentials.
+    """
+
+    status: Literal["ready", "not_ready"]
+    checks: list[ReadinessCheck]
+
+
 class Finding(BaseModel):
     """One preliminary-check finding.
 
@@ -106,6 +137,98 @@ class ValidationResponse(BaseModel):
 @app.get("/health", response_model=HealthResponse)
 def health_check() -> HealthResponse:
     return HealthResponse(status="ok", service="aicte-compliance-assistant")
+
+
+# Tables created by the newest intake migrations. If these are missing the
+# database is reachable but the schema was never migrated to head.
+_READINESS_TABLES = ("processing_jobs", "outbox_messages")
+
+
+def _probe_database(db: Session) -> ReadinessCheck:
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception as exc:
+        return ReadinessCheck(
+            name="database", ok=False, detail=f"query failed ({type(exc).__name__})"
+        )
+    return ReadinessCheck(name="database", ok=True, detail="connection ok")
+
+
+def _probe_schema(db: Session) -> ReadinessCheck:
+    try:
+        existing = set(inspect(db.get_bind()).get_table_names())
+    except Exception as exc:
+        return ReadinessCheck(
+            name="schema", ok=False, detail=f"inspection failed ({type(exc).__name__})"
+        )
+    missing = [name for name in _READINESS_TABLES if name not in existing]
+    if missing:
+        return ReadinessCheck(
+            name="schema",
+            ok=False,
+            detail=f"migrations not applied; missing tables: {', '.join(missing)}",
+        )
+    return ReadinessCheck(name="schema", ok=True, detail="intake tables present")
+
+
+def _probe_scanner() -> ReadinessCheck:
+    try:
+        available = bool(get_malware_scanner().is_available())
+    except Exception as exc:
+        return ReadinessCheck(
+            name="malware_scanner", ok=False, detail=f"probe failed ({type(exc).__name__})"
+        )
+    if available:
+        return ReadinessCheck(name="malware_scanner", ok=True, detail="scanning engine answering")
+    return ReadinessCheck(
+        name="malware_scanner",
+        ok=False,
+        detail="no usable scanning engine (fail-closed quarantine active)",
+    )
+
+
+def _probe_storage() -> ReadinessCheck:
+    probe_key = "health/readiness-probe"
+    try:
+        storage = get_storage_backend()
+        storage.put(probe_key, b"readiness-probe")
+        storage.delete(probe_key)
+    except Exception as exc:
+        return ReadinessCheck(
+            name="storage", ok=False, detail=f"write probe failed ({type(exc).__name__})"
+        )
+    return ReadinessCheck(name="storage", ok=True, detail="write probe ok")
+
+
+@app.get(
+    "/health/ready",
+    response_model=ReadinessResponse,
+    responses={503: {"model": ReadinessResponse}},
+)
+def readiness_check(db: Session = Depends(get_db)) -> JSONResponse:
+    """Strict readiness: 200 only when every processing dependency is usable.
+
+    Liveness stays on ``GET /health`` (fixed 200). Use this endpoint for
+    deployment verification and monitoring; a 503 here means the instance
+    cannot safely process documents even though the process is up.
+    """
+    db_check = _probe_database(db)
+    if db_check.ok:
+        schema_check = _probe_schema(db)
+    else:
+        schema_check = ReadinessCheck(
+            name="schema", ok=False, detail="skipped: database unreachable"
+        )
+    checks = [db_check, schema_check, _probe_scanner(), _probe_storage()]
+    ready = all(check.ok for check in checks)
+    payload = ReadinessResponse(
+        status="ready" if ready else "not_ready",
+        checks=checks,
+    )
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content=payload.model_dump(),
+    )
 
 
 @app.post("/api/v1/validate", response_model=ValidationResponse)

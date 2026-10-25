@@ -36,20 +36,27 @@ aicte-compliance-ai/
 
 ## Current reality
 
+> **Updated 2026-10-25** to match the implemented system (the earlier rows
+> described the pre-integration state and were still written in the present
+> tense). The ownership contract below is unchanged.
+
 | Area | Location | State |
 |---|---|---|
-| Checklist validation API | `backend/app/main.py` | Implemented (`/health`, `/api/v1/validate`) |
+| Checklist validation API | `backend/app/main.py` | Implemented (`/health`, `GET /health/ready`, `POST /api/v1/validate`) |
+| Document intake pipeline | `backend/app/` (auth, applications, documents, reviews, audit packages) | Implemented: auth/RBAC, institution tenant isolation, private storage, fail-closed malware gate, durable jobs/outbox, Celery worker with beat-scheduled recovery sweep, audit events |
 | OCR contract + pipeline + adapter | `backend/app/ocr_adapter.py`, `ocr_pipeline.py` | Implemented, synthetic tests only |
 | Local OCR CLI | `backend/app/ocr_cli.py` | Implemented |
 | Rule catalogue + activation gate | `backend/app/rule_catalog.py` | Implemented; **no rule defined or active**, no evaluator |
-| Backend tests | `backend/tests/` | Implemented (186 passing, 1 skipped on this branch) |
-| Frontend application | `frontend/` | **README only**, no code, no framework chosen |
-| AI/OCR service | `ai/` | **README only**, no code |
-| Persistence, auth, storage, audit | — | **Does not exist** |
+| Backend tests | `backend/tests/` | Implemented (see CI; unit/contract plus a real PostgreSQL/Redis/ClamAV integration suite) |
+| Frontend application | `frontend/` | **No UI app** — README, captured fixtures and `tools/verify_fixtures.py` only, no framework chosen |
+| AI/OCR evaluation | `ai/` | Evaluation corpora + tests (`ai/tests`), no deployed service |
+| Persistence, auth, storage, audit | `backend/app/` | **Implemented** (SQLAlchemy + Alembic, JWT auth, tenant-scoped access with 404 concealment, local private storage, audit events); retention/deletion still missing |
 
-The `frontend/` and `ai/` directories contain a single documentation file each. That is an
-honest placeholder, not an application. **Do not add stub code that fakes persistence, auth,
-compliance or OCR behaviour to make the layout look complete.**
+The `frontend/` directory still contains no application (README, fixtures and a
+fixture-verification tool only), and `ai/` contains evaluation code rather than a
+deployed service. That is honest scaffolding, not a UI or an AI service. **Do not add
+stub code that fakes persistence, auth, compliance or OCR behaviour to make the layout
+look complete.**
 
 ## Workstreams
 

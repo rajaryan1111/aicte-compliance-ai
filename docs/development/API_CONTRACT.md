@@ -16,7 +16,7 @@ they disagree, the difference is a defect in the contract — report it, do not 
 
 ## Implemented HTTP surface
 
-Verified by starting `backend.app.main:app` and calling the endpoints. Both routes are
+Verified by starting `backend.app.main:app` and calling the endpoints. These routes are
 unauthenticated, which is acceptable only because no user data is stored anywhere.
 
 ### `GET /health` — implemented
@@ -26,11 +26,31 @@ GET /health
 200 {"status": "ok", "service": "aicte-compliance-assistant"}
 ```
 
-`backend/app/main.py:65`. No side effects, no input.
+`HealthResponse` / `health_check` in `backend/app/main.py`. No side effects, no input.
+This is the **liveness** check (fixed 200); strict dependency readiness is
+`GET /health/ready` below.
+
+### `GET /health/ready` — implemented (2026-10-25)
+
+```http
+GET /health/ready
+200 {"status": "ready", "checks": [{"name": "...", "ok": true, "detail": "..."}, ...]}
+503 {"status": "not_ready", "checks": [...]}
+```
+
+`ReadinessResponse` / `readiness_check` in `backend/app/main.py`; pinned by
+`backend/tests/test_readiness.py`. Four checks, always in this order:
+`database` (answers `SELECT 1`), `schema` (intake tables present — migrations
+applied), `malware_scanner` (a real engine answers `zPING`; the fail-closed
+quarantine fallback is **not** ready), `storage` (private storage accepts a
+write probe). HTTP 200 only when every check passes, 503 otherwise; `detail`
+names the component and error class only — never URLs, paths or credentials.
+Use this endpoint for deployment verification and monitoring; `GET /health`
+remains the restart-safe liveness probe.
 
 ### `POST /api/v1/validate` — implemented
 
-`backend/app/main.py:73`. Compares caller-supplied lists; it loads no AICTE checklist and
+`validate_application` in `backend/app/main.py`. Compares caller-supplied lists; it loads no AICTE checklist and
 no rule set.
 
 **Request body** (`ValidationRequest`, `backend/app/main.py:29`)
