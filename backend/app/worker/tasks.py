@@ -46,6 +46,28 @@ def process_document_job_task(self: Any, job_id: str) -> dict[str, Any]:
         db.close()
 
 
+@celery_app.task(name="backend.app.worker.tasks.recovery_sweep_task")
+def recovery_sweep_task() -> dict[str, int]:
+    """Beat-scheduled recovery sweep: re-dispatch stranded outbox messages and due jobs.
+
+    This task is the *only* scheduler for
+    :func:`backend.app.core.dispatcher.run_recovery_sweep`; without it,
+    ``retry_wait`` jobs and undelivered outbox messages would wait forever.
+    Run exactly one worker with ``--beat`` (or one standalone ``celery beat``)
+    so the sweep is scheduled exactly once.
+
+    The dispatcher import is deferred: ``backend.app.core.dispatcher`` imports
+    this module at import time, so a module-level import here would cycle.
+    """
+    from backend.app.core.dispatcher import run_recovery_sweep
+
+    db = get_worker_session()
+    try:
+        return run_recovery_sweep(db)
+    finally:
+        db.close()
+
+
 @celery_app.task(name="backend.app.worker.tasks.validate_application_task", bind=True, max_retries=3)
 def validate_application_task(
     self: Any,

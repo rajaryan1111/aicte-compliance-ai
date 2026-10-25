@@ -7,16 +7,21 @@ idempotency, and safe terminal states.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import time
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from backend.app.core.dispatcher import dispatch_outbox_message, dispatch_pending_outbox
+from backend.app.core.dispatcher import (
+    dispatch_outbox_message,
+    dispatch_pending_outbox,
+    run_recovery_sweep,
+)
 from backend.app.core.scanner import ScanResult, ScanStatus
 from backend.app.core.storage import LocalStorageBackend, generate_storage_key
 from backend.app.db.models import (
@@ -247,10 +252,9 @@ def test_outbox_broker_failure_and_redispatch_recovery(
         celery_app.amqp._producer_pool = None
         kombu_pools.reset()
 
-    # Recovery: restore broker connectivity and run dispatch_pending_outbox
-    outbox_msg.status = "pending"
-    live_postgres_session.commit()
-
+    # Recovery: restore broker connectivity and let the recovery query pick the
+    # message up from its recorded `failed` state (no manual status flip — that
+    # is the state a real broker outage leaves behind).
     recovered_count = dispatch_pending_outbox(live_postgres_session)
     assert recovered_count >= 1
 
@@ -322,6 +326,23 @@ def test_retry_and_backoff_on_transient_error(
     assert updated_job.scheduled_for is not None
     assert updated_job.scheduled_for > _utc_now()
     assert updated_job.last_error_code == "ConnectionError"
+
+    # The beat-scheduled recovery sweep is the only mechanism that re-enqueues
+    # a retry_wait job; without it the job would wait forever even after its
+    # backoff elapses. Before the sweep exists, it is not re-published early,
+    # and once due it is re-published exactly through the sweep path.
+    with patch("backend.app.core.dispatcher.process_document_job_task.delay") as mock_delay:
+        early = run_recovery_sweep(live_postgres_session, now=_utc_now())
+    assert early["retry_jobs_requeued"] == 0
+    assert all(call.args[0] != job.id for call in mock_delay.call_args_list)
+
+    with patch("backend.app.core.dispatcher.process_document_job_task.delay") as mock_delay:
+        due = run_recovery_sweep(
+            live_postgres_session,
+            now=updated_job.scheduled_for + timedelta(seconds=1),
+        )
+    assert due["retry_jobs_requeued"] == 1
+    assert any(call.args[0] == job.id for call in mock_delay.call_args_list)
 
     # Clean up
     live_postgres_session.delete(inst)

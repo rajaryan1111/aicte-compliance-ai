@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 import os
 
 from celery import Celery
@@ -34,6 +35,17 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=False,
     broker_connection_timeout=1.0,
     broker_transport_options={"max_retries": 1},
+    # Recovery sweep: the only scheduler that re-enqueues retry_wait jobs,
+    # lost queued jobs, and undelivered outbox messages. Schedule it exactly
+    # once — run a single worker with `--beat`, or one standalone
+    # `celery beat` process alongside beat-less workers. The sweep itself is
+    # idempotent, so a duplicate beat would be noisy but not incorrect.
+    beat_schedule={
+        "recovery-sweep": {
+            "task": "backend.app.worker.tasks.recovery_sweep_task",
+            "schedule": timedelta(seconds=30),
+        },
+    },
 )
 
 celery_app.autodiscover_tasks(["backend.app.worker"])

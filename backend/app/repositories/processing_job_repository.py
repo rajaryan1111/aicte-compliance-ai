@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import uuid
 
 from sqlalchemy import select
@@ -123,5 +123,32 @@ class ProcessingJobRepository:
                 ProcessingJob.scheduled_for <= current_time,
             )
             .order_by(ProcessingJob.scheduled_for.asc())
+        )
+        return list(db.scalars(stmt).all())
+
+    @staticmethod
+    def get_stale_queued_jobs(
+        db: Session,
+        older_than_seconds: int = 600,
+        now: datetime | None = None,
+    ) -> list[ProcessingJob]:
+        """Fetch queued jobs whose broker delivery appears to have been lost.
+
+        A job stays ``queued`` only until a worker claims it (``claim_job`` is
+        atomic and flips the state immediately), so a job still ``queued`` long
+        after creation means its task message never reached a worker — for
+        example a broker restart without persistence. Re-publishing is safe
+        because the claim is a no-op for anything already claimed or terminal:
+        at-least-once delivery, exactly-once claim.
+        """
+        current_time = now or _utc_now()
+        cutoff = current_time - timedelta(seconds=older_than_seconds)
+        stmt = (
+            select(ProcessingJob)
+            .where(
+                ProcessingJob.state == "queued",
+                ProcessingJob.updated_at <= cutoff,
+            )
+            .order_by(ProcessingJob.updated_at.asc())
         )
         return list(db.scalars(stmt).all())

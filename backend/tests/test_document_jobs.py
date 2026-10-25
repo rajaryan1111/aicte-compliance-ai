@@ -248,12 +248,11 @@ def test_outbox_broker_failure_and_recovery(db_session: Session):
         assert outbox_msg.status == "failed"
         assert "Redis connection refused" in (outbox_msg.last_error or "")
 
-    # 2. Re-dispatch / recovery with working broker
+    # 2. Re-dispatch / recovery with working broker. The recovery query must
+    #    pick the message up from its recorded `failed` state — no manual
+    #    status flip to `pending` — because that is the state a real broker
+    #    outage leaves behind.
     with patch("backend.app.core.dispatcher.process_document_job_task.delay") as mock_delay:
-        # Mark status back to pending or test dispatch_pending_outbox
-        outbox_msg.status = "pending"
-        db_session.commit()
-
         recovered_count = dispatch_pending_outbox(db_session)
         assert recovered_count == 1
         db_session.refresh(outbox_msg)
