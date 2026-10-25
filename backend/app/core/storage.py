@@ -87,6 +87,14 @@ class LocalStorageBackend:
         if any(p in {"..", "."} for p in parts if p):
             raise PathTraversalError(f"Directory traversal detected in storage key: {storage_key!r}")
 
+        # Reject Windows drive-qualified components ("C:", "C:foo", ...) and any
+        # colon-bearing segment. On POSIX these would otherwise resolve to a
+        # literal "C:" directory inside base_dir, and on Windows they could
+        # address an absolute location; keys are opaque server-generated tokens
+        # and must never carry volume syntax on any platform.
+        if any(":" in part for part in parts if part):
+            raise PathTraversalError(f"Volume-qualified path not permitted in storage key: {storage_key!r}")
+
         target_path = (self.base_dir / storage_key.replace("\\", "/")).resolve()
 
         # Enforce that target_path is strictly inside base_dir
