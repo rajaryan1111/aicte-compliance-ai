@@ -11,7 +11,7 @@ from sqlalchemy import engine_from_config, pool
 from backend.app.db.base import Base
 # Import models so all tables are registered on Base.metadata
 from backend.app.db import models  # noqa: F401
-from backend.app.db.session import get_database_url
+from backend.app.db.session import get_database_url, normalize_database_url
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -26,7 +26,7 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    return os.getenv("DATABASE_URL", get_database_url())
+    return normalize_database_url(os.getenv("DATABASE_URL") or get_database_url())
 
 
 def run_migrations_offline() -> None:

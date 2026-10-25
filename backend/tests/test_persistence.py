@@ -42,6 +42,7 @@ from backend.app.db.session import (
     create_db_engine,
     get_database_url,
     get_db,
+    normalize_database_url,
 )
 
 
@@ -81,6 +82,45 @@ def test_create_db_engine_sqlite_connect_args():
     assert engine.dialect.name == "sqlite"
     with engine.connect() as conn:
         assert conn.closed is False
+
+
+def test_normalize_database_url_forces_the_declared_psycopg2_driver():
+    """Bare postgres URLs must resolve to the driver this project actually ships.
+
+    SQLAlchemy >= 2.1 maps a driver-less ``postgresql://`` URL to its unified
+    psycopg (v3) dialect, but only ``psycopg2-binary`` is installed; without
+    the rewrite every PostgreSQL engine fails at import time with
+    ``ModuleNotFoundError: No module named 'psycopg'`` (CI run 40070848311).
+    Explicit driver choices are preserved unchanged.
+    """
+    assert (
+        normalize_database_url("postgresql://user:pass@localhost:5432/testdb")
+        == "postgresql+psycopg2://user:pass@localhost:5432/testdb"
+    )
+    assert (
+        normalize_database_url("postgres://user:pass@db.example/render")
+        == "postgresql+psycopg2://user:pass@db.example/render"
+    )
+    # An explicit driver suffix is a deliberate operator choice; leave it alone.
+    assert (
+        normalize_database_url("postgresql+psycopg2://u:p@h/db")
+        == "postgresql+psycopg2://u:p@h/db"
+    )
+    assert (
+        normalize_database_url("postgresql+psycopg://u:p@h/db")
+        == "postgresql+psycopg://u:p@h/db"
+    )
+    assert normalize_database_url("sqlite:///./aicte_dev.db") == "sqlite:///./aicte_dev.db"
+
+
+def test_create_db_engine_resolves_bare_postgres_url_with_installed_driver():
+    """Engine construction (not just connect) must not require the psycopg v3 module."""
+    engine = create_db_engine("postgresql://user:pass@localhost:5432/testdb")
+    try:
+        assert engine.url.drivername == "postgresql+psycopg2"
+        assert engine.dialect.__class__.__module__ == "sqlalchemy.dialects.postgresql.psycopg2"
+    finally:
+        engine.dispose()
 
 
 def test_get_db_dependency():

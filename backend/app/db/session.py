@@ -17,9 +17,27 @@ def get_database_url() -> str:
     return os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
 
 
+def normalize_database_url(url: str) -> str:
+    """Resolve driver-less PostgreSQL URLs to the driver this project ships.
+
+    SQLAlchemy >= 2.1 maps a bare ``postgresql://`` (or legacy ``postgres://``)
+    URL to its unified psycopg (v3) dialect, but this repository declares and
+    installs the psycopg2 driver (``psycopg2-binary``) only.  Without this
+    normalization, every PostgreSQL engine — runtime sessions and Alembic
+    migrations alike — fails with ``ModuleNotFoundError: No module named
+    'psycopg'`` before any connection is attempted.  Explicitly suffixed URLs
+    (``postgresql+psycopg2://``, ``postgresql+psycopg://``, ...) are returned
+    untouched so an operator can still choose a driver deliberately.
+    """
+    for prefix in ("postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg2://" + url[len(prefix):]
+    return url
+
+
 def create_db_engine(url: str | None = None, echo: bool = False, **kwargs: Any) -> Engine:
     """Create a SQLAlchemy engine configured for PostgreSQL or SQLite."""
-    db_url = url or get_database_url()
+    db_url = normalize_database_url(url or get_database_url())
     connect_args = kwargs.pop("connect_args", {})
 
     if db_url.startswith("sqlite"):

@@ -20,7 +20,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from backend.app.db.session import get_db
+from backend.app.db.session import get_db, normalize_database_url
 from backend.app.main import app
 
 # Integration test environment flags
@@ -50,7 +50,7 @@ Path(INTEGRATION_STORAGE_DIR).mkdir(parents=True, exist_ok=True)
 def is_postgres_available(url: str, timeout: float = 2.0) -> tuple[bool, str]:
     """Verify live PostgreSQL connectivity by issuing a SELECT 1 ping."""
     try:
-        eng = create_engine(url, connect_args={"connect_timeout": int(timeout)})
+        eng = create_engine(normalize_database_url(url), connect_args={"connect_timeout": int(timeout)})
         with eng.connect() as conn:
             conn.execute(text("SELECT 1"))
         return True, "OK"
@@ -131,7 +131,7 @@ def require_live_redis() -> str:
 def live_postgres_engine(require_live_postgres: str) -> Generator[Engine, None, None]:
     """Provide a SQLAlchemy Engine connected to the real PostgreSQL database."""
     engine = create_engine(
-        require_live_postgres,
+        normalize_database_url(require_live_postgres),
         pool_pre_ping=True,
         echo=False,
     )
