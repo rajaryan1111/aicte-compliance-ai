@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from ai.raster_benchmark import (
+from ai.raster_benchmark import (  # noqa: E402
     DATASET_LANG_TO_TESSERACT,
     SUPPORTED_IMAGE_CORRUPTIONS,
     MockRasterOCREngine,
@@ -829,10 +829,26 @@ class TestFontGlyphCoverage:
         )
 
     def test_hindi_font_renders_devanagari_and_latin(self):
-        """_get_font('hi') must cover Devanagari AND basic Latin on one line."""
-        from ai.raster_benchmark import _get_font
+        """_get_font('hi') must cover Devanagari AND basic Latin on one line.
+
+        Hosts without any Devanagari-capable font (minimal Linux images ship
+        DejaVu only) cannot verify glyph distinctness; the probe must still
+        report the gap (no false "renders fine") and the test skips with that
+        reason. On hosts with a Devanagari font the strict assertions run.
+        """
+        from ai.raster_benchmark import _DEVANAGARI_SAMPLE, _font_renders_sample, _get_font
 
         font = _get_font(24, "hi")
+        if not _font_renders_sample(font, _DEVANAGARI_SAMPLE):
+            # Detection, not silence: the tofu probe must flag the missing
+            # coverage so a benchmark run reports 'hi' accuracy as invalid.
+            assert not _font_renders_sample(font, "कखगसहड"), (
+                "the tofu probe must report False when Devanagari glyphs are missing"
+            )
+            pytest.skip(
+                "no Devanagari-capable font on this host; Hindi glyph "
+                "distinctness is unverified here (runs on hosts with a Devanagari font)"
+            )
         deva = [self._render_char(font, ch) for ch in "कखगसहड"]
         # All-distinct characters: repeated characters legitimately render
         # identical bitmaps, so the sample for the distinctness check must not
@@ -940,15 +956,25 @@ class TestMultiSeedBenchmark:
     # -- pooled math (independent recomputation) ------------------------------
 
     def test_pooled_corrupted_cer_matches_equal_weight_mean(self):
-        """With identical evaluated counts per seed, pooled CER must equal the
+        """With identical evaluated counts per seed, pooled CER must track the
         arithmetic mean of per-seed CERs (a hand-checkable restatement of
-        case-level micro-averaging)."""
+        case-level micro-averaging).
+
+        Tolerance is 1.5e-4, the published bound for the documented 4-decimal
+        serialisation applied twice: each per-seed CER is a rounded case-level
+        mean (|e| <= 0.5e-4 per seed), their mean is rounded again, and the
+        pooled value is independently rounded from case-level rows. The two
+        chains can therefore differ by up to ~1e-4; requiring bitwise equality
+        of double-rounded values would assert a false mathematical identity.
+        """
         report = self._run([42, 43], count=4)
         evaluated = [r["evaluated_count"] for r in report["per_seed"]]
         assert len(set(evaluated)) == 1, "mock engine evaluates every case"
         per_seed_cer = [r["corrupted_evaluation"]["cer"] for r in report["per_seed"]]
         expected = round(sum(per_seed_cer) / len(per_seed_cer), 4)
-        assert math.isclose(report["pooled"]["corrupted_evaluation"]["cer"], expected, abs_tol=1e-6)
+        assert math.isclose(
+            report["pooled"]["corrupted_evaluation"]["cer"], expected, abs_tol=1.5e-4
+        ), "pooled CER must equal the per-seed mean within the 4-decimal double-rounding bound"
 
     def test_pooled_delta_positive_and_consistent(self):
         report = self._run([42, 43], count=4)
@@ -1195,7 +1221,12 @@ class TestTesseractPSMConfiguration:
         engine.engine_name = "tesseract-psm3"
         engine.engine_version = "5.5.3"
 
-        import pytesseract
+        # pytesseract is optional (backend/requirements-ocr.txt); the mocked
+        # direct-path test runs wherever it is installed (the optional-ocr CI
+        # job) and skips, with reason, in the dependency-light backend job.
+        pytesseract = pytest.importorskip(
+            "pytesseract", reason="optional OCR dependency (backend/requirements-ocr.txt) not installed"
+        )
 
         data = {
             "text": ["Institution", "Name:", "Alpha", "Certificate", "No:", "CERT/2026/0001"],
