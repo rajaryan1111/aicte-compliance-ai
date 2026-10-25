@@ -46,6 +46,73 @@ def process_document_job_task(self: Any, job_id: str) -> dict[str, Any]:
         db.close()
 
 
+@celery_app.task(name="backend.app.worker.tasks.sweep_due_retries_task")
+def sweep_due_retries_task(limit: int = 50) -> dict[str, Any]:
+    """Re-dispatch jobs whose retry backoff has elapsed.
+
+    Without this, ``retry_wait`` is a terminal state in practice: a transient
+    scanner or I/O failure parks the job with a ``scheduled_for`` timestamp and
+    nothing ever picks it up again, so the document is never scanned and no
+    terminal state is ever reached. The repository lookup
+    (``get_retryable_jobs``) already existed but had no caller.
+
+    Dispatch deliberately does not touch the job's state: ``claim_job`` performs
+    the atomic queued/retry_wait -> scanning transition, so a second consumer
+    (duplicate delivery, overlapping sweep, or two workers) simply gets ``None``
+    and the job is processed exactly once.
+    """
+    from backend.app.repositories.processing_job_repository import (
+        ProcessingJobRepository,
+    )
+
+    db = get_worker_session()
+    try:
+        due = ProcessingJobRepository.get_retryable_jobs(db)
+        dispatched = 0
+        for job in due[:limit]:
+            try:
+                process_document_job_task.delay(job.id)
+                dispatched += 1
+            except Exception:  # broker hiccup: the next sweep retries it
+                logger.exception("Failed to re-dispatch retry job %s", job.id)
+        if due:
+            logger.info("Retry sweep: %s due, %s dispatched", len(due), dispatched)
+
+        # Outbox recovery: republish publish-failed messages (broker unreachable,
+        # TLS negotiation failure) before they strand their background job
+        # forever. Capped by max_retries so a permanently malformed payload
+        # cannot retry indefinitely. dispatch_outbox_message marks the message
+        # published (or failed again with an incremented retry_count).
+        outbox_redispatched = 0
+        try:
+            from backend.app.core.dispatcher import dispatch_outbox_message
+            from backend.app.repositories.outbox_repository import OutboxRepository
+
+            failed_messages = OutboxRepository.get_retryable_failed_messages(db)
+            for msg in failed_messages:
+                try:
+                    if dispatch_outbox_message(db, msg):
+                        outbox_redispatched += 1
+                except Exception:  # upper bound: sweep must not die on one message
+                    logger.exception("Failed to redispatch outbox message %s", msg.id)
+            if failed_messages:
+                logger.info(
+                    "Outbox recovery: %s failed message(s), %s republished",
+                    len(failed_messages),
+                    outbox_redispatched,
+                )
+        except Exception:
+            logger.exception("Outbox recovery sweep failed")
+
+        return {
+            "due": len(due),
+            "dispatched": dispatched,
+            "outbox_redispatched": outbox_redispatched,
+        }
+    finally:
+        db.close()
+
+
 @celery_app.task(name="backend.app.worker.tasks.validate_application_task", bind=True, max_retries=3)
 def validate_application_task(
     self: Any,

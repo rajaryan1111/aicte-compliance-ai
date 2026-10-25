@@ -481,3 +481,75 @@ def test_immutable_versioning_and_download_flow(client: TestClient, db_session: 
     assert r_dl.status_code == 200
     assert r_dl.content == VALID_PNG_BYTES
     assert "attachment" in r_dl.headers["content-disposition"]
+
+
+def test_list_application_documents_success(client: TestClient, db_session: Session):
+    """Regression: GET /documents used to 500 (AttributeError: no list_documents).
+    The frontend document list depends on this endpoint, so it must return the
+    upload's current version metadata with the same auth rules."""
+    user = create_user(db_session, "list_user")
+    inst = create_institution(db_session, "INST-LS-01")
+    app_rec = create_application(db_session, inst.id)
+    assign_role(db_session, user.id, inst.id, ROLE_INSTITUTION_ADMIN)
+
+    files = {"file": ("listdoc.pdf", io.BytesIO(VALID_PDF_BYTES), "application/pdf")}
+    r_up = client.post(
+        f"/api/v1/applications/{app_rec.id}/documents",
+        files=files,
+        data={"document_type": "approval_letter"},
+        headers=auth_header(user),
+    )
+    assert r_up.status_code == 201
+    doc_id = r_up.json()["document"]["id"]
+    version_id = r_up.json()["version"]["id"]
+
+    r_list = client.get(
+        f"/api/v1/applications/{app_rec.id}/documents",
+        headers=auth_header(user),
+    )
+    assert r_list.status_code == 200
+    body = r_list.json()
+    assert body["total"] == 1
+    assert len(body["items"]) == 1
+    item = body["items"][0]
+    assert item["id"] == doc_id
+    assert item["current_version"]["id"] == version_id
+    assert item["current_version"]["file_name"] == "listdoc.pdf"
+
+
+def test_list_application_documents_requires_auth(client: TestClient, db_session: Session):
+    """Anonymous callers must not be able to list an application's documents."""
+    user = create_user(db_session, "auth_list_user")
+    inst = create_institution(db_session, "INST-LS-02")
+    app_rec = create_application(db_session, inst.id)
+    assign_role(db_session, user.id, inst.id, ROLE_INSTITUTION_ADMIN)
+
+    r = client.get(f"/api/v1/applications/{app_rec.id}/documents")
+    assert r.status_code in (401, 403)
+
+
+def test_list_application_documents_cross_tenant_concealed(client: TestClient, db_session: Session):
+    """A member of a different institution gets a concealed 404, not the data."""
+    owner = create_user(db_session, "list_owner")
+    owner_inst = create_institution(db_session, "INST-LS-03")
+    app_rec = create_application(db_session, owner_inst.id)
+    assign_role(db_session, owner.id, owner_inst.id, ROLE_INSTITUTION_ADMIN)
+
+    outsider = create_user(db_session, "list_outsider")
+    outsider_inst = create_institution(db_session, "INST-LS-03X")
+    assign_role(db_session, outsider.id, outsider_inst.id, ROLE_INSTITUTION_ADMIN)
+
+    files = {"file": ("v1.png", io.BytesIO(VALID_PNG_BYTES), "image/png")}
+    client.post(
+        f"/api/v1/applications/{app_rec.id}/documents",
+        files=files,
+        data={"document_type": "approval_letter"},
+        headers=auth_header(owner),
+    )
+
+    r = client.get(
+        f"/api/v1/applications/{app_rec.id}/documents",
+        headers=auth_header(outsider),
+    )
+    assert r.status_code == 404
+    assert "access denied" in r.json()["detail"].lower()

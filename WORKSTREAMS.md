@@ -228,3 +228,28 @@ Branch protection is also **not configured**: as observed on 2026-10-23, both `m
 `research/grounded-foundation` report `protected: false` and the repository has no rulesets.
 Nothing here is technically enforced — see
 [`docs/development/REPOSITORY_STATE.md`](docs/development/REPOSITORY_STATE.md#enforcement-branch-protection-rulesets-codeowners).
+
+## Status update 2026-10-25 — the applications exist now; the ownership rules stand
+
+The "README only" statements above reflect the PR #4-era snapshot and are historical as of this
+date. Verified on the integration branch (PR #6 head `a1784a0`, re-run by execution this session,
+Python 3.12 fresh venv on macOS / Node via npm ci):
+
+- `frontend/` contains a React 18 + TypeScript + Vite application. `npm ci && npm run build`
+  succeeds (`tsc -b`, 161.16 kB JS / 9.50 kB CSS); `python frontend/tools/verify_fixtures.py`
+  replays 9 fixture cases against the live API and returns OK. Workstream A's scope above is
+  still its scope.
+- `ai/` contains the OCR/evaluation workstream: 248 tests passing (`pytest -q ai/tests`),
+  benchmark scripts and dated evidence reports under `ai/reports/`.
+- `backend/` (never a placeholder) passes 456+ tests including the live PostgreSQL/Redis
+  integration suite in CI (real `real-infrastructure-integration` job).
+
+What this note does **not** change:
+
+- The **ownership tables above remain in force** for every new change — including the workstream
+  paths, the shared-file rules, and the requirement that contract changes (`docs/development/
+  API_CONTRACT.md`) are reviewed changes.
+- Branch protection is **still not configured** (re-verified 2026-10-25: `protected: false`,
+  rulesets `[]`). Nothing is technically enforced; only the human commitment is.
+- **No PR below has been merged by an unauthorised session and no formal review decision exists
+  on any open PR** — that remains the owner's gate.

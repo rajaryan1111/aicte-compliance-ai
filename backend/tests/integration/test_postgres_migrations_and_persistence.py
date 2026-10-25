@@ -19,12 +19,12 @@ from backend.app.db.models import (
     AuditPackage,
     Document,
     DocumentVersion,
-    Finding,
     Institution,
-    ReviewAction,
     ValidationRun,
 )
 from backend.app.repositories.application_repository import ApplicationRepository
+from backend.app.repositories.review_audit_repository import ReviewAuditRepository
+from backend.app.repositories.validation_repository import ValidationRepository
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ALEMBIC_INI_PATH = REPO_ROOT / "backend" / "alembic.ini"
@@ -178,16 +178,21 @@ def test_postgres_multi_tenant_isolation(live_postgres_engine: Engine) -> None:
         session.add_all([app_a, app_b])
         session.commit()
 
-        # Query via repository scoped by tenant
-        results_a = ApplicationRepository.list_by_institution(session, inst_a.id)
+        # Query via repository scoped by tenant.  The repository returns
+        # (records, total) for pagination -- see its signature and
+        # backend/tests/test_repositories.py -- so the tuple is unpacked here
+        # rather than iterated directly.
+        results_a, total_a = ApplicationRepository.list_by_institution(session, inst_a.id)
         app_ids_a = {a.id for a in results_a}
         assert app_a.id in app_ids_a
         assert app_b.id not in app_ids_a
+        assert total_a == len(results_a) == 1
 
-        results_b = ApplicationRepository.list_by_institution(session, inst_b.id)
+        results_b, total_b = ApplicationRepository.list_by_institution(session, inst_b.id)
         app_ids_b = {b.id for b in results_b}
         assert app_b.id in app_ids_b
         assert app_a.id not in app_ids_b
+        assert total_b == len(results_b) == 1
 
         # Clean up
         session.delete(inst_a)
@@ -228,38 +233,50 @@ def test_postgres_validation_run_snapshots_and_reviews(live_postgres_engine: Eng
         doc.current_version_id = v1.id
         session.commit()
 
-        # ValidationRun snapshot
+        # ValidationRun snapshot, created through the repository rather than by
+        # constructing the model directly: create_run() makes the provenance
+        # fields explicit, and evaluation_date is deliberately NOT NULL with no
+        # model default so a caller cannot persist a run without recording which
+        # date it was evaluated against (the orchestration service defaults it).
         snapshot = json.dumps([{"document_type": "aicte_approval", "version_id": v1.id, "sha256": v1.sha256}])
-        vrun = ValidationRun(
+        vrun = ValidationRepository.create_run(
+            session,
             application_id=app.id,
+            evaluation_date=datetime.now(timezone.utc).date(),
             status="succeeded",
             outcome="attention_required",
-            consumed_document_versions=snapshot,
+            consumed_version_ids=snapshot,
             ruleset_version="2026.1-draft",
         )
-        session.add(vrun)
         session.commit()
 
-        finding = Finding(
+        # Findings are created through the repository like the orchestration
+        # service does: the code/summary columns, with the document type recorded
+        # in the evidence JSON rather than as its own column.
+        finding = ValidationRepository.create_finding(
+            session,
             validation_run_id=vrun.id,
-            finding_code="DOCUMENT_EXPIRED",
+            document_version_id=v1.id,
+            code="DOCUMENT_EXPIRED",
             severity="high",
             status="open",
-            document_type="aicte_approval",
-            message="Document expiry check flagged.",
+            summary="Document expiry check flagged.",
+            evidence=json.dumps({"document_type": "aicte_approval"}),
         )
-        session.add(finding)
         session.commit()
 
         # ReviewAction
-        action = ReviewAction(
+        # Review actions go through the audit repository; resolution_outcome is
+        # not a column -- the review service stores it inside metadata_payload.
+        action = ReviewAuditRepository.create_review_action(
+            session,
             application_id=app.id,
             finding_id=finding.id,
             reviewer_id="reviewer@aicte.gov.in",
             action="resolved",
             new_status="resolved",
-            resolution_outcome="issue_addressed",
-            justification="Valid gazette extension verified by reviewer.",
+            rationale="Valid gazette extension verified by reviewer.",
+            metadata_payload=json.dumps({"resolution_outcome": "issue_addressed"}),
         )
         session.add(action)
         finding.status = "resolved"
@@ -284,7 +301,9 @@ def test_postgres_validation_run_snapshots_and_reviews(live_postgres_engine: Eng
         # Query back and verify snapshot immutability
         re_run = session.get(ValidationRun, vrun.id)
         assert re_run is not None
-        assert json.loads(re_run.consumed_document_versions)[0]["sha256"] == v1.sha256
+        # consumed_version_ids is the canonical column (models.ValidationRun,
+        # the e5f6a7b8c9d0 migration, and validation_repository all use it).
+        assert json.loads(re_run.consumed_version_ids)[0]["sha256"] == v1.sha256
 
         re_pkg = session.get(AuditPackage, pkg.id)
         assert re_pkg is not None

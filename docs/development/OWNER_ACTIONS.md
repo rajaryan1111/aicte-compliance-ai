@@ -195,3 +195,164 @@ review.
 
 Until those exist and are security-tested, production is **NO-GO**; passing tests do not
 change that.
+
+---
+
+## 6. Render deployment — exact remaining steps (verified 2026-10-25)
+
+Context: the deployed login screen reported *"Cannot reach the API. Is the backend running
+and the proxy configured?"*, and the backend log showed
+`sqlite3.OperationalError: no such table: users`. Two independent defects, both now fixed in
+code, plus configuration that only the dashboard owner can set.
+
+### What the code now does (no dashboard action needed)
+
+| Behaviour | Where |
+|---|---|
+| Refuses to start on a deployed platform with a missing or SQLite `DATABASE_URL`, instead of serving a healthy-looking API over an empty file | `backend/app/db/session.py` |
+| Applies Alembic migrations at startup when deployed (`MIGRATE_ON_START`, default on), and fails startup if migration fails | `backend/app/db/migrations.py`, `backend/app/main.py` |
+| `GET /health/ready` reports engine family, Alembic revision, `users` table presence and reasons, returning **503** when not ready (never echoes the URL) | `backend/app/main.py` |
+| CORS allowlist configurable via `CORS_ALLOW_ORIGINS` (exact origins, `*` refused), defaulting to the preview origin | `backend/app/main.py` |
+| Frontend network error names the URL it tried; a 401 now shows the server's message instead of a blanket "session expired" | `frontend/src/api.ts` |
+
+### Steps that need the Render dashboard (in this order)
+
+1. **Backend → Environment → `DATABASE_URL`** = the **Internal Database URL** of
+   `dpg-dbefnlo473hc73d5or0g-a` (Postgres → *Connect* → *Internal*). Do not paste it into
+   GitHub, an issue, or a chat.
+2. **Backend → Environment → `CORS_ALLOW_ORIGINS`** = the origins that actually serve the UI,
+   comma-separated. Both `https://aicte-compliance-frontend.vercel.app` and
+   `https://aicte-compliance-frontend-preview.onrender.com` are allowed by default; set this
+   variable only if the deployed origins differ (Vercel *preview* URLs are per-commit and need
+   listing explicitly; wildcards and prefix rules are refused).
+3. **Backend → Environment → `JWT_SECRET_KEY`** must be set (≥32 chars). Signing raises
+   `RuntimeError` without it, so a missing key shows up as 500s on login.
+4. **Backend → Health Check Path** = `/health/ready`. This is what marks the service unhealthy
+   while the database is unreachable or unmigrated, instead of advertising a working API.
+5. **Backend → redeploy** the branch head. Startup logs should show
+   `Applying database migrations to head` followed by `Database is at Alembic revision …` on the
+   first deploy and no migration lines afterwards.
+6. **Frontend → Environment → `VITE_API_BASE_URL`** = `https://aicte-compliance-api-preview.onrender.com`
+   then **Manual Deploy → Clear build cache & deploy**. This variable is baked into the bundle at
+   build time (`frontend/src/api.ts`), so changing it without a rebuild changes nothing.
+7. **Provision the demo account** against the Render database, from a machine that can reach it
+   (Render Shell or a trusted host):
+   `DATABASE_URL=<internal url> JWT_SECRET_KEY=<same key> python tools/demo/seed_demo.py --username demo_operator --password '<strong temporary password>'`
+   The script creates the institution, the user (bcrypt hash) and an `institution_admin`
+   membership. Share the password privately — never in the repository.
+
+### Verify after deploying — one command
+
+Run this in the backend's Render Shell. It checks the database configuration, connectivity,
+migration revision against the code's head, required tables, provisioned accounts, Redis, the
+scanner and storage, prints PASS/FAIL per item, redacts every connection string, and exits
+non-zero if anything required fails:
+
+```
+python tools/deploy/preflight.py
+```
+
+Expected last line: `RESULT: READY (required checks passed; WARN items are documented limitations)`.
+For a deployment that must actually let someone log in, add `--require-accounts` so a database with
+no provisioned user fails the check instead of warning. (CI runs the same tool with the same
+command on every PR against real PostgreSQL, Redis and a scanner, so this path cannot silently rot.)
+WARN on storage means the instance has an ephemeral disk; WARN on scanner means uploads will park
+in `retry_wait` (fail-closed, never clean).
+
+Then the two HTTP checks:
+
+```
+curl -s <backend>/health/ready          # expect 200, "status":"ready", users_table_present:true
+curl -s -D- -o /dev/null -X OPTIONS <backend>/api/v1/auth/token \
+  -H 'Origin: https://aicte-compliance-frontend.vercel.app' \
+  -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: content-type'
+# expect 200 + access-control-allow-origin: that exact origin
+```
+
+### Still NOT claimed
+
+Nothing in this repository proves the Render services are configured as above — this environment
+has no network route to `*.onrender.com` and no Render integration. The Redis/Key Value instance
+has persistence disabled and no Celery worker is verified; document storage is a local directory
+unless `STORAGE_LOCAL_DIR` points at a mounted disk; and the ClamAV scanner is not deployed, so
+uploads would park in `retry_wait` with `SCANNER_UNAVAILABLE` (fail-closed, not clean). Keep
+public uploads disabled until storage, scanning and a worker are verified.
+
+### Background worker and Redis — what is and is not durable
+
+Nothing runs Celery in the current deployment. Without a worker, an upload is
+accepted, written to storage, and its `processing_jobs` row stays `queued`
+forever — the UI will show it as pending. The web process alone cannot satisfy the
+"jobs complete" guarantee.
+
+To add it, create a **Background Worker** service in Render with the same branch,
+the same build command as the API, and:
+
+```
+celery -A backend.app.worker.celery_app.celery_app worker --beat --loglevel=info
+```
+
+It must receive `DATABASE_URL`, `CELERY_BROKER_URL` (or `REDIS_URL`),
+`JWT_SECRET_KEY` and `CLAMAV_HOST`/`CLAMAV_PORT` — the identical values as the web
+service. Do **not** set `CELERY_TASK_ALWAYS_EAGER` on it: eager mode runs tasks
+inside whatever process calls `.delay()`, which is a test convenience and would
+make the worker idle.
+
+`--beat` runs the scheduler in the same process, which is what re-dispatches jobs
+whose retry backoff has elapsed (`sweep_due_retries_task`, every
+`RETRY_SWEEP_INTERVAL_SECONDS`, default 30s). Without a beat, a job that fails
+transiently stays in `retry_wait` forever: the backoff is recorded but nothing
+acts on it. With more than one worker, run a single separate
+`celery -A backend.app.worker.celery_app.celery_app beat` service instead of `-B`
+on every worker, so the sweep is not scheduled multiple times.
+
+Redis durability is not required for correctness here, and the free Key Value
+instance has persistence disabled — that is acceptable because Redis is only the
+task *transport*. Application data lives in PostgreSQL, and every dispatch also
+writes an `outbox_messages` row there. A Redis restart therefore loses only
+in-flight deliveries; the outbox retains the record and pending messages can be
+redispatched. Do not describe Redis as application storage or a backup.
+
+### Malware scanning — still absent, and fail-closed
+
+No ClamAV daemon is deployed. With `CLAMAV_HOST` unset or unreachable, uploads are
+stored but their job parks in `retry_wait` with `last_error_code =
+SCANNER_UNAVAILABLE`; the version never reaches `clean` and never reaches OCR.
+That is the intended fail-closed behaviour, not a bug to work around, and the CI
+test double must never be pointed at production.
+
+Options, cheapest first: (a) keep uploads disabled and demo login → application →
+metadata only; (b) run a clamd container on a paid plan and set `CLAMAV_HOST`/
+`CLAMAV_PORT` to it, then confirm `python tools/deploy/preflight.py` reports
+`PASS scanner`. Either way, do not claim working malware scanning until the
+scanner returns a verdict in the deployed environment.
+
+### Document storage — ephemeral on the current plan
+
+Documents are written to a local directory (`STORAGE_LOCAL_DIR`, defaulting to a
+temporary path). On an ephemeral instance they disappear on the next deploy or
+restart, while the database rows survive — leaving records pointing at missing
+files. Either mount a persistent disk on the web service and set
+`STORAGE_LOCAL_DIR` inside it, or treat uploads as demo-only. There is no object
+storage backend in this codebase yet; adding one is a feature, not a
+configuration change.
+
+**Smallest secure option** (recommended while the prototype stays on one
+instance): one Render persistent disk on the web service, mounted at
+`/var/lib/aicte-compliance`, with `STORAGE_LOCAL_DIR=/var/lib/aicte-compliance`
+and file permissions left to the service user. Disks require a paid instance
+type and are attached to a single service, so the API and any future worker must
+run in the same service (or share an object store) for the worker to read
+uploads. Disks are not a backup: `docs/development/RECOVERY_AND_BACKUP.md` still
+applies, and uploaded institutional documents must not be stored here until
+retention, deletion and access-review requirements are signed off. Do not add an
+S3 client pre-emptively — it would be unreferenced code until the owner decides
+on a bucket and credentials.
+
+### Cost, durability and expiry
+
+The PostgreSQL instance observed earlier was on a free plan with an expiry date
+(23 Nov 2026) recorded by the owner. Re-check the plan and expiry in the
+dashboard before relying on it: expiring free-tier infrastructure is not durable
+production storage, and this document makes no claim about its current state.
+Backups/restore steps are in `docs/development/RECOVERY_AND_BACKUP.md`.

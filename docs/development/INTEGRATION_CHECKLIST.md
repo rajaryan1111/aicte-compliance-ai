@@ -117,3 +117,30 @@ before any accuracy claim.
 - [ ] Explicit owner go/no-go recorded.
 
 **None of these are satisfied. The project is NOT release ready.**
+
+## 10. Status reconciliation (2026-10-25) — the section 4 table above is historical
+
+The §4 "not implemented" values were recorded before the implementation landed. Re-verified by
+copy + execution at integration-branch head `a1784a0` (PR #6), including a fresh local boot
+(SQLite demo DB, migrations applied, demo account seeded via `tools/demo/seed_demo.py`, real
+HTTP requests) and this session's full local suite. CI run `40129151372` (same head) covers the
+shared claims on Linux with real PostgreSQL + Redis.
+
+| Gate | Verified current state | Evidence |
+|---|---|---|
+| Authentication | **implemented and tested** — JWT bearer; unauthenticated and bad-token requests to protected routes return **401** (reproduced live this session) | `POST /api/v1/auth/token` → 177-char token; `GET /api/v1/applications` unauth → 401, `Bearer garbage` → 401; `backend/tests/test_auth_rbac.py` |
+| Authorization / RBAC | **implemented and tested** (server-side roles; officer-only actions refused to institution admin in the live-verified e2e) | CI-run integration suite; §2.1 of `ai/WORKSTREAM_HANDOFF.md` |
+| Institution-level tenant isolation | **implemented and tested** — `test_cross_institution_access_denial`, `test_postgres_multi_tenant_isolation` pass against real PostgreSQL in CI | `real-infrastructure-integration` job, run `40129151372` |
+| Private document storage | **implemented** (opaque keys, no public serving, traversal-guarded incl. Windows drive syntax on every host); **durability BLOCKED** on the deployed preview (ephemeral disk) | `test_storage_key_hardening.py`; `docs/development/OWNER_ACTIONS.md` §6 storage note |
+| Malware scanning | **implemented and fail-closed** — no verdict ⇒ never clean, job parks in `retry_wait`; **a deployed ClamAV daemon is BLOCKED (owner provisioning)**. The CI scanner double is explicitly labelled and never points at port 3310 tests | `test_repeated_transient_failures_reach_terminal_failure`; archived CI job comment on PR #6 |
+| Secure upload validation | **implemented and tested** (extension/MIME/content checks, 10 MiB/30 MP limits) | `test_safe_upload_rejection_for_unsupported_or_malformed_files` |
+| Durable audit trail | **implemented** (audit events persisted, audit packages with hash verification and tamper detection `verified=false`) | CI e2e comment on PR #6; audit package endpoints in OpenAPI |
+| Retention / deletion controls | **not implemented** — unchanged | — |
+| Authenticated reviewer identity | **implemented** for review actions (authenticated dependencies); rule-activation reviewer strings remain unresolved pending Phase 0 | — |
+| Secret management | **implemented as policy** (`.env` git-ignored; `JWT_SECRET_KEY` required ≥32 chars; no secret in the shipped frontend bundle — verified by bundle inspection this session) | Vercel bundle inspection, run history in PR #6 comments |
+| Rate limiting / abuse controls | **not implemented** — public exposure remains gated on this | — |
+
+An untick on §9 release gates remains correct: retention, rate limiting, deployed scanner,
+durable storage, official-source regulatory closure and labelled held-out OCR evaluation are
+**open**, so the project is still not release ready. What changed is only that the §4 table was
+stale; the release verdict is not.

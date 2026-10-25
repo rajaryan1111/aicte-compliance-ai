@@ -160,6 +160,11 @@ class ProcessingJobService:
                 version=version,
                 file_bytes=file_bytes,
                 expected_institution_id=inst_code,
+                expected_institution_name=(
+                    app_rec.institution.display_name
+                    if app_rec and app_rec.institution
+                    else None
+                ),
             )
 
             # ==================================================================
@@ -191,6 +196,13 @@ class ProcessingJobService:
             ver_cur = db.get(DocumentVersion, job.document_version_id) if job_cur else None
 
             if job_cur:
+                # claim_job() incremented attempt_count, but the rollback above
+                # discarded that unit of work -- so the counter read back here is
+                # the pre-claim value.  Restore the increment: without it a job
+                # retries forever at a constant backoff (2**0 * 5s) and can never
+                # reach max_attempts, leaving a permanently un-scanned document in
+                # retry_wait instead of failing closed.
+                job_cur.attempt_count += 1
                 is_transient = isinstance(exc, (IOError, TimeoutError, ConnectionError))
                 if is_transient and job_cur.attempt_count < job_cur.max_attempts:
                     backoff_sec = 2 ** job_cur.attempt_count * 5

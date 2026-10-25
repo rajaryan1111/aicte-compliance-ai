@@ -507,52 +507,74 @@ class ValidationOrchestrationService:
                         )
                         check_results.append(cr)
 
-        # Check D: Institution Identifier Consistency
-        inst_id_expected = app.institution.institution_id if app.institution else str(app.institution_id)
+        # Check D: Institution identity consistency. Names and IDs are
+        # distinct fields and must be compared against their corresponding
+        # canonical values. An application reference is not an institution ID.
+        inst_id_expected = (
+            app.institution.institution_id if app.institution
+            else str(app.institution_id)
+        )
+        inst_name_expected = (
+            app.institution.display_name if app.institution else None
+        )
+
         for doc_type, ver in eligible_versions.items():
             fields_map = {f.field_name: f for f in ver.extracted_fields}
-            extracted_inst = (
-                fields_map.get("institution_id")
-                or fields_map.get("institution_name")
-                or fields_map.get("application_reference")
+            identity_field = None
+            expected_value = None
+
+            id_field = fields_map.get("institution_id")
+            name_field = fields_map.get("institution_name")
+
+            if id_field and id_field.normalized_value:
+                identity_field = id_field
+                expected_value = inst_id_expected
+            elif name_field and name_field.normalized_value and inst_name_expected:
+                identity_field = name_field
+                expected_value = inst_name_expected
+
+            if not identity_field or not expected_value:
+                continue
+
+            obs_val = identity_field.normalized_value.strip()
+            matched = obs_val.casefold() == expected_value.strip().casefold()
+            evidence = json.dumps({
+                "field_name": identity_field.field_name,
+                "extracted": obs_val,
+                "expected": expected_value,
+                "document_type": doc_type,
+            })
+
+            cr = ValidationRepository.create_check_result(
+                db,
+                validation_run_id=run.id,
+                check_id="CHECK_INSTITUTION_CONSISTENCY",
+                check_name="Institutional Identity Consistency",
+                category="identity",
+                status="passed" if matched else "failed",
+                document_version_id=ver.id,
+                message=(
+                    f"Document '{doc_type}' {identity_field.field_name} "
+                    f"{'matches' if matched else 'does not match'} the expected institution value."
+                ),
+                evidence=evidence,
             )
-            if extracted_inst and extracted_inst.normalized_value:
-                obs_val = extracted_inst.normalized_value.strip()
-                if obs_val.lower() != inst_id_expected.strip().lower():
-                    cr = ValidationRepository.create_check_result(
-                        db,
-                        validation_run_id=run.id,
-                        check_id="CHECK_INSTITUTION_CONSISTENCY",
-                        check_name="Institutional Identity Consistency",
-                        category="identity",
-                        status="failed",
-                        document_version_id=ver.id,
-                        message=f"Extracted institution identifier '{obs_val}' in '{doc_type}' conflicts with application institution '{inst_id_expected}'.",
-                        evidence=json.dumps({"extracted": obs_val, "expected": inst_id_expected, "document_type": doc_type}),
-                    )
-                    check_results.append(cr)
-                    f = ValidationRepository.create_finding(
-                        db,
-                        validation_run_id=run.id,
-                        document_version_id=ver.id,
-                        code="INSTITUTION_MISMATCH",
-                        severity="warning",
-                        summary=f"Extracted institution identifier '{obs_val}' does not match expected '{inst_id_expected}'.",
-                        evidence=json.dumps({"extracted": obs_val, "expected": inst_id_expected, "document_type": doc_type}),
-                    )
-                    findings.append(f)
-                else:
-                    cr = ValidationRepository.create_check_result(
-                        db,
-                        validation_run_id=run.id,
-                        check_id="CHECK_INSTITUTION_CONSISTENCY",
-                        check_name="Institutional Identity Consistency",
-                        category="identity",
-                        status="passed",
-                        document_version_id=ver.id,
-                        message=f"Document '{doc_type}' matches expected institution '{inst_id_expected}'.",
-                    )
-                    check_results.append(cr)
+            check_results.append(cr)
+
+            if not matched:
+                f = ValidationRepository.create_finding(
+                    db,
+                    validation_run_id=run.id,
+                    document_version_id=ver.id,
+                    code="INSTITUTION_MISMATCH",
+                    severity="warning",
+                    summary=(
+                        f"Extracted {identity_field.field_name} '{obs_val}' "
+                        f"does not match expected value '{expected_value}'."
+                    ),
+                    evidence=evidence,
+                )
+                findings.append(f)
 
         # Check E: Cross-Document Field Consistency (conflicting values across documents)
         extracted_names: dict[str, tuple[str, DocumentVersion]] = {}

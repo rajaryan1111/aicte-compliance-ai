@@ -55,6 +55,33 @@ class OutboxRepository:
         return list(db.scalars(stmt).all())
 
     @staticmethod
+    def get_retryable_failed_messages(
+        db: Session,
+        limit: int = 50,
+        max_retries: int = 5,
+    ) -> list[OutboxMessage]:
+        """Fetch failed outbox messages that should be redelivered.
+
+        ``mark_failed`` documents that a failed message is "preserved for the
+        recovery worker", but the recovery sweep only looked at messages with
+        status ``pending``, so failed messages were stranded forever: a broker
+        outage during publish permanently disabled that background job
+        (documents stayed ``queued`` with zero attempts). These are the
+        messages the sweep can safely republish, capped at ``max_retries``
+        attempts so a permanently malformed payload cannot retry forever.
+        """
+        stmt = (
+            select(OutboxMessage)
+            .where(
+                OutboxMessage.status == "failed",
+                OutboxMessage.retry_count < max_retries,
+            )
+            .order_by(OutboxMessage.created_at.asc())
+            .limit(limit)
+        )
+        return list(db.scalars(stmt).all())
+
+    @staticmethod
     def mark_published(db: Session, message_id: str) -> None:
         """Mark an outbox message as successfully published to the message broker."""
         msg = db.get(OutboxMessage, message_id)

@@ -1,11 +1,31 @@
+import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Apply database migrations in a deployed environment, then serve.
+
+    A deploy that starts against an unmigrated database serves 500s with
+    "no such table: users" while ``/health`` reports "ok". Migrating here (or
+    failing loudly) removes that failure mode without depending on a dashboard
+    setting nobody configured. Local runs and tests are unaffected.
+    """
+    from backend.app.db.migrations import migrate_if_deployed
+
+    migrate_if_deployed()
+    yield
+
 
 app = FastAPI(
     title="AICTE Compliance Assistant",
+    lifespan=lifespan,
     description=(
         "Prototype for application validation and compliance assistance. "
         "Results are advisory and use synthetic demonstration data."
@@ -108,6 +128,70 @@ def health_check() -> HealthResponse:
     return HealthResponse(status="ok", service="aicte-compliance-assistant")
 
 
+# ---------------------------------------------------------------------------
+# Readiness: the probe that would have caught the "no such table: users" deploy
+# ---------------------------------------------------------------------------
+# ``/health`` is a liveness probe and stays deliberately trivial -- it answers
+# 200 as soon as the process serves HTTP, which is why a backend running against
+# an empty SQLite file reported "ok" while every login failed. This endpoint
+# inspects the database instead: reachable, migrated, and actually carrying the
+# tables authentication needs.
+#
+# It reports only shapes and names (engine family, revision, booleans). It never
+# echoes DATABASE_URL, hostnames, usernames or passwords.
+@app.get("/health/ready", include_in_schema=True)
+def readiness_check(response: Response) -> dict[str, object]:
+    """Report whether the API can actually serve authenticated requests."""
+    from sqlalchemy import text as _sql
+
+    from backend.app.db.session import SessionLocal, get_database_url, is_deployed_environment
+
+    url = get_database_url()
+    engine_family = ("sqlite" if url.startswith("sqlite") else "postgresql") if url else "unknown"
+    details: dict[str, object] = {
+        "service": "aicte-compliance-assistant",
+        "engine": engine_family,
+        "deployed_environment": is_deployed_environment(),
+        "database_reachable": False,
+        "migration_revision": None,
+        "users_table_present": False,
+    }
+    reasons: list[str] = []
+
+    try:
+        db = SessionLocal()
+        try:
+            db.execute(_sql("SELECT 1"))
+            details["database_reachable"] = True
+            try:
+                revision = db.execute(_sql("SELECT version_num FROM alembic_version")).scalar()
+                details["migration_revision"] = revision
+            except Exception:
+                reasons.append("alembic_version table missing: migrations have not been applied")
+            try:
+                db.execute(_sql("SELECT 1 FROM users LIMIT 1"))
+                details["users_table_present"] = True
+            except Exception:
+                reasons.append("users table missing: authentication cannot work")
+        finally:
+            db.close()
+    except Exception as exc:  # connection failure, wrong credentials, DB down
+        reasons.append(f"database unreachable ({type(exc).__name__})")
+
+    if engine_family == "sqlite" and details["deployed_environment"]:
+        reasons.append("SQLite is in use on a deployed service: data will not persist")
+
+    ready = not reasons
+    response.status_code = 200 if ready else 503
+    details["status"] = "ready" if ready else "not_ready"
+    details["reasons"] = reasons
+    details["notice"] = (
+        "Readiness only. It reports database, migration and table presence; "
+        "it does not certify compliance, document authenticity or data correctness."
+    )
+    return details
+
+
 @app.post("/api/v1/validate", response_model=ValidationResponse)
 def validate_application(request: ValidationRequest) -> ValidationResponse:
     required = set(request.required_documents)
@@ -192,3 +276,66 @@ app.include_router(reviews_router, prefix="/api/v1", tags=["reviews"])
 app.include_router(audit_packages_router, prefix="/api/v1", tags=["audit-packages"])
 
 
+
+
+# ---------------------------------------------------------------------------
+# CORS
+# ---------------------------------------------------------------------------
+# The frontend is a separate static-site origin, so the browser sends a
+# preflight OPTIONS before POSTing JSON to /api/v1/auth/token. Without an
+# allowlist entry that preflight fails and the browser reports a bare network
+# error -- the failure mode that looked like "the backend is down".
+#
+# The list is configurable because hard-coding one hostname means a renamed or
+# second preview URL is a code change and a redeploy. Credentials are disabled:
+# this API authenticates with a bearer token in the Authorization header, not
+# with cookies, so no wildcard-with-credentials footgun is needed or allowed.
+# Vercel preview *deployments* get a URL per commit and must be added to
+# CORS_ALLOW_ORIGINS explicitly. No regex prefix match is offered on purpose:
+# *.vercel.app subdomains are claimable by anyone, so a prefix rule would let a
+# third party host code that reads authenticated responses from this API.
+_DEFAULT_CORS_ORIGINS = (
+    "https://aicte-compliance-frontend.vercel.app",
+    "https://aicte-compliance-frontend-preview.onrender.com",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+)
+
+
+def _cors_origins() -> list[str]:
+    """Resolve allowed browser origins from CORS_ALLOW_ORIGINS, or the defaults."""
+    raw = os.getenv("CORS_ALLOW_ORIGINS", "").strip()
+    if not raw:
+        return list(_DEFAULT_CORS_ORIGINS)
+    origins = [origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()]
+    if "*" in origins:
+        raise RuntimeError(
+            "CORS_ALLOW_ORIGINS must list exact origins. '*' is refused: with a "
+            "bearer-token API any site could then read authenticated responses."
+        )
+    return origins
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Prefer"],
+)
+
+
+@app.get("/", include_in_schema=False)
+def service_landing_page() -> dict[str, object]:
+    """Expose a small service index instead of a confusing root 404."""
+    return {
+        "service": "AICTE Compliance Assistant",
+        "status": "prototype",
+        "docs": "/docs",
+        "health": "/health",
+        "frontend": "https://aicte-compliance-frontend-preview.onrender.com",
+        "notice": (
+            "Advisory prototype only. Results do not establish AICTE compliance "
+            "or document authenticity. Use synthetic demo data only."
+        ),
+    }

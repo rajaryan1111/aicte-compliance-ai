@@ -18,6 +18,13 @@ dist/
 .env.*
 !.env.example
 
+# Local databases and Celery runtime artefacts
+# A `celery worker -B` writes celerybeat-schedule.db into the working directory;
+# it is runtime state, never source.
+*.db
+*.sqlite3
+celerybeat-schedule*
+
 # OS / editor noise
 .DS_Store
 .idea/

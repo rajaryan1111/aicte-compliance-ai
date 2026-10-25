@@ -155,6 +155,8 @@ ruff check ai/
 - No held-out split exists for the text extraction corpus (cases were written alongside patterns).
 - Hindi coverage is limited to five label variants and rendered Devanagari fonts.
 
+| [`SIH_READINESS.md`](SIH_READINESS.md) | SIH submission readiness from executed evidence: end-to-end flow verification, P0/P1 defects with owners, verified demo runbook, honest limitations. |
+
 ## First task
 
 [`../docs/development/STARTER_TASKS.md`](../docs/development/STARTER_TASKS.md) — task C1.
