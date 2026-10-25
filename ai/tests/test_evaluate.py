@@ -187,7 +187,11 @@ def test_corruption_slice_is_labelled_and_keeps_negative_cases():
     negatives = [case for case in cases if not case["expected"] and not case.get("known_gap")]
     assert len(negatives) == 7
     assert len(negatives) >= len(cases) // 4
-    assert len([c for c in cases if c.get("known_gap")]) == 15
+    # The 15 former known gaps were resolved by the extractor rework
+    # (label re-joining, tolerant separators, invisible characters, column
+    # rows) and migrated into the scored denominator, per the acceptance
+    # criteria in ai/BACKEND_HANDOFF.md — no case may stay flagged once fixed.
+    assert len([c for c in cases if c.get("known_gap")]) == 0
     # Unicode decomposition must be present explicitly, not by accident of encoding.
     decomposed = [case for case in cases if case["case_id"] == "CLH-007"]
     assert all(unicodedata.normalize("NFC", case["text"]) != case["text"] for case in decomposed)
@@ -201,12 +205,14 @@ def test_multiple_corpora_are_scored_as_separate_slices():
         str(CORRUPTION_CORPUS_PATH.resolve().relative_to(REPO_ROOT)),
     ]
     # 56 scored: BND-002 and HI-005 migrated out of known-gap status once the
-    # backend fix landed (merge of origin/main, commit eec3a81).
-    assert [report["cases"] for report in reports] == [56, 15]
-    assert [report["exact_match_count"] for report in reports] == [56, 15]
+    # backend fix landed (merge of origin/main, commit eec3a81). The 15
+    # corruption-slice gaps migrated into the 30-case scored denominator when
+    # the extractor rework resolved them (ai/BACKEND_HANDOFF.md criteria).
+    assert [report["cases"] for report in reports] == [56, 30]
+    assert [report["exact_match_count"] for report in reports] == [56, 30]
     assert reports[0]["negative_false_positive_count"] == 0
     assert reports[1]["negative_false_positive_count"] == 0
-    assert len(reports[1]["known_gaps"]) == 15
+    assert len(reports[1]["known_gaps"]) == 0
 
 
 def test_corpus_contains_no_real_or_personal_data():
@@ -297,7 +303,7 @@ def test_cli_reports_repeated_corpora_without_merging_them(tmp_path: Path):
     assert completed.returncode == 0, completed.stderr
     report = json.loads(output.read_text(encoding="utf-8"))
     assert len(report["corpora"]) == 2
-    assert [slice_report["cases"] for slice_report in report["corpora"]] == [56, 15]
+    assert [slice_report["cases"] for slice_report in report["corpora"]] == [56, 30]
     assert completed.stdout.count("synthetic corpus") == 2
 
 
@@ -512,7 +518,10 @@ def test_report_records_corpus_fingerprint_and_category_coverage():
         CORRUPTION_CORPUS_PATH.read_bytes()
     ).hexdigest()
     coverage = report["by_category"]["ocr-misread-label"]
-    assert coverage == {"cases": 2, "exact_match_count": 2, "failing_cases": []}
+    # 9 = the 2 originally scored misread-label cases + the 7 CMIS-* cases that
+    # migrated into the scored denominator when their known_gap flags were
+    # removed after the extractor rework resolved them.
+    assert coverage == {"cases": 9, "exact_match_count": 9, "failing_cases": []}
     ids = [case["case_id"] for case in report["case_results"]]
     assert len(ids) == report["cases"] == len(set(ids))
 
@@ -799,14 +808,38 @@ def test_normalize_is_idempotent_and_preserves_meaningful_text():
 
 
 def test_preprocessing_diagnosis_matches_measured_evidence_only():
-    from ai.evaluate_extraction import load_corpus, preprocessing_diagnosis
+    from ai.evaluate_extraction import preprocessing_diagnosis
 
-    cases = load_corpus(CORRUPTION_CORPUS_PATH)
+    # Synthetic gap cases: the diagnostic must attribute a repair to the
+    # normalization rule that actually fired, and must not claim a repair for
+    # a gap normalization cannot fix. (The real corpus has no known_gap cases
+    # left — every documented gap was resolved and re-scored — so the
+    # machinery is pinned here with inline evidence instead.)
+    cases = [
+        {
+            "case_id": "S-REPAIRED",
+            "known_gap": True,
+            # Fullwidth (NFKC-decomposable) label: the extractor leaves it
+            # unresolved; conservative normalization composes it back
+            # (rule: nfkc) and only then does the label match.
+            "text": "\uff29\uff4e\uff53\uff54\uff49\uff54\uff55\uff54\uff49\uff4f\uff4e "
+                    "\uff4e\uff41\uff4d\uff45: Example College",
+            "expected": {"institution_name": "Example College"},
+        },
+        {
+            "case_id": "S-UNFIXED",
+            "known_gap": True,
+            # A personal-data label is out of scope; normalization cannot
+            # legitimately turn it into an institution field.
+            "text": "Name: Example Person",
+            "expected": {"institution_name": "Example Person"},
+        },
+    ]
     gap_ids = {c["case_id"] for c in cases if c.get("known_gap")}
     diagnosis = preprocessing_diagnosis(cases)
-    assert set(diagnosis["repaired"]) == {"CMIS-009"}
-    assert diagnosis["repaired"]["CMIS-009"] == ["remove-invisible-chars"]
-    assert "CNL-001" in diagnosis["not_fixed_by_these_rules"]
+    assert set(diagnosis["repaired"]) == {"S-REPAIRED"}
+    assert diagnosis["repaired"]["S-REPAIRED"] == ["nfkc"]
+    assert "S-UNFIXED" in diagnosis["not_fixed_by_these_rules"]
     assert (
         set(diagnosis["repaired"]) | set(diagnosis["not_fixed_by_these_rules"])
     ) <= gap_ids
@@ -834,13 +867,28 @@ def test_preprocessing_diagnosis_records_raising_engines_without_stopping():
     assert diagnosis["repaired"] == {}  # a dead engine repairs nothing
 
 
-def test_cli_normalize_flag_prints_diagnosis_and_keeps_exit_codes():
+def test_cli_normalize_flag_prints_diagnosis_and_keeps_exit_codes(tmp_path: Path):
+    corpus = tmp_path / "synthetic_gaps.jsonl"
+    corpus.write_text(
+        json.dumps({
+            "case_id": "S-REPAIRED", "known_gap": True,
+            "text": "\uff29\uff4e\uff53\uff54\uff49\uff54\uff55\uff54\uff49\uff4f\uff4e "
+                    "\uff4e\uff41\uff4d\uff45: Example College",
+            "expected": {"institution_name": "Example College"},
+        }) + "\n"
+        + json.dumps({
+            "case_id": "S-UNFIXED", "known_gap": True,
+            "text": "Name: Example Person",
+            "expected": {"institution_name": "Example Person"},
+        }) + "\n",
+        encoding="utf-8",
+    )
     with_check = subprocess.run(
         [
             sys.executable,
             "ai/evaluate_extraction.py",
             "--corpus",
-            str(CORRUPTION_CORPUS_PATH),
+            str(corpus),
             "--normalize",
             "--check",
         ],
@@ -848,11 +896,12 @@ def test_cli_normalize_flag_prints_diagnosis_and_keeps_exit_codes():
         text=True,
         cwd=REPO_ROOT,
     )
+    # --check must stay 0: documented known gaps are exempt from scoring.
     assert with_check.returncode == 0
     assert "preprocessing diagnosis" in with_check.stdout
-    assert "1/15 known-gap cases" in with_check.stdout
-    assert "CNL-001" in with_check.stdout  # not fixed; stays visible
-    assert "remove-invisible-chars" in with_check.stdout
+    assert "1/2 known-gap cases" in with_check.stdout
+    assert "S-REPAIRED" in with_check.stdout  # the repaired one is named
+    assert "nfkc" in with_check.stdout
     assert "backend-owned change" in with_check.stdout
 
 

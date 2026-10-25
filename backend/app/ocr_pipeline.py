@@ -14,6 +14,7 @@ clamped. See ``_validated_engine_columns`` and ``_parse_engine_confidence``.
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 import io
 import math
@@ -149,6 +150,249 @@ def _date_consistency_warnings(fields: dict[str, OCRField]) -> list[str]:
     return []
 
 
+_ZERO_WIDTH_CHARS = "\u200b\u200c\u200d\u2060\ufeff"
+
+
+def _clean_ocr_text(text: str) -> str:
+    return text.translate(str.maketrans("", "", _ZERO_WIDTH_CHARS))
+
+
+_LABEL_TO_FIELD: dict[str, str] = {
+    "institution name": "institution_name",
+    "name of institution": "institution_name",
+    "name of college": "institution_name",
+    "college name": "institution_name",
+    "संस्थान का नाम": "institution_name",
+    "संस्था का नाम": "institution_name",
+    "महाविद्यालय का नाम": "institution_name",
+    "कॉलेज का नाम": "institution_name",
+    "certificate no": "certificate_number",
+    "certificate number": "certificate_number",
+    "reference no": "certificate_number",
+    "reference number": "certificate_number",
+    "document no": "certificate_number",
+    "प्रमाणपत्र संख्या": "certificate_number",
+    "प्रमाणपत्र क्रमांक": "certificate_number",
+    "संदर्भ संख्या": "certificate_number",
+    "दस्तावेज़ संख्या": "certificate_number",
+    "application ref": "application_reference",
+    "application reference": "application_reference",
+    "application id": "application_reference",
+    "application no": "application_reference",
+    "आवेदन संदर्भ": "application_reference",
+    "आवेदन संख्या": "application_reference",
+    "आवेदन क्रमांक": "application_reference",
+    "date of issue": "issue_date",
+    "issued on": "issue_date",
+    "issue date": "issue_date",
+    "जारी करने की तिथि": "issue_date",
+    "जारी दिनांक": "issue_date",
+    "निर्गमन तिथि": "issue_date",
+    "valid until": "valid_until",
+    "valid up to": "valid_until",
+    "valid upto": "valid_until",
+    "valid till": "valid_until",
+    "expiry date": "valid_until",
+    "expires on": "valid_until",
+    "वैधता तक": "valid_until",
+    "समाप्ति तिथि": "valid_until",
+    "अंतिम वैधता तिथि": "valid_until",
+    "academic year": "academic_year",
+    "academic session": "academic_year",
+    "शैक्षणिक वर्ष": "academic_year",
+    "शैक्षिक वर्ष": "academic_year",
+    "शैक्षणिक सत्र": "academic_year",
+    "शैक्षिक सत्र": "academic_year",
+}
+
+
+def _normalize_label(value: str) -> str:
+    value = value.translate(str.maketrans("", "", _ZERO_WIDTH_CHARS))
+    value = re.sub(r"\s+", " ", value).strip().lower()
+    value = value.replace("0", "o").replace("1", "l")
+    value = value.replace("lssue", "issue").replace("untill", "until")
+    value = value.strip(" :;.-")
+    return value
+
+
+def _field_for_label_text(label_text: str) -> str | None:
+    """Map one candidate label string to a field name, or None.
+
+    Exact (normalised) vocabulary matches win; a conservative difflib
+    close-match is consulted only when no exact label matches.  Both are
+    applied to the whole candidate string only — callers strip the value
+    side away first.
+    """
+    normalized = _normalize_label(label_text)
+    if not normalized:
+        return None
+    if normalized in _LABEL_TO_FIELD:
+        return _LABEL_TO_FIELD[normalized]
+    matches = difflib.get_close_matches(
+        normalized, list(_LABEL_TO_FIELD.keys()), n=1, cutoff=0.86
+    )
+    if matches:
+        return _LABEL_TO_FIELD[matches[0]]
+    return None
+
+
+def _match_label_at_end(region: str) -> tuple[str, int] | None:
+    """Find a field label ending at *region*'s end.
+
+    Returns ``(field_name, char_offset)`` where ``char_offset`` is the index
+    in ``region`` at which the recognised label begins, or ``None``.  The
+    scan tries every suffix word boundary, preferring the longest label
+    (earliest start) that matches, so a value tail such as
+    ``CERT/2026/0099 Institution Name`` resolves to the trailing
+    ``Institution Name`` label and reports where it starts.
+    """
+    stripped = region.rstrip()
+    if not stripped:
+        return None
+    words = list(re.finditer(r"\S+", stripped))
+    for start_idx in range(len(words)):
+        candidate = stripped[words[start_idx].start() :]
+        if _field_for_label_text(candidate) is not None:
+            return _field_for_label_text(candidate), words[start_idx].start()
+    return None
+
+
+def _parse_field_value(field_name: str, raw_value: str) -> str | None:
+    raw_value = re.sub(r"\s+", " ", raw_value).strip()
+    if not raw_value:
+        return None
+    if field_name == "institution_name":
+        if len(raw_value) < 3 or len(raw_value) > 160:
+            return None
+        return raw_value
+    if field_name in {"certificate_number", "application_reference"}:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9/._-]{1,79}", raw_value):
+            return None
+        return raw_value
+    if field_name in {"issue_date", "valid_until"}:
+        parsed = parse_iso_date_candidate(raw_value)
+        return parsed.isoformat() if parsed is not None else None
+    if field_name == "academic_year":
+        normalized = re.sub(r"\s+", "", raw_value).replace("/", "-")
+        if not re.fullmatch(r"20\d{2}-20\d{2}", normalized):
+            return None
+        start_text, end_text = normalized.split("-")
+        start_year, end_year = int(start_text), int(end_text)
+        if end_year != start_year + 1:
+            return None
+        return normalized
+    return raw_value
+
+
+_SEPARATOR_RE = re.compile(r"[:;]+|\s-\s")
+
+
+def _extract_from_segment(
+    segment: str,
+    *,
+    confidence: float | None,
+    page_number: int,
+    fields: dict[str, OCRField],
+) -> None:
+    """Extract labelled fields from one blank-line-delimited segment.
+
+    The scan finds every ``:``/``;``/`` - `` separator, resolves the label
+    text immediately before it, and lets each value run until the next
+    *recognised* label starts (not merely until the next separator, which a
+    value such as ``2026 - 2027`` can legitimately contain).  Label
+    fragments split across whitespace (including across a line break) are
+    re-joined because the segment text is space-joined first.
+    """
+    positions = [m for m in _SEPARATOR_RE.finditer(segment)]
+    resolved: list[tuple[str, int, int, int]] = []  # field, label_start, value_start, sep_end
+    for match in positions:
+        region = segment[: match.start()]
+        # Bound the region by the end of the previous resolved value so a
+        # previous value's words are not swallowed into this label.
+        if resolved:
+            region = region[resolved[-1][2] :]
+            offset_base = resolved[-1][2]
+        else:
+            offset_base = 0
+        label = _match_label_at_end(region)
+        if label is None:
+            continue
+        field_name, label_offset = label
+        label_start = offset_base + label_offset
+        resolved.append((field_name, label_start, match.end(), match.end()))
+
+    for idx, (field_name, label_start, value_start, _sep_end) in enumerate(resolved):
+        if field_name in fields:
+            continue  # first duplicate label wins, deterministically
+        if idx + 1 < len(resolved):
+            value_end = resolved[idx + 1][1]
+        else:
+            value_end = len(segment)
+        raw_value = segment[value_start:value_end]
+        parsed = _parse_field_value(field_name, raw_value)
+        if parsed is None:
+            continue
+        evidence = re.sub(r"\s+", " ", segment[label_start:value_end]).strip()[:500]
+        fields[field_name] = OCRField(
+            value=parsed,
+            confidence=confidence,
+            page_number=page_number,
+            evidence_text=evidence,
+        )
+
+
+def _extract_column_rows(
+    raw_lines: list[str],
+    *,
+    confidence: float | None,
+    page_number: int,
+    fields: dict[str, OCRField],
+) -> list[str]:
+    """Pair a multi-label header row with a value row of the same width.
+
+    OCR that flattens two-column layouts produces a header line with several
+    labels separated by runs of spaces, followed by a value line with the
+    same number of columns.  Such lines are consumed here (returned list
+    omits them) so the separator scan cannot mis-associate the values.  Any
+    row that is not a pure label header, or whose value row has a different
+    column count, is left untouched.
+    """
+    remaining: list[str] = []
+    i = 0
+    while i < len(raw_lines):
+        line = raw_lines[i]
+        chunks = [chunk.strip() for chunk in re.split(r"\s{2,}", line) if chunk.strip()]
+        if (
+            len(chunks) >= 2
+            and i + 1 < len(raw_lines)
+            and all(_match_label_at_end(chunk) for chunk in chunks)
+        ):
+            mapped = [_match_label_at_end(chunk) for chunk in chunks]
+            field_names = [item[0] for item in mapped if item is not None]
+            value_chunks = [
+                chunk.strip()
+                for chunk in re.split(r"\s{2,}", raw_lines[i + 1])
+                if chunk.strip()
+            ]
+            if len(set(field_names)) == len(chunks) and len(value_chunks) == len(chunks):
+                for field_name, raw_value in zip(field_names, value_chunks):
+                    if field_name in fields:
+                        continue
+                    parsed = _parse_field_value(field_name, raw_value)
+                    if parsed is not None:
+                        fields[field_name] = OCRField(
+                            value=parsed,
+                            confidence=confidence,
+                            page_number=page_number,
+                            evidence_text=re.sub(r"\s+", " ", line).strip()[:500],
+                        )
+                i += 2
+                continue
+        remaining.append(line)
+        i += 1
+    return remaining
+
+
 def extract_institution_fields(
     text: str,
     confidence: float | None = None,
@@ -177,46 +421,29 @@ def extract_institution_fields(
     ):
         raise ValueError("page_number must be a positive 1-based integer")
     confidence = _validate_confidence(confidence)
+    text = _clean_ocr_text(text)
     fields: dict[str, OCRField] = {}
-    lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines()]
-    lines = [line for line in lines if line]
 
-    patterns: tuple[tuple[str, re.Pattern[str]], ...] = (
-        ("institution_name", re.compile(r"^(?:name of institution|institution name|name of college|college name|संस्थान का नाम|संस्था का नाम|महाविद्यालय का नाम|कॉलेज का नाम)\s*[:\-]\s*(\S.{2,159})$", re.I)),
-        ("certificate_number", re.compile(r"^(?:certificate no\.?|certificate number|reference no\.?|reference number|document no\.?|प्रमाणपत्र संख्या|प्रमाणपत्र क्रमांक|संदर्भ संख्या|दस्तावेज़ संख्या)\s*[:\-]\s*([A-Z0-9][A-Z0-9/._\-]{1,79})$", re.I)),
-        ("application_reference", re.compile(r"^(?:application ref(?:erence)?|application id|application no\.?|आवेदन संदर्भ|आवेदन संख्या|आवेदन क्रमांक)\s*[:\-]\s*([A-Z0-9][A-Z0-9/._\-]{1,79})$", re.I)),
-        ("issue_date", re.compile(r"^(?:date of issue|issued on|issue date|जारी करने की तिथि|जारी दिनांक|निर्गमन तिथि)\s*[:\-]\s*(.+)$", re.I)),
-        ("valid_until", re.compile(r"^(?:valid until|valid up to|valid upto|valid till|expiry date|expires on|वैधता तक|समाप्ति तिथि|अंतिम वैधता तिथि)\s*[:\-]\s*(.+)$", re.I)),
-        ("academic_year", re.compile(r"^(?:academic year|academic session|शैक्षणिक वर्ष|शैक्षिक वर्ष|शैक्षणिक सत्र|शैक्षिक सत्र)\s*[:\-]\s*((?:20\d{2})\s*[-/]\s*(?:20\d{2}))$", re.I)),
+    raw_lines = [line.rstrip() for line in text.splitlines()]
+    remaining_lines = _extract_column_rows(
+        raw_lines, confidence=confidence, page_number=page_number, fields=fields
     )
 
-    for line in lines:
-        for field_name, pattern in patterns:
-            match = pattern.match(line)
-            if not match or field_name in fields:
-                continue
-            raw_value = match.group(1).strip()
-            if field_name == "institution_name" and (len(raw_value) < 3 or len(raw_value) > 160):
-                continue
-            if field_name in {"issue_date", "valid_until"}:
-                parsed_date = parse_iso_date_candidate(raw_value)
-                if parsed_date is None:
-                    continue
-                raw_value = parsed_date.isoformat()
-            elif field_name == "academic_year":
-                normalized_year = re.sub(r"\s+", "", raw_value).replace("/", "-")
-                start_text, end_text = normalized_year.split("-")
-                start_year, end_year = int(start_text), int(end_text)
-                if end_year != start_year + 1:
-                    # Reversed, equal or multi-year spans are ambiguous: leave unresolved.
-                    continue
-                raw_value = normalized_year
-            fields[field_name] = OCRField(
-                value=raw_value,
-                confidence=confidence,
-                page_number=page_number,
-                evidence_text=line[:500],
-            )
+    # Blank lines are hard field boundaries: a label and its value may be
+    # split across a wrapped line, but never across a blank line.
+    segments = re.split(r"\n\s*\n", "\n".join(remaining_lines))
+    for segment in segments:
+        collapsed = " ".join(
+            re.sub(r"\s+", " ", line).strip()
+            for line in segment.splitlines()
+            if line.strip()
+        )
+        if not collapsed:
+            continue
+        _extract_from_segment(
+            collapsed, confidence=confidence, page_number=page_number, fields=fields
+        )
+
     return fields
 
 
