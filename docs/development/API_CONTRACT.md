@@ -153,6 +153,34 @@ Not implemented: PDF input, multi-frame coverage (first frame only, warned), bou
 - State is in-memory: no durability, no audit trail, no concurrency handling.
 - Supersession and retirement are **not implemented**.
 
+## Reconciliation addendum (2026-10-25)
+
+The "Proposed endpoints" table below is **historical** (it describes the state
+before the backend integration work landed on `main`). Since then the
+document-application surface has been implemented with authentication, RBAC,
+institution tenant isolation, private storage, a fail-closed malware scan gate
+and durable jobs — the table's listed blockers except **retention**, which
+remains unimplemented and is still a production blocker:
+
+- Document upload, document/version/processing-status reads — implemented under
+  `/api/v1/applications/{application_id}/documents` (not `POST /api/v1/documents`)
+  with the nested `DocumentUploadResponse` shape (`document`, `version`, `job`,
+  `polling_url`); see `backend/app/api/v1/documents.py` and
+  `backend/tests/test_document_upload_api.py`.
+- Application CRUD and application-scoped validation/review/audit-package
+  routes — implemented under `/api/v1/applications/...`; see
+  `backend/app/api/v1/` and the corresponding unit suites.
+- `POST /api/v1/rules` and any rule evaluator — **still blocked** exactly as
+  described below (no verified rule source; no evaluator exists).
+- Server-side OCR as a standalone `POST /api/v1/ocr` route — **not implemented**;
+  extraction runs inside the document processing pipeline only.
+
+The authoritative request/response shapes for the implemented surface are the
+Pydantic schemas in `backend/app/schemas/` as reflected by the live
+`/openapi.json` of the running application and the unit tests that pin them.
+This addendum does not revise the historical table; when the two disagree for
+the implemented routes, the code + schemas above are the source of truth.
+
 ## Proposed endpoints — do not build against these
 
 | Endpoint | Status | Blocker |
