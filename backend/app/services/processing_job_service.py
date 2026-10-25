@@ -191,6 +191,12 @@ class ProcessingJobService:
             ver_cur = db.get(DocumentVersion, job.document_version_id) if job_cur else None
 
             if job_cur:
+                # The rollback above undid claim_job()'s attempt increment (it
+                # was part of the same transaction). Re-apply it so retry
+                # bookkeeping stays honest: without this, attempt_count never
+                # advances on transient failures, backoff never grows, and the
+                # MAX_RETRIES_EXCEEDED guard can never trigger.
+                job_cur.attempt_count += 1
                 is_transient = isinstance(exc, (IOError, TimeoutError, ConnectionError))
                 if is_transient and job_cur.attempt_count < job_cur.max_attempts:
                     backoff_sec = 2 ** job_cur.attempt_count * 5
