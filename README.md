@@ -1,8 +1,8 @@
 # AICTE Compliance Assistant
 
-A prototype for **preliminary checklist validation** and **advisory institutional-document
-OCR**. It does not authenticate documents, verify institutional status, or decide
-regulatory compliance.
+A prototype for **preliminary checklist validation**, **secure institutional-document
+intake**, and **advisory institutional-document OCR**. It does not authenticate
+documents, verify institutional status, or decide regulatory compliance.
 
 ## What is implemented
 
@@ -15,7 +15,35 @@ documents with `validation_scope: "caller_supplied_checklist_only"`.
 - `preliminary_checks_passed` means only that the supplied lists agree. It is not a
   compliance, eligibility, or authenticity finding.
 
-### 2. Advisory OCR — optional, local only
+### 2. Document intake pipeline (FastAPI + PostgreSQL)
+`backend/app/` implements an authenticated document intake and review pipeline:
+
+- **Authentication and RBAC** — JWT bearer auth, users and institution memberships,
+  three roles (`institution_admin`, `scrutiny_officer`, `auditor`) with
+  server-side permission checks (`backend/app/core/rbac.py`, `backend/app/api/deps.py`).
+- **Institution tenant isolation** — every application, document, review and
+  audit route resolves ownership server-side; cross-tenant reads are concealed
+  with `404` (`verify_institution_membership`), role denials use `403`.
+- **Private document storage** — opaque server-generated storage keys
+  (`docs/{prefix}/{uuid}{ext}`), directory-traversal and volume-qualified key
+  rejection, atomic writes (`backend/app/core/storage.py`).
+- **Upload validation** — size, extension, MIME and content checks with
+  deterministic rejection paths (`backend/app/core/upload_validator.py`).
+- **Fail-closed malware gate** — a ClamAV `clamd` INSTREAM client; when no
+  scanner is reachable the file stays quarantined and never reaches OCR
+  (`backend/app/core/scanner.py`).
+- **Asynchronous processing** — durable `ProcessingJob` state machine with
+  retry backoff and attempt limits, a transactional outbox dispatcher and a
+  Celery worker (`backend/app/worker/`); jobs run scan → PDF text extraction
+  or OCR → persisted evidence and advisory findings.
+- **Review workflow and audit packages** — attributable review actions
+  (acknowledge / comment / resolve / reopen / escalate), immutable validation
+  snapshots, and tamper-evident audit package export with Merkle root
+  verification (`backend/app/services/audit_package_service.py`).
+- **Persistence** — SQLAlchemy 2 models and Alembic migrations for SQLite
+  (local dev/tests) and PostgreSQL (integration and deployment).
+
+### 3. Advisory OCR — optional engine, local only
 `backend/app/ocr_pipeline.py` implements an engine-neutral OCR contract
 (`ocr_adapter.py`), an optional Tesseract adapter, field extraction for a small set
 of context-labelled institutional fields (English and selected Hindi labels), and a
@@ -27,14 +55,22 @@ JPEG/PNG/TIFF/WEBP only, a 100,000-character aggregate OCR text budget, strict I
 only, engine confidence confined to `0.0–1.0`, page/line/evidence provenance, source
 SHA-256, and `requires_human_review=True` on every result.
 
-- OCR output is evidence for a human reviewer, never proof of authenticity.
-- There is **no upload endpoint**, no persistence and no external call.
-- **No accuracy claim is made.** The fixture corpus is synthetic regression data, not a
-  labelled held-out benchmark; the Tesseract test is a synthetic smoke test.
-- PDFs are rejected as unsupported images. Multi-page/multi-frame files are processed
-  from the first frame only and now report a warning; submit pages separately. Bounding
-  boxes are not recorded. Hindi coverage is label extraction plus synthetic text
-  fixtures only — the optional engine test is English.
+- OCR output is evidence for a human reviewer, never proof of authenticity. The
+  pipeline is used inside the document intake flow **after** the clean-scan gate;
+  `extract_institution_fields` itself makes no external call.
+- **No real-world accuracy claim is made.** The corpora in `ai/corpus/` and
+  `backend/tests/fixtures/` are synthetic regression data (56 extraction cases +
+  30 OCR-corruption cases, all scored, 0 known gaps after the 2026-10-25
+  extractor rework), not a labelled held-out benchmark; the Tesseract test is a
+  synthetic smoke test. Every accuracy number in `ai/EVALUATION.md` describes
+  those synthetic corpora only.
+- PDF inputs to the OCR **adapter** are rejected as unsupported images; the
+  document pipeline extracts PDF text layers natively (pdfplumber). A scanned
+  PDF with no text layer yields no fields (reported as partial) — OCR fallback
+  on scanned PDFs is **not implemented**. Multi-page/multi-frame image files are processed from the first
+  frame only and report a warning; submit pages separately. Bounding boxes are
+  not recorded. Hindi coverage is label extraction plus synthetic text fixtures
+  only — the optional engine test is English.
 - Engine output is validated before use. `text` and `conf` are **required** columns and
   must be equal-length sequences; `page_num`/`line_num` are optional (default 1) but must
   align with `text` if present. A missing required column, a length mismatch, or a
@@ -44,7 +80,7 @@ SHA-256, and `requires_human_review=True` on every result.
   outside the Tesseract 0–100 percentage range is **dropped, never clamped or
   inflated**; valid values are scaled to the `0.0–1.0` contract.
 
-### 3. Rule catalogue and activation gate — no rules, no evaluator
+### 4. Rule catalogue and activation gate — no rules, no evaluator
 `backend/app/rule_catalog.py` defines metadata schemas plus a server-side activation
 gate. It is governance scaffolding, not a regulatory rules engine.
 
@@ -64,18 +100,32 @@ gate. It is governance scaffolding, not a regulatory rules engine.
 
 ## Not implemented (planned, not claimed)
 
-Frontend application, `ai/` extraction service, authentication/authorization/RBAC,
-institution-level tenant isolation, private document storage, malware scanning,
-persistent audit logging, retention/deletion controls, PDF/scan ingestion, a rule
-evaluator, an official-source verification workflow, and any AICTE integration.
+A frontend application (only API fixtures, a state matrix and a fixture checker
+exist under `frontend/`), an `ai/` production extraction service (the `ai/`
+package is an evaluation harness), a real-world labelled OCR benchmark, OCR
+fallback for scanned PDFs, bounding-box provenance, retention/deletion controls,
+a rule evaluator with **active** regulatory rules (the catalogue is empty and the
+activation gate is unpopulated), an official-source verification workflow, and
+any AICTE integration.
 
 ## Production blockers
 
-Public document upload and any production use remain blocked until authentication and
-RBAC, tenant isolation, private storage, malware scanning, durable audit, retention
-and deletion controls, and official-source verification of applicable AICTE documents
-and amendments are implemented and security-tested. Testing uses synthetic data only;
-no real institutional or personal documents are stored.
+Public document upload and any production use remain blocked until retention and
+deletion controls, official-source verification of applicable AICTE documents and
+amendments (Phase 0 research closure is still open), and live-deployment
+verification of the background worker, the real malware scanner and durable
+shared document storage are completed and security-tested. Testing uses synthetic
+data only; no real institutional or personal documents are stored.
+
+**Deployment note (as of 2026-10-25):** the codebase supports a dedicated Celery
+worker (`python -m celery -A backend.app.worker.celery_app worker`), a real
+ClamAV daemon (`CLAMAV_HOST`/`CLAMAV_PORT`) and PostgreSQL
+(`DATABASE_URL`), and CI exercises the full pipeline against real PostgreSQL,
+Redis and ClamAV services. The Render preview services have **not** been verified
+end-to-end from this workspace (no Render API access here): the backend preview
+URL answered with Render's cold-start page on 2026-10-25, and there is no
+configured worker service, no scanner daemon and no durable shared storage
+visible in the repository's deployment configuration.
 
 ## Quick start and a five-minute demo
 
@@ -85,8 +135,8 @@ Verified on a clean clone (Linux, Python 3.11.2; CI uses 3.12):
 python -m venv .venv && . .venv/bin/activate
 python -m pip install -r backend/requirements-dev.txt
 
-python -m pytest -q                                    # 223 passed, 1 skipped
-python -m pytest -q ai/tests                           # 17 passed
+python -m pytest -q                                    # 391 passed, 22 skipped
+python -m pytest -q ai/tests                           # 244 passed, 5 skipped
 python frontend/tools/verify_fixtures.py               # fixtures OK: 9 case(s)
 python ai/evaluate_extraction.py                       # synthetic report + caveat banner
 ruff check backend/ ai/ frontend/ tools/
@@ -128,18 +178,26 @@ is satisfied, that a document is authentic, or that OCR is accurate.
 | Area | State |
 |---|---|
 | Checklist validation API | **implemented**, tested, synthetic data only |
-| Advisory OCR pipeline (Python, no HTTP route) | **implemented**, unit + synthetic engine smoke test |
+| Auth, RBAC, institution tenancy | **implemented**, unit + live-PostgreSQL integration tested |
+| Document intake pipeline (upload validation, private storage, fail-closed scan gate, jobs/outbox/worker, review, audit packages) | **implemented**, tested against real PostgreSQL + Redis + ClamAV in CI |
+| Advisory OCR pipeline (Python) | **implemented**, unit + synthetic engine smoke test; 0 known gaps in the synthetic corpora |
 | Frontend | **no application**; fixtures, a 13-state matrix and a fixture checker exist |
 | AI/OCR evaluation | **synthetic corpus + scorer implemented**; no real-document benchmark |
 | Rule catalogue | **gate implemented, no rule defined or active, no evaluator** |
-| Auth, RBAC, tenancy, storage, upload, audit, retention | **not implemented** (production blockers) |
+| Retention/deletion controls | **not implemented** (production blocker) |
+| Live deployment (Render) | **unverified** from this workspace; see Production blockers |
 
 ## Requirements and local setup
 
 - **Python 3.11+** (the code uses `StrEnum`). CI runs **3.12**; `.python-version` pins
   3.12 for pyenv-style tools. Tested on Linux (CI and audit sandbox) and expected to
   work on macOS with the same commands; Windows is untested.
-- No database, container, Node or frontend toolchain is required — none is implemented.
+- No database, container, Node or frontend toolchain is required for the local
+  demo and unit suite — SQLite is the default and the frontend has no
+  application. The **live integration suite** (`backend/tests/integration`)
+  needs real PostgreSQL, Redis and optionally ClamAV
+  (`docker compose -f docker-compose.integration.yml up -d`); CI runs it
+  against service containers on every PR.
 
 ```bash
 python -m venv .venv
@@ -173,8 +231,10 @@ python -m pytest -q backend/tests/test_ocr_engine_integration.py
 python -m backend.app.ocr_cli path/to/synthetic-document.png --language eng
 ```
 
-No environment variables are read today; `.env.example` documents planned settings as
-comments only. `.env` and `.env.*` are git-ignored.
+Environment variables actually read by the code: `DATABASE_URL`, `JWT_SECRET_KEY`
+(required, ≥32 chars), `STORAGE_LOCAL_DIR`, `CLAMAV_HOST`/`CLAMAV_PORT`,
+`CELERY_BROKER_URL`/`REDIS_URL`, and `CELERY_TASK_ALWAYS_EAGER` (tests only).
+`.env.example` documents them without values. `.env` and `.env.*` are git-ignored.
 
 ## Tests
 
@@ -186,17 +246,23 @@ python -m pip install -r backend/requirements-dev.txt -r backend/requirements-oc
 python -m pytest -q backend/tests/test_ocr_engine_integration.py
 ```
 
-The `Backend tests` workflow runs three checks in the `backend-tests` job: the pytest
-suite, the AI extraction evaluation tests (`python -m pytest -q ai/tests`) and the frontend
-fixture verification (`python frontend/tools/verify_fixtures.py`). A separate
-`optional-ocr-integration` job installs Tesseract and runs the engine smoke test.
+The `Backend tests` workflow runs the pytest suite, the AI extraction evaluation
+tests (`python -m pytest -q ai/tests`) and the frontend fixture verification
+(`python frontend/tools/verify_fixtures.py`) in the `backend-tests` job. Separate
+jobs cover the optional Tesseract engine, the live PostgreSQL/Redis/ClamAV
+integration suite, and an independent live ClamAV probe (see **CI scope** below).
 
-**Known CI gap on the integration base.** `research/grounded-foundation` still filters
-`pull_request` to `["main"]`, so PRs opened against that branch get **no checks** — PRs #2
-and #4 have none. The one-line fix and its regression test exist on this branch and as a
-tested patch in `docs/development/patches/ci-pr-trigger.patch`; it takes effect only once
-it is merged into the base. Passing synthetic tests does not establish OCR accuracy,
-regulatory correctness, or production readiness.
+**CI scope.** The `Backend tests` workflow runs four jobs on every PR and push to
+`main`/`research/grounded-foundation`: the unit suite (`backend-tests`), the
+optional Tesseract smoke test (`optional-ocr-integration`), the live
+infrastructure suite against real PostgreSQL, Redis **and ClamAV** service
+containers (`real-infrastructure-integration`), and an independent live ClamAV
+job (`optional-clamav-integration`, non-blocking). Passing synthetic tests does
+not establish OCR accuracy, regulatory correctness, or production readiness.
+
+*(Historical)* An earlier CI gap — `pull_request` filtering that gave PRs
+against `research/grounded-foundation` no checks — was fixed and merged to
+`main`; the patch is preserved in `docs/development/patches/ci-pr-trigger.patch`.
 
 ## Working in this repository
 
