@@ -260,7 +260,7 @@ def test_postgres_validation_run_snapshots_and_reviews(live_postgres_engine: Eng
             action="resolve",
             previous_status="open",
             new_status="resolved",
-            resolution_rationale="issue_addressed",
+            comment="issue_addressed",
             rationale="Valid gazette extension verified by reviewer.",
         )
         session.add(action)

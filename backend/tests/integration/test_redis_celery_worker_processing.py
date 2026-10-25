@@ -207,10 +207,24 @@ def test_outbox_broker_failure_and_redispatch_recovery(
     )
     live_postgres_session.commit()
 
-    # Simulate broker failure by pointing to an unreachable broker port
-    orig_broker = celery_app.conf.broker_url
+    # Simulate broker failure by pointing to an unreachable broker port.
+    # Assigning conf.broker_url alone is a silent no-op in Celery 5.x:
+    # connection_for_write() reads conf.broker_write_url, and the AMQP layer
+    # caches its producer pool against the URL it first connected to. Both the
+    # read/write URLs and the cached pool must be replaced, otherwise the
+    # "unreachable" broker never takes effect and the failure injection is a
+    # false pass (this is how the test silently greened against the real
+    # broker for its whole history).
+    from kombu import pools as kombu_pools
+
+    orig_read = celery_app.conf.broker_read_url
+    orig_write = celery_app.conf.broker_write_url
+    dead_broker = "redis://127.0.0.1:59999/0"
     try:
-        celery_app.conf.broker_url = "redis://127.0.0.1:59999/0"
+        celery_app.conf.broker_read_url = dead_broker
+        celery_app.conf.broker_write_url = dead_broker
+        celery_app.amqp._producer_pool = None  # drop the cached pool bound to the real broker
+        kombu_pools.reset()
         celery_app.conf.task_always_eager = False
         success = dispatch_outbox_message(live_postgres_session, outbox_msg)
         assert success is False
@@ -218,9 +232,20 @@ def test_outbox_broker_failure_and_redispatch_recovery(
         live_postgres_session.refresh(outbox_msg)
         assert outbox_msg.status == "failed"
         assert outbox_msg.last_error is not None
-        assert "59999" in outbox_msg.last_error or "Error" in outbox_msg.last_error or "refused" in outbox_msg.last_error.lower()
+        # The recorded error must describe the broker unavailability in some
+        # form; the exact wording varies by transport (kombu OperationalError
+        # 'Connection refused', or Celery's 'Retry limit exceeded while trying
+        # to reconnect' once result-backend retries are exhausted).
+        error_lower = outbox_msg.last_error.lower()
+        assert any(
+            token in error_lower
+            for token in ("59999", "refused", "retry limit", "connection", "error")
+        ), outbox_msg.last_error
     finally:
-        celery_app.conf.broker_url = orig_broker
+        celery_app.conf.broker_read_url = orig_read
+        celery_app.conf.broker_write_url = orig_write
+        celery_app.amqp._producer_pool = None
+        kombu_pools.reset()
 
     # Recovery: restore broker connectivity and run dispatch_pending_outbox
     outbox_msg.status = "pending"
