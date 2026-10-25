@@ -84,6 +84,10 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5
+      clamav:
+        image: clamav/clamav:latest
+        ports:
+          - 3310:3310
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -102,6 +106,23 @@ jobs:
           DATABASE_URL: postgresql://aicte_test:aicte_test_pass@localhost:5432/aicte_test_db
         run: |
           python -m alembic -c backend/alembic.ini upgrade head
+      - name: Wait for ClamAV daemon readiness
+        run: |
+          python - <<'PY'
+          import socket, sys, time
+          deadline = time.time() + 150
+          while time.time() < deadline:
+              try:
+                  with socket.create_connection(("localhost", 3310), timeout=2) as sock:
+                      sock.sendall(b"zPING\0")
+                      if b"PONG" in sock.recv(1024):
+                          print("ClamAV daemon ready")
+                          sys.exit(0)
+              except OSError:
+                  pass
+              time.sleep(3)
+          sys.exit("ClamAV daemon did not become ready within 150s")
+          PY
       - name: Run real infrastructure integration test suite
         env:
           RUN_LIVE_INTEGRATION_TESTS: "true"
@@ -110,6 +131,12 @@ jobs:
           CELERY_BROKER_URL: redis://localhost:6379/1
           DATABASE_URL: postgresql://aicte_test:aicte_test_pass@localhost:5432/aicte_test_db
           REDIS_URL: redis://localhost:6379/1
+          # Real fail-closed ClamAV daemon for the scan gate (app config) and
+          # the live scanner probe (test config).
+          CLAMAV_HOST: localhost
+          CLAMAV_PORT: "3310"
+          AICTE_CLAMAV_HOST: localhost
+          AICTE_CLAMAV_PORT: "3310"
         run: |
           python -m pytest -v backend/tests/integration
       - name: Diagnostic dump on test failure
