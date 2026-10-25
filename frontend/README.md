@@ -1,32 +1,26 @@
-# Frontend workstream
+# AICTE Compliance Assistant — Frontend
 
-**Owner:** workstream A — **contributor not yet named** (see
-[`../WORKSTREAMS.md`](../WORKSTREAMS.md)).
-**Boundary:** this contributor works only in `frontend/` during independent development.
-**Status:** placeholder. No framework, build tooling or application has been selected or
-added. This directory contains documentation only.
+React 18 + TypeScript + Vite UI for the implemented preliminary-validation contract.
 
 ## Scope
 
-- Applicant and reviewer interface, navigation, forms and document/status views.
-- A clear distinction between preliminary automated checks, OCR observations and
-  human-approved decisions. The UI must never imply that an automated result is an
-  approval.
-- Evidence display, validation feedback, accessibility and responsive layout.
-- Frontend unit/component tests and synthetic mock data.
+- Checks backend liveness at `GET /health`.
+- Sends real checklist input to `POST /api/v1/validate`.
+- Displays missing-document and expiry findings returned by the API.
+- Clearly labels results as advisory and does not imply approval or authenticity verification.
+- Uses no hardcoded/mock success response.
 
-## Rules
+This is a prototype for preliminary checklist validation. Document upload/OCR processing, official AICTE rule evaluation, authentication, and human-review actions are not implemented in this UI.
 
-- Do not edit `backend/`, `ai/`, root configuration, `docs/` or `.github/` as part of
-  independent work. Propose shared changes in a separate PR.
-- Use mocked API responses until the backend owner publishes an agreed contract. The
-  contract is [`../docs/development/API_CONTRACT.md`](../docs/development/API_CONTRACT.md);
-  endpoints it marks **blocked** must not be mocked as if they exist.
-- Never treat client-side checks as authorization or compliance decisions. The server is
-  the only authority.
-- Do not include real institutional documents or personal data in fixtures.
-- Shared API changes go through a contract change and a separate integration PR.
+## Deploy
 
-## First task
+Build command: `npm ci && npm run build`
+Output directory: `dist`
+Root directory: `frontend`
 
-[`../docs/development/STARTER_TASKS.md`](../docs/development/STARTER_TASKS.md) — task A1.
+Set `VITE_API_BASE_URL` to the deployed backend origin. The backend must allow browser requests from the frontend origin (CORS). Keep the value empty only when the frontend and API share an origin or are routed through a same-origin reverse proxy.
+
+```bash
+npm ci
+npm run build
+```
