@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -178,13 +178,13 @@ def test_postgres_multi_tenant_isolation(live_postgres_engine: Engine) -> None:
         session.add_all([app_a, app_b])
         session.commit()
 
-        # Query via repository scoped by tenant
-        results_a = ApplicationRepository.list_by_institution(session, inst_a.id)
+        # Query via repository scoped by tenant (returns (records, total))
+        results_a, _total_a = ApplicationRepository.list_by_institution(session, inst_a.id)
         app_ids_a = {a.id for a in results_a}
         assert app_a.id in app_ids_a
         assert app_b.id not in app_ids_a
 
-        results_b = ApplicationRepository.list_by_institution(session, inst_b.id)
+        results_b, _total_b = ApplicationRepository.list_by_institution(session, inst_b.id)
         app_ids_b = {b.id for b in results_b}
         assert app_b.id in app_ids_b
         assert app_a.id not in app_ids_b
@@ -234,7 +234,8 @@ def test_postgres_validation_run_snapshots_and_reviews(live_postgres_engine: Eng
             application_id=app.id,
             status="succeeded",
             outcome="attention_required",
-            consumed_document_versions=snapshot,
+            evaluation_date=date(2026, 10, 25),
+            consumed_version_ids=snapshot,
             ruleset_version="2026.1-draft",
         )
         session.add(vrun)
@@ -242,11 +243,11 @@ def test_postgres_validation_run_snapshots_and_reviews(live_postgres_engine: Eng
 
         finding = Finding(
             validation_run_id=vrun.id,
-            finding_code="DOCUMENT_EXPIRED",
+            document_version_id=v1.id,
+            code="DOCUMENT_EXPIRED",
             severity="high",
             status="open",
-            document_type="aicte_approval",
-            message="Document expiry check flagged.",
+            summary="Document expiry check flagged.",
         )
         session.add(finding)
         session.commit()
@@ -256,10 +257,11 @@ def test_postgres_validation_run_snapshots_and_reviews(live_postgres_engine: Eng
             application_id=app.id,
             finding_id=finding.id,
             reviewer_id="reviewer@aicte.gov.in",
-            action="resolved",
+            action="resolve",
+            previous_status="open",
             new_status="resolved",
-            resolution_outcome="issue_addressed",
-            justification="Valid gazette extension verified by reviewer.",
+            resolution_rationale="issue_addressed",
+            rationale="Valid gazette extension verified by reviewer.",
         )
         session.add(action)
         finding.status = "resolved"
@@ -284,7 +286,7 @@ def test_postgres_validation_run_snapshots_and_reviews(live_postgres_engine: Eng
         # Query back and verify snapshot immutability
         re_run = session.get(ValidationRun, vrun.id)
         assert re_run is not None
-        assert json.loads(re_run.consumed_document_versions)[0]["sha256"] == v1.sha256
+        assert json.loads(re_run.consumed_version_ids)[0]["sha256"] == v1.sha256
 
         re_pkg = session.get(AuditPackage, pkg.id)
         assert re_pkg is not None

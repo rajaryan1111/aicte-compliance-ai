@@ -192,8 +192,9 @@ def test_full_application_workflow_end_to_end(
     )
     assert upload_res.status_code == 201, f"Upload failed: {upload_res.text}"
     upload_data = upload_res.json()
-    document_id = upload_data["document_id"]
-    version_id = upload_data["version_id"]
+    # DocumentUploadResponse nests the created records (document, version, job)
+    document_id = upload_data["document"]["id"]
+    version_id = upload_data["version"]["id"]
     polling_url = upload_data["polling_url"]
     assert document_id > 0
     assert version_id > 0
@@ -209,7 +210,8 @@ def test_full_application_workflow_end_to_end(
         poll_res = live_api_client.get(polling_url, headers=admin_headers)
         if poll_res.status_code == 200:
             job_status = poll_res.json()
-            if job_status.get("job", {}).get("state") in ("completed", "partial"):
+            # ProcessingJobStatusResponse is a flat status envelope
+            if job_status.get("state") in ("completed", "partial"):
                 is_completed = True
                 assert job_status["scan_status"] == "clean"
                 assert job_status["is_terminal"] is True
@@ -271,8 +273,9 @@ def test_full_application_workflow_end_to_end(
         )
         assert review_res.status_code == 201, f"Review action failed: {review_res.text}"
         review_data = review_res.json()
-        assert review_data["action"] == "acknowledge"
-        assert review_data["reviewer_username"] == scrutiny_user.username
+        # ReviewActionResponse nests the recorded action record
+        assert review_data["action"]["action"] == "acknowledge"
+        assert review_data["action"]["reviewer_id"] == scrutiny_user.username
 
     # -------------------------------------------------------------------------
     # Step 8: Security - Cross-Institution Tenant Access Denial
@@ -284,12 +287,14 @@ def test_full_application_workflow_end_to_end(
     foreign_token = foreign_login.json()["access_token"]
     foreign_headers = {"Authorization": f"Bearer {foreign_token}"}
 
-    # Foreign user must be DENIED access to institution A's application
+    # Foreign user must be DENIED access to institution A's application.
+    # Cross-tenant reads are concealed with 404 to prevent resource discovery
+    # (backend/app/api/deps.py::verify_institution_membership).
     foreign_get = live_api_client.get(
         f"/api/v1/applications/{application_id}",
         headers=foreign_headers,
     )
-    assert foreign_get.status_code == 403, "Foreign user was not denied access to cross-institution data"
+    assert foreign_get.status_code == 404, "Foreign user was not denied access to cross-institution data"
 
     # -------------------------------------------------------------------------
     # Step 9: Export Audit Package
@@ -305,7 +310,8 @@ def test_full_application_workflow_end_to_end(
     assert export_res.status_code == 201, f"Export failed: {export_res.text}"
     pkg_data = export_res.json()
     package_id = pkg_data["id"]
-    expected_root_hash = pkg_data["merkle_root_hash"]
+    # AuditPackageRead reports the Merkle root as sha256_root_hash
+    expected_root_hash = pkg_data["sha256_root_hash"]
 
     # -------------------------------------------------------------------------
     # Step 10: Download Audit Package Archive

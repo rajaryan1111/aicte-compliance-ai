@@ -67,19 +67,22 @@ def test_cross_institution_access_denial(
     token_b = login_b.json()["access_token"]
     headers_b = {"Authorization": f"Bearer {token_b}"}
 
-    # User B tries to read App A -> 403 Forbidden
+    # User B tries to read App A -> 404, concealed to prevent resource
+    # discovery (the implemented tenant-isolation contract in
+    # backend/app/api/deps.py::verify_institution_membership and the unit
+    # suite in test_auth_rbac.py: "404 (concealed)").
     res = live_api_client.get(f"/api/v1/applications/{app_a.id}", headers=headers_b)
-    assert res.status_code == 403
-    assert "Forbidden" in res.json().get("detail", "")
+    assert res.status_code == 404
+    assert "not found" in res.json().get("detail", "").lower()
 
-    # User B tries to upload to App A -> 403 Forbidden
+    # User B tries to upload to App A -> concealed the same way
     upload_res = live_api_client.post(
         f"/api/v1/applications/{app_a.id}/documents",
         headers=headers_b,
         data={"document_type": "land_record"},
         files={"file": ("test.pdf", b"%PDF-1.4 mock", "application/pdf")},
     )
-    assert upload_res.status_code == 403
+    assert upload_res.status_code == 404
 
     # Clean up
     live_postgres_session.delete(inst_a)
@@ -148,7 +151,9 @@ def test_authentication_rejection_invalid_or_expired_token(
     # 2. Corrupted/tampered token
     res2 = live_api_client.get("/api/v1/applications/1", headers={"Authorization": "Bearer not.a.valid.jwt.token"})
     assert res2.status_code == 401
-    assert "invalid" in res2.json()["detail"].lower()
+    # The implemented invalid-token wording (backend/app/api/deps.py); the
+    # message must not leak why the credential failed.
+    assert "could not validate authentication credentials" in res2.json()["detail"].lower()
 
     # 3. Expired token
     ts = int(_utc_now().timestamp())

@@ -414,8 +414,8 @@ def test_permanent_malware_detection_reaches_terminal_failure(
         def scan(self, file_bytes: bytes, filename: str) -> ScanResult:
             return ScanResult(
                 status=ScanStatus.REJECTED,
+                scanner_name="clamav-test-double",
                 details="Win.Test.EICAR_HDB-1 FOUND",
-                engine_version="ClamAV 1.4.1",
             )
 
     class SimpleStorage:
