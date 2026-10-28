@@ -616,3 +616,299 @@ export async function seedBackendDemo(): Promise<ApiResult<{ status: string; dem
     };
   }
 }
+
+
+// ── Issuing Authority & Regulatory Compliance Types ───────────────
+
+export type IssuingAuthorityVerificationStatus =
+  | "verified"
+  | "mismatch_detected"
+  | "expired"
+  | "verification_pending"
+  | "source_unavailable"
+  | "verification_inconclusive"
+  | "not_attempted"
+  | "manual_review_required"
+  | "simulated_demo";
+
+export interface VerificationAttempt {
+  id: number;
+  application_id: number;
+  document_version_id: number;
+  attempt_reference: string;
+  adapter_name: string;
+  source_title: string;
+  is_official_source: boolean;
+  status: IssuingAuthorityVerificationStatus;
+  submitted_attributes: Record<string, unknown>;
+  returned_attributes: Record<string, unknown>;
+  failure_reason: string | null;
+  source_reference: string | null;
+  actor_id: string;
+  created_at: string;
+}
+
+export interface VerificationAdapterInfo {
+  adapter_name: string;
+  source_title: string;
+  is_official_source: boolean;
+  supported_categories: string[];
+}
+
+export interface InfrastructureItem {
+  evidence_type: string;
+  document_version_id: number;
+  declared_area_sqm: number | null;
+  observed_area_sqm: number | null;
+  inspection_recommended: boolean;
+  inspection_rationale: string | null;
+  analysis_metadata: Record<string, unknown>;
+}
+
+export interface InfrastructureReviewResponse {
+  application_id: number;
+  overall_status: string;
+  physical_inspection_recommended: boolean;
+  inspection_reasons: string[];
+  items: InfrastructureItem[];
+  evaluated_at: string;
+}
+
+export interface RecordComparisonItem {
+  record_type: string;
+  source_category: string;
+  source_reference: string | null;
+  claim_value: unknown;
+  authorized_value: unknown;
+  matched: boolean;
+  discrepancy_explanation: string | null;
+  limitations: string[];
+}
+
+export interface InstitutionalComparisonResponse {
+  application_id: number;
+  institution_id: string;
+  overall_consistency: string;
+  comparisons: RecordComparisonItem[];
+  evaluated_at: string;
+}
+
+export interface FieldCorrectionResponse {
+  field_name: string;
+  previous_value: string | null;
+  corrected_value: string;
+  corrected_by: string;
+  corrected_at: string;
+  message: string;
+}
+
+// ── Issuing Authority & Compliance API Client Functions ──────────
+
+export async function fetchVerificationAdapters(): Promise<ApiResult<VerificationAdapterInfo[]>> {
+  try {
+    const { response: res, body, parseError } = await fetchJson(apiUrl("/api/v1/compliance/verification-adapters"));
+    if (res.ok && !parseError && Array.isArray(body)) {
+      return { ok: true, data: body as VerificationAdapterInfo[] };
+    }
+    return {
+      ok: false,
+      kind: "server",
+      status: res.status,
+      errors: { _server: `Could not retrieve adapters (${res.status}).` },
+      raw: body,
+    };
+  } catch {
+    return {
+      ok: false,
+      kind: "network",
+      status: 0,
+      errors: { _network: "Unable to reach adapter catalog." },
+    };
+  }
+}
+
+export async function verifyDocumentVersion(
+  applicationId: number,
+  documentId: number,
+  versionId: number,
+  token: string,
+  adapterName?: string,
+  forceSimulated = false
+): Promise<ApiResult<VerificationAttempt>> {
+  try {
+    const { response: res, body, parseError } = await fetchJson(
+      apiUrl(`/api/v1/compliance/applications/${applicationId}/documents/${documentId}/versions/${versionId}/verify`),
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          adapter_name: adapterName || null,
+          force_simulated: forceSimulated,
+        }),
+      }
+    );
+
+    if (res.ok && !parseError && isRecord(body)) {
+      return { ok: true, data: body as unknown as VerificationAttempt };
+    }
+    return {
+      ok: false,
+      kind: "server",
+      status: res.status,
+      errors: { _server: `Verification failed (${res.status}).` },
+      raw: body,
+    };
+  } catch {
+    return {
+      ok: false,
+      kind: "network",
+      status: 0,
+      errors: { _network: "Network error during issuing authority verification." },
+    };
+  }
+}
+
+export async function fetchApplicationVerifications(
+  applicationId: number,
+  token: string
+): Promise<ApiResult<VerificationAttempt[]>> {
+  try {
+    const { response: res, body, parseError } = await fetchJson(
+      apiUrl(`/api/v1/compliance/applications/${applicationId}/verifications`),
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+
+    if (res.ok && !parseError && Array.isArray(body)) {
+      return { ok: true, data: body as VerificationAttempt[] };
+    }
+    return {
+      ok: false,
+      kind: "server",
+      status: res.status,
+      errors: { _server: `Could not fetch verifications (${res.status}).` },
+      raw: body,
+    };
+  } catch {
+    return {
+      ok: false,
+      kind: "network",
+      status: 0,
+      errors: { _network: "Network error retrieving verification attempts." },
+    };
+  }
+}
+
+export async function executeInfrastructureReview(
+  applicationId: number,
+  token: string
+): Promise<ApiResult<InfrastructureReviewResponse>> {
+  try {
+    const { response: res, body, parseError } = await fetchJson(
+      apiUrl(`/api/v1/compliance/applications/${applicationId}/infrastructure/review`),
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+
+    if (res.ok && !parseError && isRecord(body)) {
+      return { ok: true, data: body as unknown as InfrastructureReviewResponse };
+    }
+    return {
+      ok: false,
+      kind: "server",
+      status: res.status,
+      errors: { _server: `Infrastructure review failed (${res.status}).` },
+      raw: body,
+    };
+  } catch {
+    return {
+      ok: false,
+      kind: "network",
+      status: 0,
+      errors: { _network: "Network error during infrastructure evaluation." },
+    };
+  }
+}
+
+export async function fetchInstitutionalRecordComparison(
+  applicationId: number,
+  token: string
+): Promise<ApiResult<InstitutionalComparisonResponse>> {
+  try {
+    const { response: res, body, parseError } = await fetchJson(
+      apiUrl(`/api/v1/compliance/applications/${applicationId}/institutional-records`),
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+
+    if (res.ok && !parseError && isRecord(body)) {
+      return { ok: true, data: body as unknown as InstitutionalComparisonResponse };
+    }
+    return {
+      ok: false,
+      kind: "server",
+      status: res.status,
+      errors: { _server: `Comparison request failed (${res.status}).` },
+      raw: body,
+    };
+  } catch {
+    return {
+      ok: false,
+      kind: "network",
+      status: 0,
+      errors: { _network: "Network error during historical record comparison." },
+    };
+  }
+}
+
+export async function submitFieldCorrection(
+  applicationId: number,
+  documentId: number,
+  versionId: number,
+  fieldName: string,
+  correctedValue: string,
+  rationale: string,
+  token: string
+): Promise<ApiResult<FieldCorrectionResponse>> {
+  try {
+    const { response: res, body, parseError } = await fetchJson(
+      apiUrl(`/api/v1/compliance/applications/${applicationId}/documents/${documentId}/versions/${versionId}/fields/${fieldName}`),
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          corrected_value: correctedValue,
+          rationale,
+        }),
+      }
+    );
+
+    if (res.ok && !parseError && isRecord(body)) {
+      return { ok: true, data: body as unknown as FieldCorrectionResponse };
+    }
+    return {
+      ok: false,
+      kind: "server",
+      status: res.status,
+      errors: { _server: `Field correction rejected (${res.status}).` },
+      raw: body,
+    };
+  } catch {
+    return {
+      ok: false,
+      kind: "network",
+      status: 0,
+      errors: { _network: "Network error submitting field correction." },
+    };
+  }
+}

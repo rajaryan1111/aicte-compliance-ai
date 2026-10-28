@@ -225,6 +225,9 @@ app.include_router(validation_router, prefix="/api/v1/applications", tags=["vali
 app.include_router(reviews_router, prefix="/api/v1", tags=["reviews"])
 app.include_router(audit_packages_router, prefix="/api/v1", tags=["audit-packages"])
 
+from backend.app.api.v1.compliance import router as compliance_router  # noqa: E402
+app.include_router(compliance_router, prefix="/api/v1/compliance", tags=["compliance"])
+
 
 # ---------------------------------------------------------------------------
 # Document Analysis & Prototype History Integration
@@ -427,6 +430,13 @@ def seed_demo_data(db: Session = Depends(get_db)) -> dict:
     - username: admin / password: admin123456
     - username: reviewer / password: reviewer123456
     """
+    env = os.getenv("ENVIRONMENT", "development").lower()
+    enable_demo = os.getenv("ENABLE_DEMO_ENDPOINTS", "true" if env != "production" else "false").lower() == "true"
+    if not enable_demo:
+        raise HTTPException(
+            status_code=403,
+            detail="Demo bootstrap endpoint is disabled in production environments.",
+        )
     from backend.app.db.base import Base
     from backend.app.db.models import User, Institution, InstitutionMembership
     from backend.app.core.security import get_password_hash

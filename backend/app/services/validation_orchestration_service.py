@@ -62,8 +62,15 @@ def _utc_now() -> datetime:
 class ValidationOrchestrationService:
     """Orchestrates multi-document pre-scrutiny validation for an authorized application."""
 
-    def __init__(self, rule_registry: RuleRegistry | None = None) -> None:
+    def __init__(
+        self,
+        rule_registry: RuleRegistry | None = None,
+        load_aph_rules: bool = False,
+    ) -> None:
         self.rule_registry = rule_registry or RuleRegistry()
+        if load_aph_rules:
+            from backend.app.services.rule_engine import RuleEngineService
+            RuleEngineService(self.rule_registry)
 
     def run_validation(
         self,
@@ -704,21 +711,110 @@ class ValidationOrchestrationService:
             )
             check_results.append(cr)
 
+        # Check F2: Cross-Institution Hash Provenance Check
+        cross_app_collision = False
+        for doc_type_f2, ver_f2 in eligible_versions.items():
+            if ver_f2.sha256:
+                other_apps_stmt = (
+                    select(Application)
+                    .join(Document, Document.application_id == Application.id)
+                    .join(DocumentVersion, DocumentVersion.document_id == Document.id)
+                    .where(
+                        DocumentVersion.sha256 == ver_f2.sha256,
+                        Application.institution_id != app.institution_id,
+                    )
+                )
+                other_apps = list(db.scalars(other_apps_stmt).all())
+                if other_apps:
+                    cross_app_collision = True
+                    other_inst_ids = sorted({str(oa.institution_id) for oa in other_apps})
+                    cr = ValidationRepository.create_check_result(
+                        db,
+                        validation_run_id=run.id,
+                        check_id="CHECK_CROSS_APPLICATION_DUPLICATES",
+                        check_name="Cross-Institution Hash Provenance Check",
+                        category="provenance",
+                        status="failed",
+                        document_version_id=ver_f2.id,
+                        message=f"Document '{doc_type_f2}' has identical hash to document submitted by other institution(s): {other_inst_ids}.",
+                        evidence=json.dumps({"sha256": ver_f2.sha256, "conflicting_institutions": other_inst_ids}),
+                    )
+                    check_results.append(cr)
+                    f = ValidationRepository.create_finding(
+                        db,
+                        validation_run_id=run.id,
+                        document_version_id=ver_f2.id,
+                        code="CROSS_INSTITUTION_HASH_COLLISION",
+                        severity="warning",
+                        summary=f"Document '{doc_type_f2}' matches file submitted by another institution; potential unauthorized document reuse.",
+                        evidence=json.dumps({"sha256": ver_f2.sha256, "institutions": other_inst_ids}),
+                    )
+                    findings.append(f)
+        if not cross_app_collision and eligible_versions:
+            cr = ValidationRepository.create_check_result(
+                db,
+                validation_run_id=run.id,
+                check_id="CHECK_CROSS_APPLICATION_DUPLICATES",
+                check_name="Cross-Institution Hash Provenance Check",
+                category="provenance",
+                status="passed",
+                document_version_id=None,
+                message="No cross-institution document hash collisions detected.",
+            )
+            check_results.append(cr)
+
         # Check H: Statutory AICTE Rules Check
-        cr_statutory = ValidationRepository.create_check_result(
-            db,
-            validation_run_id=run.id,
-            check_id="CHECK_OFFICIAL_REGULATORY_RULES",
-            check_name="Statutory Regulatory Compliance Gate",
-            category="regulatory",
-            status="not_run" if not applicable_rules else "passed",
-            document_version_id=None,
-            message="Official regulatory rules are inactive or unverified. Statutory rule evaluation not run."
-            if not applicable_rules
-            else f"Evaluated against {len(applicable_rules)} active approved rule versions.",
-            limitations=json.dumps(limitations),
-        )
-        check_results.append(cr_statutory)
+        if not applicable_rules:
+            cr_statutory = ValidationRepository.create_check_result(
+                db,
+                validation_run_id=run.id,
+                check_id="CHECK_OFFICIAL_REGULATORY_RULES",
+                check_name="Statutory Regulatory Compliance Gate",
+                category="regulatory",
+                status="not_run",
+                document_version_id=None,
+                message="Official regulatory rules are inactive or unverified. Statutory rule evaluation not run.",
+                limitations=json.dumps(limitations),
+            )
+            check_results.append(cr_statutory)
+        else:
+            from backend.app.services.rule_engine import RuleEngineService, RuleEvaluationContext
+            rule_svc = RuleEngineService(self.rule_registry)
+            eval_ctx = RuleEvaluationContext(
+                application_id=app.id,
+                application_type=app.application_type,
+                academic_year=app.academic_year,
+                institution_id=app.institution.institution_id if app.institution else str(app.institution_id),
+                evaluation_date=eval_date,
+                eligible_versions=eligible_versions,
+            )
+            rule_eval_results = rule_svc.evaluate_rules(eval_ctx)
+            for r_res in rule_eval_results:
+                cr_rule = ValidationRepository.create_check_result(
+                    db,
+                    validation_run_id=run.id,
+                    check_id=f"RULE_{r_res.rule_id}",
+                    check_name=f"{r_res.rule_id} ({r_res.clause_citation})",
+                    category="regulatory",
+                    status=r_res.status if r_res.status in ("passed", "failed", "inconclusive", "not_applicable", "not_run") else "inconclusive",
+                    document_version_id=r_res.document_version_id,
+                    message=r_res.message,
+                    evidence=json.dumps(r_res.evidence),
+                    limitations=json.dumps(r_res.limitations) if r_res.limitations else None,
+                )
+                check_results.append(cr_rule)
+
+                if r_res.status in ("failed", "inconclusive", "trigger_unevaluable"):
+                    f_rule = ValidationRepository.create_finding(
+                        db,
+                        validation_run_id=run.id,
+                        document_version_id=r_res.document_version_id,
+                        code=f"REGULATORY_DEFICIENCY_{r_res.rule_id}",
+                        severity=r_res.severity,
+                        summary=r_res.message,
+                        evidence=json.dumps(r_res.evidence),
+                    )
+                    findings.append(f_rule)
 
         # ----------------------------------------------------------------------
         # Stage 4: Summary Counts and Outcome Synthesis

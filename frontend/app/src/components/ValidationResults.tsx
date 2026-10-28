@@ -12,6 +12,7 @@ import { RequestComparison } from "./RequestComparison";
 import { NilDeficiencyGapPredictor } from "./NilDeficiencyGapPredictor";
 import { ExpiryWatchdogMatrix } from "./ExpiryWatchdogMatrix";
 import { ScrutinyDossierModal } from "./ScrutinyDossierModal";
+import { RegulatoryScrutinyWorkbench } from "./RegulatoryScrutinyWorkbench";
 import type { ValidationRequest, ValidationResponse } from "@/lib/api";
 import { downloadValidationCsv } from "@/lib/report";
 
@@ -81,6 +82,15 @@ export function ValidationResults({ data, request, onReset }: ValidationResultsP
           institutionId={data.institution_id}
         />
       )}
+
+      
+      {/* Flagship Feature: AICTE Regulatory Scrutiny Decision-Support Workbench */}
+      <RegulatoryScrutinyWorkbench
+        institutionId={data.institution_id}
+        applicationType={data.application_type}
+        submittedDocuments={request.submitted_documents}
+        expiryDates={request.expiry_dates}
+      />
 
       {/* Official Scrutiny Dossier Package Modal */}
       <ScrutinyDossierModal

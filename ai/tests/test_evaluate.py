@@ -706,6 +706,7 @@ def test_cli_engine_flag_runs_a_bake_off_and_keeps_check_semantics(tmp_path: Pat
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         cwd=REPO_ROOT,
         env=env,
     )
@@ -725,6 +726,7 @@ def test_cli_engine_flag_runs_a_bake_off_and_keeps_check_semantics(tmp_path: Pat
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         cwd=REPO_ROOT,
         env=env,
     )
@@ -846,6 +848,7 @@ def test_cli_normalize_flag_prints_diagnosis_and_keeps_exit_codes():
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         cwd=REPO_ROOT,
     )
     assert with_check.returncode == 0

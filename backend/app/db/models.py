@@ -61,6 +61,9 @@ class Institution(Base):
     memberships: Mapped[list[InstitutionMembership]] = relationship(
         back_populates="institution", cascade="all, delete-orphan"
     )
+    record_snapshots: Mapped[list[InstitutionalRecordSnapshot]] = relationship(
+        back_populates="institution", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<Institution(id={self.id}, institution_id={self.institution_id!r})>"
@@ -99,6 +102,12 @@ class Application(Base):
         back_populates="application", cascade="all, delete-orphan"
     )
     audit_packages: Mapped[list[AuditPackage]] = relationship(
+        back_populates="application", cascade="all, delete-orphan"
+    )
+    verification_attempts: Mapped[list[VerificationAttempt]] = relationship(
+        back_populates="application", cascade="all, delete-orphan"
+    )
+    infrastructure_evidence: Mapped[list[InfrastructureEvidence]] = relationship(
         back_populates="application", cascade="all, delete-orphan"
     )
 
@@ -198,6 +207,12 @@ class DocumentVersion(Base):
         back_populates="document_version", cascade="all, delete-orphan"
     )
     processing_jobs: Mapped[list[ProcessingJob]] = relationship(
+        back_populates="document_version", cascade="all, delete-orphan"
+    )
+    verification_attempts: Mapped[list[VerificationAttempt]] = relationship(
+        back_populates="document_version", cascade="all, delete-orphan"
+    )
+    infrastructure_evidence: Mapped[list[InfrastructureEvidence]] = relationship(
         back_populates="document_version", cascade="all, delete-orphan"
     )
 
@@ -623,3 +638,113 @@ class OutboxMessage(Base):
             f"status={self.status!r}, retries={self.retry_count})>"
         )
 
+
+
+class VerificationAttempt(Base):
+    """Traceable issuing-authority verification attempt and comparison record."""
+
+    __tablename__ = "verification_attempts"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    application_id: Mapped[int] = mapped_column(
+        ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    document_version_id: Mapped[int] = mapped_column(
+        ForeignKey("document_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    attempt_reference: Mapped[str] = mapped_column(
+        String(100), unique=True, nullable=False, index=True
+    )
+    adapter_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    source_title: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_official_source: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(50), default="not_attempted", nullable=False, index=True
+    )
+    submitted_attributes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    returned_attributes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    actor_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, nullable=False
+    )
+
+    # Relationships
+    application: Mapped[Application] = relationship(back_populates="verification_attempts")
+    document_version: Mapped[DocumentVersion] = relationship(
+        back_populates="verification_attempts"
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<VerificationAttempt(id={self.id}, adapter={self.adapter_name!r}, "
+            f"status={self.status!r}, ref={self.attempt_reference!r})>"
+        )
+
+
+class InstitutionalRecordSnapshot(Base):
+    """Versioned snapshot of authorized institutional records (past EoA, intake, NBA, TER)."""
+
+    __tablename__ = "institutional_record_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    institution_id: Mapped[int] = mapped_column(
+        ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    record_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    source_category: Mapped[str] = mapped_column(
+        String(50), default="unavailable", nullable=False
+    )
+    source_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    record_data: Mapped[str] = mapped_column(Text, nullable=False)
+    limitations: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retrieved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, nullable=False
+    )
+
+    # Relationships
+    institution: Mapped[Institution] = relationship(back_populates="record_snapshots")
+
+    def __repr__(self) -> str:
+        return (
+            f"<InstitutionalRecordSnapshot(id={self.id}, inst={self.institution_id}, "
+            f"type={self.record_type!r}, source={self.source_category!r})>"
+        )
+
+
+class InfrastructureEvidence(Base):
+    """Infrastructure documentary & visual evidence tracking and inspection flags."""
+
+    __tablename__ = "infrastructure_evidence"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    application_id: Mapped[int] = mapped_column(
+        ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    document_version_id: Mapped[int] = mapped_column(
+        ForeignKey("document_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    evidence_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    declared_area_sqm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    observed_area_sqm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    inspection_recommended: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, index=True
+    )
+    inspection_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    analysis_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, nullable=False
+    )
+
+    # Relationships
+    application: Mapped[Application] = relationship(back_populates="infrastructure_evidence")
+    document_version: Mapped[DocumentVersion] = relationship(
+        back_populates="infrastructure_evidence"
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<InfrastructureEvidence(id={self.id}, type={self.evidence_type!r}, "
+            f"inspection={self.inspection_recommended})>"
+        )
