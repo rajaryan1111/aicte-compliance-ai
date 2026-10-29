@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.db.models import Application, DocumentVersion, InfrastructureEvidence
+from backend.app.core.storage import get_storage_backend
 from backend.app.ocr_adapter import parse_iso_date_candidate
 from backend.app.repositories.review_audit_repository import ReviewAuditRepository
 
@@ -169,13 +170,39 @@ class InfrastructureReviewService:
             metadata["issue"] = "quarantined_file"
 
         elif doc_type in ("campus_photo", "laboratory_photo"):
-            # Image photo checks
-            if version.byte_size < 50_000:
-                inspection_recommended = True
-                rationale = f"Infrastructure photo '{doc_type}' resolution is unusually low ({version.byte_size} bytes); physical verification required."
-                metadata["photo_quality"] = "low_resolution"
-            else:
-                metadata["photo_quality"] = "acceptable"
+            # Image photo quality checks using pixel dimensions
+            metadata["photo_quality"] = "acceptable"
+            storage = get_storage_backend()
+            image_inspected = False
+            try:
+                if storage.exists(version.storage_key):
+                    import io
+                    from PIL import Image as PILImage
+                    file_bytes = storage.read(version.storage_key)
+                    try:
+                        with PILImage.open(io.BytesIO(file_bytes)) as img:
+                            w, h = img.size
+                            metadata["dimensions"] = f"{w}x{h}"
+                            metadata["image_format"] = img.format
+                            image_inspected = True
+                            if w < 640 or h < 480:
+                                inspection_recommended = True
+                                rationale = f"Infrastructure photo '{doc_type}' resolution ({w}x{h}) is below minimum 640x480 standard; physical verification required."
+                                metadata["photo_quality"] = "low_resolution"
+                    except Exception as img_exc:
+                        inspection_recommended = True
+                        rationale = f"Infrastructure photo '{doc_type}' is unreadable or corrupted ({img_exc}); physical inspection required."
+                        metadata["photo_quality"] = "corrupted"
+                        image_inspected = True
+            except Exception as storage_exc:
+                logger.warning("Could not read image from storage: %s", storage_exc)
+
+            if not image_inspected:
+                if version.byte_size < 50_000:
+                    inspection_recommended = True
+                    rationale = f"Infrastructure photo '{doc_type}' resolution is unusually low ({version.byte_size} bytes); physical verification required."
+                    metadata["photo_quality"] = "low_detail"
+                    metadata["limitations"] = "Evaluated via byte-size metric; storage file unavailable for pixel inspection."
 
         elif doc_type == "building_plan":
             # Building blueprint: evaluate extractable areas
@@ -192,7 +219,7 @@ class InfrastructureReviewService:
                 exp_date = parse_iso_date_candidate(exp_field.normalized_value)
                 if exp_date and exp_date < datetime.now(timezone.utc).date():
                     inspection_recommended = True
-                    rationale = f"Building structural stability certificate has expired ({exp_date.isoformat()}); mandatory EVC physical inspection triggered."
+                    rationale = f"Building structural stability certificate has expired ({exp_date.isoformat()}); mandatory EVC physical inspection triggered (APH Annexure-2 §2.1(iv))."
 
         return InfrastructureReviewItem(
             evidence_type=doc_type,

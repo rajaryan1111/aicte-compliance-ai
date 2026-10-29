@@ -1195,7 +1195,7 @@ class TestTesseractPSMConfiguration:
         engine.engine_name = "tesseract-psm3"
         engine.engine_version = "5.5.3"
 
-        import pytesseract
+        pytesseract = pytest.importorskip("pytesseract")
 
         data = {
             "text": ["Institution", "Name:", "Alpha", "Certificate", "No:", "CERT/2026/0001"],

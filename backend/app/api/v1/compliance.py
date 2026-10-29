@@ -307,3 +307,20 @@ def correct_extracted_field(
         corrected_at=now,
         message="Field correction saved with attributable audit record.",
     )
+
+
+# ---------------------------------------------------------------------------
+# 5. Data Retention & Privacy Enforcement Endpoint
+# ---------------------------------------------------------------------------
+@router.post(
+    "/retention/purge",
+    summary="Trigger retention policy enforcement pass",
+    tags=["retention"],
+)
+def trigger_retention_purge(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    """Execute scheduled retention pass: purge stale quarantined files and temporary processing jobs."""
+    from backend.app.services.retention_service import RetentionService
+    return RetentionService.run_scheduled_retention_pass(db, actor_id=current_user.username)

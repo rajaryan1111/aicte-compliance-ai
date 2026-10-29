@@ -488,3 +488,20 @@ def test_revalidation_preserves_immutable_historical_runs(db_session: Session, s
 
     assert any(f.code == "DOCUMENT_EXPIRED" for f in run1_findings)
     assert not any(f.code == "DOCUMENT_EXPIRED" for f in run2_findings)
+
+
+def test_official_regulatory_rules_executed_when_rules_loaded(db_session: Session, sample_application: Application):
+    """When approved official AICTE rules are loaded, they are evaluated against application documents."""
+    service = ValidationOrchestrationService(load_aph_rules=True)
+    run = service.run_validation(db_session, sample_application.id)
+
+    check_results = ValidationRepository.list_check_results_for_run(db_session, run.id)
+    rule_checks = [c for c in check_results if c.check_id.startswith("RULE_")]
+    assert len(rule_checks) >= 5
+
+    rule_ids = {c.check_id for c in rule_checks}
+    assert "RULE_APH_2024_FIRE_SAFETY" in rule_ids
+    assert "RULE_APH_2024_STRUCTURAL_STABILITY" in rule_ids
+    assert "RULE_APH_2024_BUILDING_OCCUPANCY" in rule_ids
+    assert "RULE_APH_2024_LAND_TITLE" in rule_ids
+    assert "RULE_APH_2024_MANDATORY_AFFIDAVIT" in rule_ids

@@ -95,3 +95,25 @@ class RetentionService:
         result = db.execute(stmt)
         db.commit()
         return int(result.rowcount or 0)
+
+    @classmethod
+    def run_scheduled_retention_pass(
+        cls,
+        db: Session,
+        storage: StorageBackend | None = None,
+        quarantine_retention_days: int = DEFAULT_QUARANTINE_RETENTION_DAYS,
+        job_retention_days: int = 14,
+        actor_id: str = "retention_scheduler",
+    ) -> dict[str, Any]:
+        """Execute scheduled retention pass purging stale quarantined files and completed jobs."""
+        purged = cls.purge_stale_quarantined_files(
+            db, storage=storage, max_age_days=quarantine_retention_days, actor_id=actor_id
+        )
+        cleaned = cls.cleanup_old_processing_jobs(
+            db, completed_retention_days=job_retention_days
+        )
+        return {
+            "quarantined_purged": purged,
+            "jobs_cleaned": cleaned,
+            "executed_at": _utc_now().isoformat(),
+        }
