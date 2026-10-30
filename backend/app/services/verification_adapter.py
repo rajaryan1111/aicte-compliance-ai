@@ -15,6 +15,7 @@ import logging
 import os
 import re
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 import httpx
 
@@ -33,6 +34,65 @@ VerificationStatus = Literal[
     "manual_review_required",
     "simulated_demo",
 ]
+
+
+class AuthorityEndpointSecurity:
+    """Validates external authority endpoints against TLS requirements and administrator allowlists."""
+
+    DEFAULT_ALLOWED_DOMAINS: tuple[str, ...] = (
+        ".gov.in",
+        ".nic.in",
+        ".ac.in",
+        ".digitallocker.gov.in",
+    )
+
+    @classmethod
+    def get_allowed_domains(cls) -> set[str]:
+        domains = set(cls.DEFAULT_ALLOWED_DOMAINS)
+        extra = os.getenv("ALLOWED_AUTHORITY_DOMAINS", "")
+        for d in extra.split(","):
+            clean = d.strip().lower()
+            if clean:
+                domains.add(clean if clean.startswith(".") else f".{clean}")
+        return domains
+
+    @classmethod
+    def validate_endpoint_url(cls, url: str | None, allow_insecure_for_test: bool = False) -> tuple[bool, str | None]:
+        """Validate that the authority endpoint uses TLS and belongs to an authorized authority domain."""
+        if not url or not isinstance(url, str) or not url.strip():
+            return False, "Endpoint URL is empty or not configured."
+
+        clean_url = url.strip()
+        try:
+            parsed = urlparse(clean_url)
+        except Exception as exc:
+            return False, f"Malformed endpoint URL: {exc}"
+
+        if not parsed.scheme or not parsed.netloc:
+            return False, "Endpoint URL is missing scheme or hostname."
+
+        is_test_env = (
+            allow_insecure_for_test
+            or os.getenv("ALLOW_INSECURE_AUTHORITY_ENDPOINTS", "false").lower() in ("true", "1")
+            or "127.0.0.1" in parsed.netloc
+            or "localhost" in parsed.netloc
+        )
+
+        if parsed.scheme.lower() != "https" and not is_test_env:
+            return False, "Official authority endpoint requires HTTPS (TLS) encryption."
+
+        hostname = parsed.hostname.lower() if parsed.hostname else ""
+        if is_test_env:
+            return True, None
+
+        allowed_domains = cls.get_allowed_domains()
+        if not any(hostname.endswith(domain) or hostname == domain.lstrip(".") for domain in allowed_domains):
+            return False, (
+                f"Hostname '{hostname}' is not in the administrator-verified authority allowlist "
+                f"({', '.join(sorted(allowed_domains))}). Arbitrary endpoints are rejected for safety."
+            )
+
+        return True, None
 
 
 @dataclass(frozen=True)
@@ -113,6 +173,7 @@ class DigiLockerIssuerAdapter(IssuingAuthorityAdapter):
         )
 
     def verify(self, req: VerificationRequestPayload) -> VerificationResultPayload:
+        # Preserve privacy: send minimal essential attributes only
         submitted = {
             "certificate_number": req.certificate_number,
             "document_category": req.document_category,
@@ -142,7 +203,7 @@ class DigiLockerIssuerAdapter(IssuingAuthorityAdapter):
                     source_title=f"{self.source_title} (Sandbox Simulation)",
                     is_official_source=False,
                     status="mismatch_detected",
-                    source_reference=f"DL-MOCK-{abs(hash(clean_num)) % 100000}",
+                    source_reference=None,
                     submitted_attributes=submitted,
                     returned_attributes={"record_status": "record_not_found"},
                     failure_reason="Certificate reference number not found in DigiLocker sandbox registry.",
@@ -154,7 +215,7 @@ class DigiLockerIssuerAdapter(IssuingAuthorityAdapter):
                 source_title=f"{self.source_title} (Sandbox Simulation)",
                 is_official_source=False,
                 status="simulated_demo",
-                source_reference=f"DL-SANDBOX-TX-{abs(hash(clean_num)) % 1000000}",
+                source_reference="SIMULATED-DL-SANDBOX",
                 submitted_attributes=submitted,
                 returned_attributes={
                     "record_status": "matched_in_sandbox",
@@ -179,6 +240,21 @@ class DigiLockerIssuerAdapter(IssuingAuthorityAdapter):
                 evidence={"integration_state": "unconfigured_endpoint", "authorized": True},
             )
 
+        # Validate endpoint TLS and allowlist security
+        is_valid_endpoint, endpoint_err = AuthorityEndpointSecurity.validate_endpoint_url(self.base_url)
+        if not is_valid_endpoint:
+            return VerificationResultPayload(
+                adapter_name=self.adapter_name,
+                source_title=self.source_title,
+                is_official_source=self.is_official_source,
+                status="source_unavailable",
+                source_reference=None,
+                submitted_attributes=submitted,
+                returned_attributes={},
+                failure_reason=f"Security check failed: {endpoint_err}",
+                evidence={"endpoint": self.base_url, "security_error": endpoint_err},
+            )
+
         try:
             with httpx.Client(timeout=5.0) as client:
                 resp = client.post(
@@ -190,6 +266,18 @@ class DigiLockerIssuerAdapter(IssuingAuthorityAdapter):
                         "User-Agent": "AICTE-Compliance-Verification/1.0",
                     },
                 )
+                if resp.status_code in (401, 403):
+                    return VerificationResultPayload(
+                        adapter_name=self.adapter_name,
+                        source_title=self.source_title,
+                        is_official_source=self.is_official_source,
+                        status="source_unavailable",
+                        source_reference=None,
+                        submitted_attributes=submitted,
+                        returned_attributes={},
+                        failure_reason=f"DigiLocker gateway authentication failed (HTTP {resp.status_code}); credentials rejected.",
+                        evidence={"http_status": resp.status_code},
+                    )
                 if resp.status_code == 404:
                     return VerificationResultPayload(
                         adapter_name=self.adapter_name,
@@ -214,7 +302,20 @@ class DigiLockerIssuerAdapter(IssuingAuthorityAdapter):
                         failure_reason=f"DigiLocker gateway returned HTTP {resp.status_code}.",
                         evidence={"http_status": resp.status_code},
                     )
-                data = resp.json()
+                try:
+                    data = resp.json()
+                except Exception:
+                    return VerificationResultPayload(
+                        adapter_name=self.adapter_name,
+                        source_title=self.source_title,
+                        is_official_source=self.is_official_source,
+                        status="verification_inconclusive",
+                        source_reference=None,
+                        submitted_attributes=submitted,
+                        returned_attributes={},
+                        failure_reason="Invalid non-JSON payload received from DigiLocker gateway.",
+                        evidence={},
+                    )
                 if not isinstance(data, dict):
                     return VerificationResultPayload(
                         adapter_name=self.adapter_name,
@@ -227,9 +328,58 @@ class DigiLockerIssuerAdapter(IssuingAuthorityAdapter):
                         failure_reason="Invalid schema received from DigiLocker gateway.",
                         evidence={},
                     )
+
+                # Validate returned identifier
+                returned_id = data.get("certificate_number") or data.get("verified_identifier")
+                if returned_id and str(returned_id).strip().upper() != clean_num:
+                    return VerificationResultPayload(
+                        adapter_name=self.adapter_name,
+                        source_title=self.source_title,
+                        is_official_source=self.is_official_source,
+                        status="mismatch_detected",
+                        source_reference=None,
+                        submitted_attributes=submitted,
+                        returned_attributes=data,
+                        failure_reason=f"Returned certificate identifier '{returned_id}' does not match submitted '{clean_num}'.",
+                        evidence={"submitted": clean_num, "returned": str(returned_id)},
+                    )
+
+                # Validate institution identifier if returned
+                ret_inst = data.get("institution_id")
+                if ret_inst and str(ret_inst).strip().upper() != req.institution_id.strip().upper():
+                    return VerificationResultPayload(
+                        adapter_name=self.adapter_name,
+                        source_title=self.source_title,
+                        is_official_source=self.is_official_source,
+                        status="mismatch_detected",
+                        source_reference=None,
+                        submitted_attributes=submitted,
+                        returned_attributes=data,
+                        failure_reason=f"Returned institution '{ret_inst}' conflicts with applicant '{req.institution_id}'.",
+                        evidence={"submitted": req.institution_id, "returned": str(ret_inst)},
+                    )
+
+                # Validate validity date / expiry if returned
+                exp_candidate_str = data.get("valid_until") or data.get("expiry_date")
+                if exp_candidate_str:
+                    parsed_exp = parse_iso_date_candidate(str(exp_candidate_str))
+                    if parsed_exp and parsed_exp < datetime.now(timezone.utc).date():
+                        return VerificationResultPayload(
+                            adapter_name=self.adapter_name,
+                            source_title=self.source_title,
+                            is_official_source=self.is_official_source,
+                            status="expired",
+                            source_reference=None,
+                            submitted_attributes=submitted,
+                            returned_attributes=data,
+                            failure_reason=f"Authority record indicates certificate expired on {parsed_exp.isoformat()}.",
+                            evidence={"expiry_date": parsed_exp.isoformat()},
+                        )
+
                 record_status = str(data.get("record_status", data.get("status", ""))).lower()
                 if record_status in ("verified", "valid", "active", "matched"):
-                    ref = str(data.get("source_reference") or data.get("txn_id") or f"DL-TX-{abs(hash(clean_num)) % 1000000}")
+                    raw_ref = data.get("source_reference") or data.get("txn_id") or data.get("reference_number")
+                    ref = str(raw_ref).strip() if raw_ref else None
                     return VerificationResultPayload(
                         adapter_name=self.adapter_name,
                         source_title=self.source_title,
@@ -304,7 +454,7 @@ class StateFireSafetyIssuerAdapter(IssuingAuthorityAdapter):
                 source_title=f"{self.source_title} (Simulated)",
                 is_official_source=False,
                 status="simulated_demo",
-                source_reference=f"FIRE-SIM-{abs(hash(req.certificate_number or 'DEMO')) % 100000}",
+                source_reference="SIMULATED-FIRE-DEMO",
                 submitted_attributes=submitted,
                 returned_attributes={"fire_zone": "Division-1", "clearance": "active", "demo_notice": "Simulated query."},
                 failure_reason=None,
@@ -337,6 +487,23 @@ class StateFireSafetyIssuerAdapter(IssuingAuthorityAdapter):
                 evidence={},
             )
 
+        clean_num = req.certificate_number.strip().upper()
+
+        # Validate endpoint TLS and allowlist security
+        is_valid_endpoint, endpoint_err = AuthorityEndpointSecurity.validate_endpoint_url(self.portal_url)
+        if not is_valid_endpoint:
+            return VerificationResultPayload(
+                adapter_name=self.adapter_name,
+                source_title=self.source_title,
+                is_official_source=self.is_official_source,
+                status="source_unavailable",
+                source_reference=None,
+                submitted_attributes=submitted,
+                returned_attributes={},
+                failure_reason=f"Security check failed: {endpoint_err}",
+                evidence={"endpoint": self.portal_url, "security_error": endpoint_err},
+            )
+
         try:
             with httpx.Client(timeout=5.0) as client:
                 resp = client.post(
@@ -344,6 +511,18 @@ class StateFireSafetyIssuerAdapter(IssuingAuthorityAdapter):
                     json=submitted,
                     headers={"Accept": "application/json", "User-Agent": "AICTE-Compliance-Verification/1.0"},
                 )
+                if resp.status_code in (401, 403):
+                    return VerificationResultPayload(
+                        adapter_name=self.adapter_name,
+                        source_title=self.source_title,
+                        is_official_source=self.is_official_source,
+                        status="source_unavailable",
+                        source_reference=None,
+                        submitted_attributes=submitted,
+                        returned_attributes={},
+                        failure_reason=f"State Fire Safety portal authentication failed (HTTP {resp.status_code}); credentials rejected.",
+                        evidence={"http_status": resp.status_code, "portal": self.portal_url},
+                    )
                 if resp.status_code == 404:
                     return VerificationResultPayload(
                         adapter_name=self.adapter_name,
@@ -355,6 +534,18 @@ class StateFireSafetyIssuerAdapter(IssuingAuthorityAdapter):
                         returned_attributes={"record_status": "record_not_found"},
                         failure_reason=f"Fire Safety NOC '{req.certificate_number}' not found on State Fire Safety portal.",
                         evidence={"http_status": 404, "portal": self.portal_url},
+                    )
+                if resp.status_code >= 500:
+                    return VerificationResultPayload(
+                        adapter_name=self.adapter_name,
+                        source_title=self.source_title,
+                        is_official_source=self.is_official_source,
+                        status="source_unavailable",
+                        source_reference=None,
+                        submitted_attributes=submitted,
+                        returned_attributes={},
+                        failure_reason=f"State Fire Safety portal internal server error (HTTP {resp.status_code}).",
+                        evidence={"http_status": resp.status_code, "portal": self.portal_url},
                     )
                 if resp.status_code != 200:
                     return VerificationResultPayload(
@@ -394,9 +585,63 @@ class StateFireSafetyIssuerAdapter(IssuingAuthorityAdapter):
                         failure_reason="State Fire Safety portal response schema invalid.",
                         evidence={"portal": self.portal_url},
                     )
+
+                # Validate certificate identifier if returned
+                returned_id = (
+                    data.get("certificate_number")
+                    or data.get("noc_number")
+                    or data.get("reference_number")
+                    or data.get("verified_identifier")
+                )
+                if returned_id and str(returned_id).strip().upper() != clean_num:
+                    return VerificationResultPayload(
+                        adapter_name=self.adapter_name,
+                        source_title=self.source_title,
+                        is_official_source=self.is_official_source,
+                        status="mismatch_detected",
+                        source_reference=None,
+                        submitted_attributes=submitted,
+                        returned_attributes=data,
+                        failure_reason=f"Returned certificate identifier '{returned_id}' does not match submitted '{clean_num}'.",
+                        evidence={"submitted": clean_num, "returned": str(returned_id)},
+                    )
+
+                # Validate institution identifier if returned
+                returned_inst = data.get("institution_id") or data.get("institution_code")
+                if req.institution_id and returned_inst and str(returned_inst).strip().upper() != str(req.institution_id).strip().upper():
+                    return VerificationResultPayload(
+                        adapter_name=self.adapter_name,
+                        source_title=self.source_title,
+                        is_official_source=self.is_official_source,
+                        status="mismatch_detected",
+                        source_reference=None,
+                        submitted_attributes=submitted,
+                        returned_attributes=data,
+                        failure_reason=f"Returned institution identifier '{returned_inst}' does not match submitted '{req.institution_id}'.",
+                        evidence={"submitted_institution": str(req.institution_id), "returned_institution": str(returned_inst)},
+                    )
+
+                # Validate validity date / expiry if returned
+                exp_candidate_str = data.get("valid_until") or data.get("expiry_date")
+                if exp_candidate_str:
+                    parsed_exp = parse_iso_date_candidate(str(exp_candidate_str))
+                    if parsed_exp and parsed_exp < datetime.now(timezone.utc).date():
+                        return VerificationResultPayload(
+                            adapter_name=self.adapter_name,
+                            source_title=self.source_title,
+                            is_official_source=self.is_official_source,
+                            status="expired",
+                            source_reference=None,
+                            submitted_attributes=submitted,
+                            returned_attributes=data,
+                            failure_reason=f"State Fire Safety record indicates certificate expired on {parsed_exp.isoformat()}.",
+                            evidence={"expiry_date": parsed_exp.isoformat()},
+                        )
+
                 record_status = str(data.get("record_status", data.get("status", ""))).lower()
                 if record_status in ("verified", "valid", "active", "matched", "approved"):
-                    ref = str(data.get("source_reference") or data.get("reference_number") or f"FIRE-STAT-{abs(hash(req.certificate_number)) % 100000}")
+                    raw_ref = data.get("source_reference") or data.get("reference_number")
+                    ref = str(raw_ref).strip() if raw_ref else None
                     return VerificationResultPayload(
                         adapter_name=self.adapter_name,
                         source_title=self.source_title,
@@ -468,7 +713,7 @@ class UniversityAffiliationIssuerAdapter(IssuingAuthorityAdapter):
                 source_title=f"{self.source_title} (Simulated)",
                 is_official_source=False,
                 status="simulated_demo",
-                source_reference=f"UNIV-SIM-{abs(hash(req.certificate_number or 'DEMO')) % 100000}",
+                source_reference="SIMULATED-UNIV-DEMO",
                 submitted_attributes=submitted,
                 returned_attributes={"affiliation_status": "affiliated_active", "demo_notice": "Simulated query."},
                 failure_reason=None,
@@ -501,6 +746,23 @@ class UniversityAffiliationIssuerAdapter(IssuingAuthorityAdapter):
                 evidence={},
             )
 
+        clean_num = req.certificate_number.strip().upper()
+
+        # Validate endpoint TLS and allowlist security
+        is_valid_endpoint, endpoint_err = AuthorityEndpointSecurity.validate_endpoint_url(self.api_url)
+        if not is_valid_endpoint:
+            return VerificationResultPayload(
+                adapter_name=self.adapter_name,
+                source_title=self.source_title,
+                is_official_source=self.is_official_source,
+                status="source_unavailable",
+                source_reference=None,
+                submitted_attributes=submitted,
+                returned_attributes={},
+                failure_reason=f"Security check failed: {endpoint_err}",
+                evidence={"endpoint": self.api_url, "security_error": endpoint_err},
+            )
+
         try:
             with httpx.Client(timeout=5.0) as client:
                 resp = client.post(
@@ -508,6 +770,18 @@ class UniversityAffiliationIssuerAdapter(IssuingAuthorityAdapter):
                     json=submitted,
                     headers={"Accept": "application/json", "User-Agent": "AICTE-Compliance-Verification/1.0"},
                 )
+                if resp.status_code in (401, 403):
+                    return VerificationResultPayload(
+                        adapter_name=self.adapter_name,
+                        source_title=self.source_title,
+                        is_official_source=self.is_official_source,
+                        status="source_unavailable",
+                        source_reference=None,
+                        submitted_attributes=submitted,
+                        returned_attributes={},
+                        failure_reason=f"University portal authentication failed (HTTP {resp.status_code}); credentials rejected.",
+                        evidence={"http_status": resp.status_code, "portal": self.api_url},
+                    )
                 if resp.status_code == 404:
                     return VerificationResultPayload(
                         adapter_name=self.adapter_name,
@@ -519,6 +793,18 @@ class UniversityAffiliationIssuerAdapter(IssuingAuthorityAdapter):
                         returned_attributes={"record_status": "record_not_found"},
                         failure_reason=f"Affiliation reference '{req.certificate_number}' not found on university portal.",
                         evidence={"http_status": 404, "portal": self.api_url},
+                    )
+                if resp.status_code >= 500:
+                    return VerificationResultPayload(
+                        adapter_name=self.adapter_name,
+                        source_title=self.source_title,
+                        is_official_source=self.is_official_source,
+                        status="source_unavailable",
+                        source_reference=None,
+                        submitted_attributes=submitted,
+                        returned_attributes={},
+                        failure_reason=f"University portal internal server error (HTTP {resp.status_code}).",
+                        evidence={"http_status": resp.status_code, "portal": self.api_url},
                     )
                 if resp.status_code != 200:
                     return VerificationResultPayload(
@@ -558,9 +844,41 @@ class UniversityAffiliationIssuerAdapter(IssuingAuthorityAdapter):
                         failure_reason="University portal response schema invalid.",
                         evidence={"portal": self.api_url},
                     )
+
+                # Validate reference identifier if returned
+                returned_id = data.get("reference_number") or data.get("certificate_number") or data.get("ref_number")
+                if returned_id and str(returned_id).strip().upper() != clean_num:
+                    return VerificationResultPayload(
+                        adapter_name=self.adapter_name,
+                        source_title=self.source_title,
+                        is_official_source=self.is_official_source,
+                        status="mismatch_detected",
+                        source_reference=None,
+                        submitted_attributes=submitted,
+                        returned_attributes=data,
+                        failure_reason=f"Returned reference identifier '{returned_id}' does not match submitted '{clean_num}'.",
+                        evidence={"submitted": clean_num, "returned": str(returned_id)},
+                    )
+
+                # Validate institution identifier if returned
+                ret_inst = data.get("institution_id")
+                if ret_inst and str(ret_inst).strip().upper() != req.institution_id.strip().upper():
+                    return VerificationResultPayload(
+                        adapter_name=self.adapter_name,
+                        source_title=self.source_title,
+                        is_official_source=self.is_official_source,
+                        status="mismatch_detected",
+                        source_reference=None,
+                        submitted_attributes=submitted,
+                        returned_attributes=data,
+                        failure_reason=f"Returned institution identifier '{ret_inst}' does not match applicant '{req.institution_id}'.",
+                        evidence={"submitted": req.institution_id, "returned": str(ret_inst)},
+                    )
+
                 record_status = str(data.get("affiliation_status", data.get("record_status", data.get("status", "")))).lower()
                 if record_status in ("affiliated_active", "verified", "valid", "approved", "active"):
-                    ref = str(data.get("source_reference") or data.get("reference_number") or "UNIV-REC-2026")
+                    raw_ref = data.get("source_reference") or data.get("reference_number")
+                    ref = str(raw_ref).strip() if raw_ref else None
                     return VerificationResultPayload(
                         adapter_name=self.adapter_name,
                         source_title=self.source_title,

@@ -17,6 +17,10 @@ from backend.app.api.deps import (
 from backend.app.core.rbac import (
     PERMISSION_APPLICATION_READ,
     PERMISSION_APPLICATION_UPDATE,
+    PERMISSION_RETENTION_MANAGE,
+    PERMISSION_RULE_APPROVE,
+    PERMISSION_RULE_READ,
+    has_permission,
 )
 from backend.app.db.models import Application, Document, DocumentVersion, ExtractedField, User
 from backend.app.db.session import get_db
@@ -28,6 +32,12 @@ from backend.app.schemas.compliance import (
     InfrastructureReviewResponse,
     InstitutionalComparisonResponse,
     RecordComparisonItemRead,
+    RetentionRunRead,
+    RetentionStatusResponse,
+    RetentionTriggerInput,
+    RuleApprovalInput,
+    RuleApprovalRead,
+    RuleSummaryRead,
     VerificationAttemptRead,
     VerificationRequestInput,
 )
@@ -36,6 +46,16 @@ from backend.app.services.institutional_record_service import InstitutionalRecor
 from backend.app.services.issuing_authority_service import IssuingAuthorityService
 
 router = APIRouter()
+
+def _get_effective_user_role(user: User) -> str:
+    if hasattr(user, "role") and user.role:
+        return user.role
+    if hasattr(user, "memberships") and user.memberships:
+        for m in user.memberships:
+            if m.is_active and m.role:
+                return m.role
+    return ""
+
 
 
 # ---------------------------------------------------------------------------
@@ -310,17 +330,192 @@ def correct_extracted_field(
 
 
 # ---------------------------------------------------------------------------
-# 5. Data Retention & Privacy Enforcement Endpoint
+# 5. Data Retention & Privacy Enforcement Endpoints
 # ---------------------------------------------------------------------------
+@router.get(
+    "/retention/status",
+    response_model=RetentionStatusResponse,
+    summary="View retention policy enforcement and scheduler status",
+    tags=["retention"],
+)
+def get_retention_status(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> RetentionStatusResponse:
+    """Return retention policy configuration, status of scheduler, and latest execution record."""
+    from backend.app.services.retention_scheduler import RetentionBackgroundScheduler
+    from backend.app.services.retention_service import (
+        AUDIT_LOG_MINIMUM_RETENTION_YEARS,
+        DEFAULT_JOB_RETENTION_DAYS,
+        DEFAULT_QUARANTINE_RETENTION_DAYS,
+        DEFAULT_SCHEDULE_INTERVAL_SECONDS,
+        RetentionService,
+    )
+
+    scheduler = RetentionBackgroundScheduler.get_instance()
+    latest_run = RetentionService.get_latest_run(db)
+
+    return RetentionStatusResponse(
+        scheduler_running=scheduler.is_running(),
+        schedule_interval_seconds=scheduler.interval_seconds,
+        quarantine_retention_days=DEFAULT_QUARANTINE_RETENTION_DAYS,
+        job_retention_days=DEFAULT_JOB_RETENTION_DAYS,
+        audit_log_retention_years=AUDIT_LOG_MINIMUM_RETENTION_YEARS,
+        last_run=latest_run,
+    )
+
+
 @router.post(
     "/retention/purge",
-    summary="Trigger retention policy enforcement pass",
+    response_model=RetentionRunRead,
+    summary="Trigger retention policy enforcement pass (dry-run or live)",
     tags=["retention"],
 )
 def trigger_retention_purge(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict[str, Any]:
-    """Execute scheduled retention pass: purge stale quarantined files and temporary processing jobs."""
+    payload: RetentionTriggerInput | None = None,
+) -> RetentionRunRead:
+    """Execute scheduled or manual retention pass with RBAC permission check."""
+    user_role = _get_effective_user_role(current_user)
+    current_user.role = user_role
+    if not has_permission(user_role, PERMISSION_RETENTION_MANAGE):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User lacks required permission '{PERMISSION_RETENTION_MANAGE}' to execute retention purge.",
+        )
+
     from backend.app.services.retention_service import RetentionService
-    return RetentionService.run_scheduled_retention_pass(db, actor_id=current_user.username)
+
+    dry_run = payload.dry_run if payload else False
+    quarantine_days = payload.quarantine_days if payload else 30
+    job_days = payload.job_days if payload else 14
+
+    rec = RetentionService.run_retention_pass(
+        db,
+        execution_type="manual" if not dry_run else "dry_run",
+        dry_run=dry_run,
+        actor_id=current_user.username,
+        quarantine_retention_days=quarantine_days,
+        job_retention_days=job_days,
+    )
+    return rec
+
+
+@router.get(
+    "/retention/runs",
+    response_model=list[RetentionRunRead],
+    summary="List past retention runs",
+    tags=["retention"],
+)
+def list_retention_runs(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+    limit: int = 20,
+) -> list[RetentionRunRead]:
+    """List historical retention execution runs."""
+    from backend.app.services.retention_service import RetentionService
+    return RetentionService.list_retention_runs(db, limit=limit)
+
+
+# ---------------------------------------------------------------------------
+# 6. Regulatory Rule Governance Endpoints
+# ---------------------------------------------------------------------------
+@router.get(
+    "/rules",
+    response_model=list[RuleSummaryRead],
+    summary="List canonical regulatory rule drafts and active approval states",
+    tags=["rule-governance"],
+)
+def list_regulatory_rules(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> list[RuleSummaryRead]:
+    """List draft and active statutory rule versions."""
+    from backend.app.services.rule_engine import RuleApprovalService, build_aph_draft_rules
+
+    drafts = build_aph_draft_rules()
+    approvals = {a.rule_id: a for a in RuleApprovalService.get_approval_records(db) if a.status == "active"}
+
+    summaries: list[RuleSummaryRead] = []
+    for d in drafts:
+        active_appr = approvals.get(d.rule_id)
+        summaries.append(
+            RuleSummaryRead(
+                rule_id=d.rule_id,
+                version=d.version,
+                title=d.title,
+                status="active" if active_appr else "draft",
+                source_clause=d.source_clause,
+                source_page=d.source_page,
+                effective_from=d.effective_from.isoformat() if d.effective_from else None,
+                effective_to=d.effective_to.isoformat() if d.effective_to else None,
+                has_active_approval=active_appr is not None,
+                reviewer_username=active_appr.reviewer_username if active_appr else None,
+            )
+        )
+    return summaries
+
+
+@router.post(
+    "/rules/{rule_id}/approve",
+    response_model=RuleApprovalRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Confer durable statutory approval on a verified rule draft",
+    tags=["rule-governance"],
+)
+def approve_regulatory_rule(
+    rule_id: str,
+    payload: RuleApprovalInput,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> RuleApprovalRead:
+    """Record attributable statutory approval with user identity, RBAC checks, and audit logging."""
+    user_role = _get_effective_user_role(current_user)
+    current_user.role = user_role
+    if not has_permission(user_role, PERMISSION_RULE_APPROVE):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User '{current_user.username}' lacks PERMISSION_RULE_APPROVE permission.",
+        )
+
+    from backend.app.services.rule_engine import RuleApprovalService, build_aph_draft_rules
+
+    drafts = {d.rule_id: d for d in build_aph_draft_rules()}
+    draft = drafts.get(rule_id)
+    if draft is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Draft rule '{rule_id}' not found in canonical catalogue.",
+        )
+
+    try:
+        record = RuleApprovalService.approve_rule_db(
+            db,
+            rule_draft=draft,
+            reviewer_user=current_user,
+            rationale=payload.rationale,
+            statutory_interpretation_approved=payload.statutory_interpretation_approved,
+        )
+        return record
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+
+
+@router.get(
+    "/rules/history",
+    response_model=list[RuleApprovalRead],
+    summary="List all durable regulatory rule approval records",
+    tags=["rule-governance"],
+)
+def list_rule_approvals(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+    rule_id: str | None = None,
+) -> list[RuleApprovalRead]:
+    """List historical rule approvals with reviewer identities and rationales."""
+    from backend.app.services.rule_engine import RuleApprovalService
+    return RuleApprovalService.get_approval_records(db, rule_id=rule_id)
+

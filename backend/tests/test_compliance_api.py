@@ -247,3 +247,106 @@ def test_correct_extracted_field(client: TestClient, seed_data: dict[str, object
     assert data["corrected_value"] == "FIRE-2024-CORRECTED-999"
     assert data["previous_value"] == "FIRE-2024-REG-101"
     assert "user_comp" in data["corrected_by"] or "officer_comp" in data["corrected_by"]
+
+
+def test_list_regulatory_rules_api(client: TestClient, seed_data: dict[str, object]):
+    headers = seed_data["headers"]
+    resp = client.get("/api/v1/compliance/rules", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) >= 6
+    ids = {r["rule_id"] for r in data}
+    assert "APH_2024_FIRE_SAFETY" in ids
+    assert "APH_2024_STRUCTURAL_STABILITY" in ids
+
+
+def test_approve_regulatory_rule_unauthorized(client: TestClient, seed_data: dict[str, object]):
+    # Scrutiny officer lacks PERMISSION_RULE_APPROVE
+    headers = seed_data["headers"]
+    resp = client.post(
+        "/api/v1/compliance/rules/APH_2024_FIRE_SAFETY/approve",
+        headers=headers,
+        json={
+            "rationale": "Unauthorized attempt to approve statutory rule.",
+            "statutory_interpretation_approved": True,
+        },
+    )
+    assert resp.status_code == 403
+    assert "lacks permission" in resp.json()["detail"].lower() or "permission_rule_approve" in resp.json()["detail"].lower()
+
+
+def test_approve_regulatory_rule_director(client: TestClient, db_session: Session, seed_data: dict[str, object]):
+    from backend.app.core.rbac import ROLE_REGULATORY_DIRECTOR
+
+    hashed_pwd = get_password_hash("DirectorSecret123!")
+    director_user = User(username="director_legal", hashed_password=hashed_pwd)
+    db_session.add(director_user)
+    db_session.flush()
+
+    mem = InstitutionMembership(
+        user_id=director_user.id,
+        institution_id=seed_data["institution"].id,
+        role=ROLE_REGULATORY_DIRECTOR,
+        is_active=True,
+    )
+    db_session.add(mem)
+    db_session.commit()
+
+    token = create_access_token(
+        subject=str(director_user.id),
+        extra_claims={"institution_id": seed_data["institution"].id, "role": ROLE_REGULATORY_DIRECTOR},
+    )
+    dir_headers = {"Authorization": f"Bearer {token}"}
+
+    resp = client.post(
+        "/api/v1/compliance/rules/APH_2024_FIRE_SAFETY/approve",
+        headers=dir_headers,
+        json={
+            "rationale": "Director scrutiny confirming compliance with AICTE APH 2024-2027 Clause 2.4.",
+            "statutory_interpretation_approved": True,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["rule_id"] == "APH_2024_FIRE_SAFETY"
+    assert data["status"] == "active"
+    assert data["decision"] == "approved"
+    assert data["reviewer_username"] == "director_legal"
+    assert data["statutory_interpretation_approved"] is True
+
+    # Check history endpoint
+    resp_hist = client.get("/api/v1/compliance/rules/history", headers=dir_headers)
+    assert resp_hist.status_code == 200
+    hist = resp_hist.json()
+    assert len(hist) >= 1
+    assert any(h["rule_id"] == "APH_2024_FIRE_SAFETY" for h in hist)
+
+
+def test_retention_api_endpoints(client: TestClient, seed_data: dict[str, object]):
+    headers = seed_data["headers"]
+
+    # Status
+    resp_status = client.get("/api/v1/compliance/retention/status", headers=headers)
+    assert resp_status.status_code == 200
+    status_data = resp_status.json()
+    assert "quarantine_retention_days" in status_data
+    assert "job_retention_days" in status_data
+    assert "audit_log_retention_years" in status_data
+
+    # Dry-run purge trigger
+    resp_purge = client.post(
+        "/api/v1/compliance/retention/purge",
+        headers=headers,
+        json={"dry_run": True, "quarantine_days": 30, "job_days": 14},
+    )
+    assert resp_purge.status_code == 200
+    purge_data = resp_purge.json()
+    assert purge_data["dry_run"] is True
+    assert purge_data["status"] == "completed"
+    assert "run_reference" in purge_data
+
+    # List runs
+    resp_runs = client.get("/api/v1/compliance/retention/runs", headers=headers)
+    assert resp_runs.status_code == 200
+    runs = resp_runs.json()
+    assert len(runs) >= 1

@@ -86,3 +86,86 @@ class FieldCorrectionResponse(BaseModel):
     corrected_by: str
     corrected_at: datetime
     message: str
+
+
+# ---------------------------------------------------------------------------
+# 6. Regulatory Rule Governance Schemas
+# ---------------------------------------------------------------------------
+class RuleApprovalInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rationale: str = Field(min_length=10, max_length=1000, description="Attributable statutory review justification")
+    statutory_interpretation_approved: bool = Field(default=True, description="Statutory interpretation approval affirmation")
+
+
+class RuleApprovalRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    rule_id: str
+    rule_version: int
+    status: str
+    decision: str
+    reviewer_username: str
+    reviewer_role: str
+    rationale: str
+    source_title: str
+    source_clause: str
+    source_page: str
+    source_document_version: str
+    statutory_interpretation_approved: bool
+    decided_at: datetime
+    effective_from: Any
+    effective_to: Any | None = None
+    created_at: datetime
+
+
+class RuleSummaryRead(BaseModel):
+    rule_id: str
+    version: int
+    title: str
+    status: str
+    source_clause: str
+    source_page: str
+    effective_from: str | None = None
+    effective_to: str | None = None
+    has_active_approval: bool = False
+    reviewer_username: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# 7. Retention Policy & Execution Schemas
+# ---------------------------------------------------------------------------
+class RetentionRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_reference: str
+    execution_type: str
+    dry_run: bool
+    status: str
+    quarantined_purged_count: int
+    jobs_cleaned_count: int
+    storage_errors_count: int
+    triggered_by: str
+    started_at: datetime
+    completed_at: datetime | None = None
+    error_message: str | None = None
+    details: str | None = None
+
+
+class RetentionTriggerInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dry_run: bool = Field(default=False, description="Simulate deletion pass without modifying disk or DB")
+    quarantine_days: int = Field(default=30, ge=1, le=3650, description="Age threshold in days for quarantined files")
+    job_days: int = Field(default=14, ge=1, le=365, description="Age threshold in days for completed/failed jobs")
+
+
+class RetentionStatusResponse(BaseModel):
+    scheduler_running: bool
+    schedule_interval_seconds: int
+    quarantine_retention_days: int
+    job_retention_days: int
+    audit_log_retention_years: int
+    last_run: RetentionRunRead | None = None

@@ -5,6 +5,7 @@ from __future__ import annotations
 ROLE_INSTITUTION_ADMIN = "institution_admin"
 ROLE_SCRUTINY_OFFICER = "scrutiny_officer"
 ROLE_AUDITOR = "auditor"
+ROLE_REGULATORY_DIRECTOR = "regulatory_director"
 
 PERMISSION_APPLICATION_CREATE = "application:create"
 PERMISSION_APPLICATION_READ = "application:read"
@@ -14,6 +15,9 @@ PERMISSION_REVIEW_ACTION = "review:action"
 PERMISSION_FINDING_WAIVE = "finding:waive"
 PERMISSION_AUDIT_PACKAGE_CREATE = "audit_package:create"
 PERMISSION_AUDIT_PACKAGE_READ = "audit_package:read"
+PERMISSION_RULE_READ = "rule:read"
+PERMISSION_RULE_APPROVE = "rule:approve"
+PERMISSION_RETENTION_MANAGE = "retention:manage"
 
 # Centralized role-to-permission mapping
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
@@ -24,6 +28,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         PERMISSION_REVIEW_READ,
         PERMISSION_AUDIT_PACKAGE_CREATE,
         PERMISSION_AUDIT_PACKAGE_READ,
+        PERMISSION_RULE_READ,
     }),
     ROLE_SCRUTINY_OFFICER: frozenset({
         PERMISSION_APPLICATION_READ,
@@ -32,11 +37,23 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         PERMISSION_REVIEW_ACTION,
         PERMISSION_AUDIT_PACKAGE_CREATE,
         PERMISSION_AUDIT_PACKAGE_READ,
+        PERMISSION_RULE_READ,
+        PERMISSION_RETENTION_MANAGE,
+    }),
+    ROLE_REGULATORY_DIRECTOR: frozenset({
+        PERMISSION_APPLICATION_READ,
+        PERMISSION_REVIEW_READ,
+        PERMISSION_REVIEW_ACTION,
+        PERMISSION_AUDIT_PACKAGE_READ,
+        PERMISSION_RULE_READ,
+        PERMISSION_RULE_APPROVE,
+        PERMISSION_RETENTION_MANAGE,
     }),
     ROLE_AUDITOR: frozenset({
         PERMISSION_APPLICATION_READ,
         PERMISSION_REVIEW_READ,
         PERMISSION_AUDIT_PACKAGE_READ,
+        PERMISSION_RULE_READ,
     }),
 }
 

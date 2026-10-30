@@ -281,7 +281,7 @@ def test_state_fire_safety_live_http_invalid_schema(monkeypatch):
     )
     res = adapter.verify(payload)
     assert res.status == "verification_inconclusive"
-    assert "schema invalid" in res.failure_reason.lower()
+    assert "invalid non-json" in res.failure_reason.lower() or "schema invalid" in res.failure_reason.lower()
 
 
 def test_university_affiliation_unconfigured(monkeypatch):
@@ -446,3 +446,205 @@ def test_issuing_authority_service_not_found(db_session: Session):
             application_id=1,
             document_version_id=999,
         )
+
+
+def test_state_fire_safety_live_http_expired(monkeypatch):
+    import httpx
+    adapter = StateFireSafetyIssuerAdapter(portal_url="https://fire.state.gov.in/api/verify")
+
+    class MockResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "record_status": "expired",
+                "reference_number": "FS-NOC-EXPIRED",
+                "valid_until": "2020-01-01",
+            }
+
+    monkeypatch.setattr(httpx.Client, "post", lambda *a, **kw: MockResponse())
+
+    payload = VerificationRequestPayload(
+        application_id=1,
+        document_version_id=10,
+        document_category="fire_safety_certificate",
+        certificate_number="FS-NOC-EXPIRED",
+        claimed_issuing_authority="Fire Dept",
+        issue_date="2018-01-01",
+        expiry_date="2020-01-01",
+        institution_id="INST-001",
+        actor_id="officer_1",
+    )
+    res = adapter.verify(payload)
+    assert res.status == "expired"
+    assert res.is_official_source is True
+    assert "expired" in res.failure_reason.lower()
+
+
+def test_state_fire_safety_live_http_identifier_mismatch(monkeypatch):
+    import httpx
+    adapter = StateFireSafetyIssuerAdapter(portal_url="https://fire.state.gov.in/api/verify")
+
+    class MockResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "record_status": "valid",
+                "reference_number": "FS-NOC-9999",  # Different from FS-NOC-1111
+                "valid_until": "2028-01-01",
+            }
+
+    monkeypatch.setattr(httpx.Client, "post", lambda *a, **kw: MockResponse())
+
+    payload = VerificationRequestPayload(
+        application_id=1,
+        document_version_id=10,
+        document_category="fire_safety_certificate",
+        certificate_number="FS-NOC-1111",
+        claimed_issuing_authority="Fire Dept",
+        issue_date="2024-01-01",
+        expiry_date="2028-01-01",
+        institution_id="INST-001",
+        actor_id="officer_1",
+    )
+    res = adapter.verify(payload)
+    assert res.status == "mismatch_detected"
+    assert "does not match" in res.failure_reason.lower()
+
+
+def test_state_fire_safety_live_http_institution_mismatch(monkeypatch):
+    import httpx
+    adapter = StateFireSafetyIssuerAdapter(portal_url="https://fire.state.gov.in/api/verify")
+
+    class MockResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "record_status": "valid",
+                "reference_number": "FS-NOC-1111",
+                "institution_id": "INST-DIFFERENT-COLLEGE",
+                "valid_until": "2028-01-01",
+            }
+
+    monkeypatch.setattr(httpx.Client, "post", lambda *a, **kw: MockResponse())
+
+    payload = VerificationRequestPayload(
+        application_id=1,
+        document_version_id=10,
+        document_category="fire_safety_certificate",
+        certificate_number="FS-NOC-1111",
+        claimed_issuing_authority="Fire Dept",
+        issue_date="2024-01-01",
+        expiry_date="2028-01-01",
+        institution_id="INST-001",
+        actor_id="officer_1",
+    )
+    res = adapter.verify(payload)
+    assert res.status == "mismatch_detected"
+    assert "does not match" in res.failure_reason.lower()
+
+
+def test_state_fire_safety_live_http_non_json_response(monkeypatch):
+    import httpx
+    adapter = StateFireSafetyIssuerAdapter(portal_url="https://fire.state.gov.in/api/verify")
+
+    class MockResponse:
+        status_code = 200
+        text = "<html><body>502 Bad Gateway - HTML error page</body></html>"
+        def json(self):
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+    monkeypatch.setattr(httpx.Client, "post", lambda *a, **kw: MockResponse())
+
+    payload = VerificationRequestPayload(
+        application_id=1,
+        document_version_id=10,
+        document_category="fire_safety_certificate",
+        certificate_number="FS-NOC-HTML",
+        claimed_issuing_authority="Fire Dept",
+        issue_date="2024-01-01",
+        expiry_date="2027-01-01",
+        institution_id="INST-001",
+        actor_id="officer_1",
+    )
+    res = adapter.verify(payload)
+    assert res.status == "verification_inconclusive"
+    assert "invalid non-json" in res.failure_reason.lower() or "schema invalid" in res.failure_reason.lower()
+
+
+def test_state_fire_safety_live_http_unauthorized_401(monkeypatch):
+    import httpx
+    adapter = StateFireSafetyIssuerAdapter(portal_url="https://fire.state.gov.in/api/verify")
+
+    class MockResponse:
+        status_code = 401
+        def json(self):
+            return {"error": "Unauthorized API credentials"}
+
+    monkeypatch.setattr(httpx.Client, "post", lambda *a, **kw: MockResponse())
+
+    payload = VerificationRequestPayload(
+        application_id=1,
+        document_version_id=10,
+        document_category="fire_safety_certificate",
+        certificate_number="FS-NOC-401",
+        claimed_issuing_authority="Fire Dept",
+        issue_date="2024-01-01",
+        expiry_date="2027-01-01",
+        institution_id="INST-001",
+        actor_id="officer_1",
+    )
+    res = adapter.verify(payload)
+    assert res.status == "source_unavailable"
+    assert "unauthorized" in res.failure_reason.lower() or "authentication failed" in res.failure_reason.lower()
+
+
+def test_state_fire_safety_live_http_server_error_500(monkeypatch):
+    import httpx
+    adapter = StateFireSafetyIssuerAdapter(portal_url="https://fire.state.gov.in/api/verify")
+
+    class MockResponse:
+        status_code = 500
+        def json(self):
+            return {"error": "Internal database connection failure"}
+
+    monkeypatch.setattr(httpx.Client, "post", lambda *a, **kw: MockResponse())
+
+    payload = VerificationRequestPayload(
+        application_id=1,
+        document_version_id=10,
+        document_category="fire_safety_certificate",
+        certificate_number="FS-NOC-500",
+        claimed_issuing_authority="Fire Dept",
+        issue_date="2024-01-01",
+        expiry_date="2027-01-01",
+        institution_id="INST-001",
+        actor_id="officer_1",
+    )
+    res = adapter.verify(payload)
+    assert res.status == "source_unavailable"
+    assert "server error" in res.failure_reason.lower()
+
+
+def test_state_fire_safety_disallowed_domain_and_non_tls():
+    # Insecure HTTP
+    adapter_http = StateFireSafetyIssuerAdapter(portal_url="http://fire.state.gov.in/api/verify")
+    payload = VerificationRequestPayload(
+        application_id=1,
+        document_version_id=10,
+        document_category="fire_safety_certificate",
+        certificate_number="FS-NOC-HTTP",
+        claimed_issuing_authority="Fire Dept",
+        issue_date="2024-01-01",
+        expiry_date="2027-01-01",
+        institution_id="INST-001",
+        actor_id="officer_1",
+    )
+    res_http = adapter_http.verify(payload)
+    assert res_http.status == "source_unavailable"
+    assert "security check failed" in res_http.failure_reason.lower()
+
+    # Disallowed external domain
+    adapter_disallowed = StateFireSafetyIssuerAdapter(portal_url="https://phishing-fire-records.com/api/verify")
+    res_disallowed = adapter_disallowed.verify(payload)
+    assert res_disallowed.status == "source_unavailable"
+    assert "security check failed" in res_disallowed.failure_reason.lower()

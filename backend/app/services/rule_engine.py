@@ -17,7 +17,12 @@ from typing import Any, Callable, Literal
 
 from pydantic import HttpUrl
 
-from backend.app.db.models import Application, DocumentVersion, ExtractedField
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from backend.app.core.rbac import PERMISSION_RULE_APPROVE, has_permission
+from backend.app.db.models import Application, AuditEvent, DocumentVersion, ExtractedField, RuleApprovalRecord, User
+from backend.app.repositories.review_audit_repository import ReviewAuditRepository
 from backend.app.ocr_adapter import parse_iso_date_candidate
 from backend.app.rule_catalog import (
     ApprovalDecision,
@@ -713,9 +718,196 @@ class RuleApprovalService:
     """Attributable approval and gate-activation service for regulatory rules.
 
     Rules must not claim statutory approval unless an actual human review approval
-    workflow has executed.
+    workflow has executed by an authenticated user with PERMISSION_RULE_APPROVE.
     """
 
+    @classmethod
+    def approve_rule_db(
+        cls,
+        db: Session,
+        rule_draft: RuleVersionDraft,
+        reviewer_user: User,
+        rationale: str,
+        statutory_interpretation_approved: bool = True,
+        decision_date: date | None = None,
+    ) -> RuleApprovalRecord:
+        """Durable, RBAC-governed statutory rule approval persisted in database with audit events."""
+        if not reviewer_user or not getattr(reviewer_user, "id", None):
+            raise ValueError("Reviewer identity must be an authenticated User entity, not an anonymous or generic string.")
+
+        user_role = getattr(reviewer_user, "role", "")
+        if not has_permission(user_role, PERMISSION_RULE_APPROVE):
+            raise PermissionError(
+                f"User '{reviewer_user.username}' with role '{user_role}' lacks PERMISSION_RULE_APPROVE permission."
+            )
+
+        if not statutory_interpretation_approved:
+            raise ValueError("Statutory interpretation approval must be explicitly affirmed.")
+
+        # Completeness gate checks
+        if not rule_draft.source_title or not rule_draft.source_clause or not rule_draft.source_page:
+            raise ValueError("Rule citation is incomplete: source title, clause, and page are mandatory.")
+
+        if (
+            not rule_draft.applicability.application_types
+            or not rule_draft.applicability.academic_years
+            or not rule_draft.applicability.conditions
+        ):
+            raise ValueError("Rule applicability conditions are incomplete.")
+
+        if rule_draft.effective_from is None:
+            raise ValueError("Rule effective_from date is required before statutory approval.")
+
+        categories = {c.category for c in (rule_draft.test_cases or [])}
+        required_cats = {"positive", "negative", "boundary", "exception"}
+        if not required_cats.issubset(categories):
+            missing = sorted(required_cats - categories)
+            raise ValueError(f"Rule test cases incomplete; missing required categories: {', '.join(missing)}")
+
+        if rule_draft.source_provenance.status != SourceVerificationStatus.VERIFIED:
+            raise ValueError("Source provenance must be verified before statutory approval.")
+
+        dec_date = decision_date or date.today()
+        if dec_date < rule_draft.source_provenance.retrieved_at:
+            raise ValueError("Approval date cannot precede source retrieval date.")
+
+        if (
+            rule_draft.source_provenance.verified_at is not None
+            and dec_date < rule_draft.source_provenance.verified_at
+        ):
+            raise ValueError("Approval date cannot precede source verification date.")
+
+        # Supersede existing active approval records for this rule_id
+        existing_stmt = select(RuleApprovalRecord).where(
+            RuleApprovalRecord.rule_id == rule_draft.rule_id,
+            RuleApprovalRecord.status == "active",
+        )
+        existing_records = list(db.scalars(existing_stmt).all())
+        for old_rec in existing_records:
+            old_rec.status = "superseded"
+            ReviewAuditRepository.create_audit_event(
+                db,
+                action="REGULATORY_RULE_SUPERSEDED",
+                target_type="RuleApprovalRecord",
+                target_id=str(old_rec.id),
+                actor_id=reviewer_user.username,
+                details=json.dumps({
+                    "rule_id": rule_draft.rule_id,
+                    "superseded_version": old_rec.rule_version,
+                    "new_version": rule_draft.version,
+                    "superseded_by": reviewer_user.username,
+                }),
+            )
+
+        now = datetime.now(timezone.utc)
+        decided_datetime = datetime.combine(dec_date, datetime.min.time(), tzinfo=timezone.utc)
+
+        approval_record = RuleApprovalRecord(
+            rule_id=rule_draft.rule_id,
+            rule_version=rule_draft.version,
+            status="active",
+            decision="approved",
+            reviewer_id=str(reviewer_user.id),
+            reviewer_username=reviewer_user.username,
+            reviewer_role=user_role,
+            rationale=rationale,
+            source_title=rule_draft.source_title,
+            source_clause=rule_draft.source_clause,
+            source_page=rule_draft.source_page,
+            source_document_version=rule_draft.source_provenance.document_version,
+            source_retrieved_at=rule_draft.source_provenance.retrieved_at,
+            source_verified_by=rule_draft.source_provenance.verified_by or "regulatory_specialist",
+            source_verified_at=rule_draft.source_provenance.verified_at or dec_date,
+            source_verification_status=(
+                rule_draft.source_provenance.status.value
+                if hasattr(rule_draft.source_provenance.status, "value")
+                else str(rule_draft.source_provenance.status)
+            ),
+            statutory_interpretation_approved=statutory_interpretation_approved,
+            decided_at=decided_datetime,
+            effective_from=rule_draft.effective_from,
+            effective_to=rule_draft.effective_to,
+            rule_definition_json=rule_draft.model_dump_json(),
+            created_at=now,
+        )
+        db.add(approval_record)
+        db.flush()
+
+        ReviewAuditRepository.create_audit_event(
+            db,
+            action="REGULATORY_RULE_APPROVED",
+            target_type="RuleApprovalRecord",
+            target_id=str(approval_record.id),
+            actor_id=reviewer_user.username,
+            details=json.dumps({
+                "rule_id": rule_draft.rule_id,
+                "version": rule_draft.version,
+                "reviewer_username": reviewer_user.username,
+                "reviewer_role": user_role,
+                "rationale": rationale,
+                "statutory_interpretation_approved": statutory_interpretation_approved,
+                "source_clause": rule_draft.source_clause,
+            }),
+        )
+        db.commit()
+        db.refresh(approval_record)
+        return approval_record
+
+    @classmethod
+    def load_approved_rules_from_db(
+        cls,
+        db: Session,
+        application_type: str | None = None,
+        academic_year: str | None = None,
+    ) -> list[RuleVersionDraft]:
+        """Load durable active gate-approved rules from database."""
+        stmt = select(RuleApprovalRecord).where(
+            RuleApprovalRecord.status == "active",
+            RuleApprovalRecord.decision == "approved",
+        )
+        records = list(db.scalars(stmt).all())
+        rules: list[RuleVersionDraft] = []
+        for rec in records:
+            try:
+                data = json.loads(rec.rule_definition_json)
+                appr = ApprovalRecord(
+                    reviewer_id=rec.reviewer_username,
+                    decision=ApprovalDecision.APPROVED,
+                    decided_at=rec.decided_at.date() if hasattr(rec.decided_at, "date") else date.today(),
+                    rationale=rec.rationale,
+                )
+                data["approval"] = appr.model_dump()
+                data["lifecycle"] = RuleLifecycle.IN_REVIEW.value
+                draft = RuleVersionDraft.model_validate(data)
+
+                # Applicability filters
+                if application_type and application_type not in draft.applicability.application_types:
+                    continue
+                if academic_year:
+                    ay = academic_year.strip()
+                    year_variants = {ay}
+                    if "-" in ay:
+                        p1, p2 = ay.split("-", 1)
+                        if len(p1) == 4 and len(p2) == 4:
+                            year_variants.add(f"{p1}-{p2[2:]}")
+                        elif len(p1) == 4 and len(p2) == 2:
+                            year_variants.add(f"{p1}-{p1[:2]}{p2}")
+                    if not any(v in draft.applicability.academic_years for v in year_variants):
+                        continue
+                rules.append(draft)
+            except Exception as exc:
+                logger.warning("Could not reconstruct approved rule %s (id: %s): %s", rec.rule_id, rec.id, exc)
+        return rules
+
+    @classmethod
+    def get_approval_records(cls, db: Session, rule_id: str | None = None) -> list[RuleApprovalRecord]:
+        """List durable rule approval records in reverse chronological order."""
+        stmt = select(RuleApprovalRecord).order_by(RuleApprovalRecord.created_at.desc())
+        if rule_id:
+            stmt = stmt.where(RuleApprovalRecord.rule_id == rule_id)
+        return list(db.scalars(stmt).all())
+
+    # In-memory support for testing without a database session
     @classmethod
     def approve_and_activate_rule(
         cls,
@@ -725,7 +917,7 @@ class RuleApprovalService:
         rationale: str,
         decision_date: date | None = None,
     ) -> RuleVersionDraft:
-        """Approve and activate a verified draft rule into the registry."""
+        """Approve and activate a verified draft rule in memory."""
         dec_date = decision_date or date.today()
         if dec_date < rule_draft.source_provenance.retrieved_at:
             raise ValueError("Approval date cannot precede source retrieval date.")

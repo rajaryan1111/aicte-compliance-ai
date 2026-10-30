@@ -194,6 +194,17 @@ class ValidationOrchestrationService:
         }
 
         # Check official regulatory rule catalogue
+        from backend.app.services.rule_engine import RuleApprovalService
+        db_approved_rules = RuleApprovalService.load_approved_rules_from_db(
+            db, application_type=app.application_type, academic_year=app.academic_year
+        )
+        for r_draft in db_approved_rules:
+            if self.rule_registry.get_active(r_draft.rule_id) is None:
+                try:
+                    self.rule_registry.activate(r_draft)
+                except Exception:
+                    pass
+
         active_official_rules = self.rule_registry.active_rules()
         app_year = app.academic_year.strip() if app.academic_year else ""
         year_variants = {app_year}

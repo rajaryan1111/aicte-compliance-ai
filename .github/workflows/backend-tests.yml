@@ -100,6 +100,12 @@ jobs:
           DATABASE_URL: postgresql://aicte_test:aicte_test_pass@localhost:5432/aicte_test_db
         run: |
           python -m alembic -c backend/alembic.ini upgrade head
+      - name: Verify PostgreSQL migration downgrade to base and re-upgrade to head
+        env:
+          DATABASE_URL: postgresql://aicte_test:aicte_test_pass@localhost:5432/aicte_test_db
+        run: |
+          python -m alembic -c backend/alembic.ini downgrade base
+          python -m alembic -c backend/alembic.ini upgrade head
       - name: Run real infrastructure integration test suite
         env:
           RUN_LIVE_INTEGRATION_TESTS: "true"
