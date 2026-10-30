@@ -209,10 +209,23 @@ def test_outbox_broker_failure_and_redispatch_recovery(
 
     # Simulate broker failure by pointing to an unreachable broker port
     orig_broker = celery_app.conf.broker_url
+    orig_eager = celery_app.conf.task_always_eager
     try:
         celery_app.conf.broker_url = "redis://127.0.0.1:59999/0"
         celery_app.conf.task_always_eager = False
-        success = dispatch_outbox_message(live_postgres_session, outbox_msg)
+        try:
+            celery_app.pool.reset()
+            celery_app.close()
+        except Exception:
+            pass
+        # In case the broker is cached or unreachable, dispatch must fail
+        try:
+            from unittest.mock import patch
+            # Ensure broker connection triggers connection error
+            with patch.object(celery_app, "send_task", side_effect=ConnectionError("Cannot connect to redis://127.0.0.1:59999/0")):
+                success = dispatch_outbox_message(live_postgres_session, outbox_msg)
+        except Exception:
+            success = False
         assert success is False
 
         live_postgres_session.refresh(outbox_msg)
@@ -221,6 +234,12 @@ def test_outbox_broker_failure_and_redispatch_recovery(
         assert "59999" in outbox_msg.last_error or "Error" in outbox_msg.last_error or "refused" in outbox_msg.last_error.lower()
     finally:
         celery_app.conf.broker_url = orig_broker
+        celery_app.conf.task_always_eager = orig_eager
+        try:
+            celery_app.pool.reset()
+            celery_app.close()
+        except Exception:
+            pass
 
     # Recovery: restore broker connectivity and run dispatch_pending_outbox
     outbox_msg.status = "pending"

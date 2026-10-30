@@ -149,3 +149,4 @@ def test_university_redirect_blocked(monkeypatch):
     res = adapter.verify(req)
     assert res.status == "source_unavailable"
     assert "redirect" in res.failure_reason.lower()
+

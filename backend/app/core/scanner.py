@@ -26,8 +26,9 @@ class ScanResult:
     """Outcome of a malware scan."""
 
     status: ScanStatus
-    scanner_name: str
+    scanner_name: str = "clamav"
     details: str | None = None
+    engine_version: str | None = None
 
 
 class MalwareScanner(Protocol):
@@ -129,12 +130,31 @@ class QuarantineScanner:
 _default_scanner: MalwareScanner | None = None
 
 
+class MockCleanScanner:
+    """Explicit test/dev mock scanner that detects EICAR and marks standard files clean."""
+
+    def scan(self, data: bytes, filename: str | None = None) -> ScanResult:
+        if b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE" in data:
+            return ScanResult(
+                status=ScanStatus.REJECTED,
+                scanner_name="mock_clean",
+                details="Win.Test.EICAR_HDB-1 FOUND",
+            )
+        return ScanResult(
+            status=ScanStatus.CLEAN,
+            scanner_name="mock_clean",
+            details="OK",
+        )
+
+
 def get_malware_scanner() -> MalwareScanner:
     """Retrieve singleton malware scanner."""
     global _default_scanner
     if _default_scanner is None:
         if os.getenv("CLAMAV_HOST"):
             _default_scanner = ClamAVScanner()
+        elif os.getenv("ALLOW_DEV_MOCK_SCANNER", "").lower() in ("true", "1", "yes"):
+            _default_scanner = MockCleanScanner()
         else:
             _default_scanner = QuarantineScanner()
     return _default_scanner

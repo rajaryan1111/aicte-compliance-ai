@@ -192,9 +192,9 @@ def test_full_application_workflow_end_to_end(
     )
     assert upload_res.status_code == 201, f"Upload failed: {upload_res.text}"
     upload_data = upload_res.json()
-    document_id = upload_data["document_id"]
-    version_id = upload_data["version_id"]
-    polling_url = upload_data["polling_url"]
+    document_id = upload_data["document"]["id"] if "document" in upload_data else upload_data["document_id"]
+    version_id = upload_data["version"]["id"] if "version" in upload_data else upload_data["version_id"]
+    polling_url = upload_data.get("polling_url")
     assert document_id > 0
     assert version_id > 0
     assert polling_url is not None
@@ -209,10 +209,11 @@ def test_full_application_workflow_end_to_end(
         poll_res = live_api_client.get(polling_url, headers=admin_headers)
         if poll_res.status_code == 200:
             job_status = poll_res.json()
-            if job_status.get("job", {}).get("state") in ("completed", "partial"):
+            job_state = job_status.get("state") or job_status.get("job", {}).get("state")
+            if job_state in ("completed", "partial"):
                 is_completed = True
-                assert job_status["scan_status"] == "clean"
-                assert job_status["is_terminal"] is True
+                assert job_status.get("scan_status") == "clean"
+                assert job_status.get("is_terminal") is True
                 break
         time.sleep(0.3)
 

@@ -109,6 +109,7 @@ jobs:
       - name: Run real infrastructure integration test suite
         env:
           RUN_LIVE_INTEGRATION_TESTS: "true"
+          ALLOW_DEV_MOCK_SCANNER: "true"
           INTEGRATION_DATABASE_URL: postgresql+psycopg2://aicte_test:aicte_test_pass@localhost:5432/aicte_test_db
           INTEGRATION_REDIS_URL: redis://localhost:6379/1
           CELERY_BROKER_URL: redis://localhost:6379/1

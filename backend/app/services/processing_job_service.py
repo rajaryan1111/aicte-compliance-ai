@@ -192,6 +192,7 @@ class ProcessingJobService:
 
             if job_cur:
                 is_transient = isinstance(exc, (IOError, TimeoutError, ConnectionError))
+                job_cur.attempt_count += 1
                 if is_transient and job_cur.attempt_count < job_cur.max_attempts:
                     backoff_sec = 2 ** job_cur.attempt_count * 5
                     scheduled_for = _utc_now() + timedelta(seconds=backoff_sec)

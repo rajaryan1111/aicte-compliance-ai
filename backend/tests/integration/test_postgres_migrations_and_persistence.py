@@ -184,12 +184,12 @@ def test_postgres_multi_tenant_isolation(live_postgres_engine: Engine) -> None:
         session.commit()
 
         # Query via repository scoped by tenant
-        results_a = ApplicationRepository.list_by_institution(session, inst_a.id)
+        results_a, _ = ApplicationRepository.list_by_institution(session, inst_a.id)
         app_ids_a = {a.id for a in results_a}
         assert app_a.id in app_ids_a
         assert app_b.id not in app_ids_a
 
-        results_b = ApplicationRepository.list_by_institution(session, inst_b.id)
+        results_b, _ = ApplicationRepository.list_by_institution(session, inst_b.id)
         app_ids_b = {b.id for b in results_b}
         assert app_b.id in app_ids_b
         assert app_a.id not in app_ids_b
@@ -239,7 +239,7 @@ def test_postgres_validation_run_snapshots_and_reviews(live_postgres_engine: Eng
             application_id=app.id,
             status="succeeded",
             outcome="attention_required",
-            consumed_document_versions=snapshot,
+            consumed_version_ids=snapshot,
             ruleset_version="2026.1-draft",
         )
         session.add(vrun)
