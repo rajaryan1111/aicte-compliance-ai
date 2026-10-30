@@ -290,7 +290,7 @@ def test_postgres_validation_run_snapshots_and_reviews(live_postgres_engine: Eng
         # Query back and verify snapshot immutability
         re_run = session.get(ValidationRun, vrun.id)
         assert re_run is not None
-        assert json.loads(re_run.consumed_document_versions)[0]["sha256"] == v1.sha256
+        assert json.loads(re_run.consumed_version_ids)[0]["sha256"] == v1.sha256
 
         re_pkg = session.get(AuditPackage, pkg.id)
         assert re_pkg is not None
