@@ -12,6 +12,13 @@ from sqlalchemy.orm import Session, sessionmaker
 DEFAULT_DATABASE_URL = "sqlite:///./aicte_dev.db"
 
 
+def normalize_database_url(url: str) -> str:
+    """Normalize legacy postgresql:// URL schemes to postgresql+psycopg2://."""
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg2://" + url[len("postgresql://") :]
+    return url
+
+
 def get_database_url() -> str:
     """Return the database URL from DATABASE_URL or the local SQLite default."""
     return os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
@@ -19,7 +26,8 @@ def get_database_url() -> str:
 
 def create_db_engine(url: str | None = None, echo: bool = False, **kwargs: Any) -> Engine:
     """Create a SQLAlchemy engine configured for PostgreSQL or SQLite."""
-    db_url = url or get_database_url()
+    raw_url = url or get_database_url()
+    db_url = normalize_database_url(raw_url)
     connect_args = kwargs.pop("connect_args", {})
 
     if db_url.startswith("sqlite"):

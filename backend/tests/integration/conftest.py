@@ -20,17 +20,19 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from backend.app.db.session import get_db
+from backend.app.db.session import get_db, normalize_database_url
 from backend.app.main import app
 
 # Integration test environment flags
 RUN_LIVE_INTEGRATION_TESTS = (
     os.getenv("RUN_LIVE_INTEGRATION_TESTS", "").lower() in ("true", "1", "yes")
 )
-DEFAULT_PG_URL = "postgresql://aicte_test:aicte_test_pass@localhost:5432/aicte_test_db"
+DEFAULT_PG_URL = "postgresql+psycopg2://aicte_test:aicte_test_pass@localhost:5432/aicte_test_db"
 DEFAULT_REDIS_URL = "redis://localhost:6379/1"
 
-POSTGRES_URL = os.getenv("INTEGRATION_DATABASE_URL", os.getenv("DATABASE_URL", DEFAULT_PG_URL))
+POSTGRES_URL = normalize_database_url(
+    os.getenv("INTEGRATION_DATABASE_URL", os.getenv("DATABASE_URL", DEFAULT_PG_URL))
+)
 REDIS_URL = os.getenv("INTEGRATION_REDIS_URL", os.getenv("REDIS_URL", DEFAULT_REDIS_URL))
 CLAMAV_HOST = os.getenv("AICTE_CLAMAV_HOST", "localhost")
 CLAMAV_PORT = int(os.getenv("AICTE_CLAMAV_PORT", "3310"))
@@ -50,7 +52,8 @@ Path(INTEGRATION_STORAGE_DIR).mkdir(parents=True, exist_ok=True)
 def is_postgres_available(url: str, timeout: float = 2.0) -> tuple[bool, str]:
     """Verify live PostgreSQL connectivity by issuing a SELECT 1 ping."""
     try:
-        eng = create_engine(url, connect_args={"connect_timeout": int(timeout)})
+        norm_url = normalize_database_url(url)
+        eng = create_engine(norm_url, connect_args={"connect_timeout": int(timeout)})
         with eng.connect() as conn:
             conn.execute(text("SELECT 1"))
         return True, "OK"
