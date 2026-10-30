@@ -177,6 +177,8 @@ def live_celery_worker(require_live_postgres: str, require_live_redis: str) -> G
     env["REDIS_URL"] = require_live_redis
     env["CELERY_BROKER_URL"] = require_live_redis
     env["CELERY_TASK_ALWAYS_EAGER"] = "false"
+    env["ALLOW_DEV_MOCK_SCANNER"] = "true"
+    env["PYTHONPATH"] = "."
     env["PYTHONUTF8"] = "1"
     env["JWT_SECRET_KEY"] = TEST_JWT_SECRET
     env["STORAGE_LOCAL_DIR"] = INTEGRATION_STORAGE_DIR
