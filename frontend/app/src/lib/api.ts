@@ -149,9 +149,11 @@ export function mapValidationErrors(
 // Defaults to the canonical Render backend deployment for this project.
 const DEFAULT_PROD_API_BASE = "https://aicte-compliance-api-preview.onrender.com";
 
-const RAW_API_BASE = import.meta.env.VITE_API_BASE_URL
+// `import.meta.env` is undefined outside Vite (for example in the Node test runner), so the
+// optional chain keeps this module importable by contract tests.
+const RAW_API_BASE = import.meta.env?.VITE_API_BASE_URL
   ? import.meta.env.VITE_API_BASE_URL
-  : (import.meta.env.DEV ? "" : DEFAULT_PROD_API_BASE);
+  : (import.meta.env?.DEV ? "" : DEFAULT_PROD_API_BASE);
 
 export const API_BASE = RAW_API_BASE.trim().replace(/\/+$/, "");
 

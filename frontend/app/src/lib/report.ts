@@ -20,7 +20,7 @@ const columns = [
   "evidence_json",
 ];
 
-function safeSpreadsheetValue(value: string): string {
+export function safeSpreadsheetValue(value: string): string {
   // Prefix risky formula initiators, including ones preceded by whitespace or controls.
   let firstMeaningfulCharacter = 0;
   while (firstMeaningfulCharacter < value.length) {

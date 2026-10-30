@@ -1,9 +1,14 @@
 /**
  * AICTE Approval Process Handbook (APH 2024–2027) Regulatory Knowledge & Clause Reference.
- * 
- * Provides official clause citations, statutory document metadata, mitigation undertakings,
+ *
+ * Provides clause citations, statutory document metadata, mitigation undertakings,
  * and Cadre/FSR calculation formulas based on the Council's published norms.
+ *
+ * The citations here are carried from the project catalog and remain unverified against the
+ * official handbook; the UI must say so wherever they are shown.
  */
+
+import { lookupDocumentGuidance } from "./compliance-guidance.ts";
 
 export interface APHClauseReference {
   clause: string;
@@ -138,11 +143,74 @@ export const CADRE_PROGRAM_NORMS: Record<string, CadreNorms> = {
   },
 };
 
+/**
+ * Document identifiers used by the API and presets, mapped to the catalog entries above.
+ *
+ * Only mappings that are genuinely the same document are listed. Anything absent resolves to
+ * `undefined`, so the UI can say "no clause mapped" instead of showing a wrong citation.
+ */
+export const DOCUMENT_ID_TO_CATALOG_KEY: Record<string, string> = {
+  fire_safety_certificate: "Fire Safety Certificate",
+  building_occupancy_certificate: "Occupancy Certificate",
+  land_use_certificate: "Land Ownership Deed / 30-Year Registered Lease",
+  mandatory_disclosure: "Affidavit 1 & Affidavit 2 (AICTE Portal Format)",
+  fd_corpus_fund_receipt: "Fixed Deposit (Corpus Fund) Receipt",
+  nba_accreditation: "NBA Accreditation Certificate",
+  state_pollution_noc: "State Pollution Control Board NOC",
+  building_stability_certificate: "Building Structural Stability Certificate",
+};
+
+function normalizeDocumentKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+const NORMALIZED_CATALOG: Map<string, APHClauseReference> = (() => {
+  const index = new Map<string, APHClauseReference>();
+  for (const [key, reference] of Object.entries(APH_CLAUSE_CATALOG)) {
+    index.set(normalizeDocumentKey(key), reference);
+  }
+  return index;
+})();
+
+/**
+ * Resolve a clause reference for any spelling a caller might send: catalog label, snake_case
+ * identifier, or a humanised display name.
+ */
+export function resolveClauseForDocument(documentId: string): APHClauseReference | undefined {
+  if (!documentId) return undefined;
+  const direct = APH_CLAUSE_CATALOG[documentId];
+  if (direct) return direct;
+
+  const mappedKey = DOCUMENT_ID_TO_CATALOG_KEY[documentId];
+  if (mappedKey) {
+    const mapped = APH_CLAUSE_CATALOG[mappedKey];
+    if (mapped) return mapped;
+  }
+
+  const normalized = normalizeDocumentKey(documentId);
+  const byNormalized = NORMALIZED_CATALOG.get(normalized);
+  if (byNormalized) return byNormalized;
+
+  // "fire_safety_certificate" -> "Fire Safety Certificate"
+  const humanized = documentId.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return APH_CLAUSE_CATALOG[humanized];
+}
+
+/** One line of the scoring derivation, surfaced to the user so the number is auditable. */
+export interface ReadinessAdjustment {
+  key: string;
+  points: number;
+  detail: string;
+}
+
 export interface ReadinessScoreResult {
   score: number; // 0 to 100
+  baseScore: number;
   tier: "ready_nil_deficiency" | "conditional_minor_hearing" | "critical_deficiency_risk";
   label: string;
   summary: string;
+  scoringVersion: string;
+  breakdown: ReadinessAdjustment[];
   totalRequired: number;
   submittedCount: number;
   missingCount: number;
@@ -158,6 +226,15 @@ export interface ReadinessScoreResult {
   }>;
 }
 
+/** Weights are a product judgement, not a regulation. They are published in the UI. */
+export const READINESS_WEIGHTS = {
+  statutoryGap: -18,
+  expiringSoon: -5,
+  expiringSoonDays: 60,
+} as const;
+
+export const READINESS_SCORING_VERSION = "readiness-2026-10-30.1";
+
 export function computeReadinessScore(
   required: string[],
   submitted: string[],
@@ -172,13 +249,14 @@ export function computeReadinessScore(
 
   let expiredCount = 0;
   let expiringSoonCount = 0;
-  let criticalCount = 0;
+  const statutoryGapDocuments: string[] = [];
 
-  // Process missing
+  // Required documents that were not submitted.
   for (const doc of missing) {
-    const clause = APH_CLAUSE_CATALOG[doc];
-    const isZeroTol = clause?.isStatutoryZeroTolerance ?? false;
-    if (isZeroTol) criticalCount++;
+    const clause = resolveClauseForDocument(doc);
+    const isZeroTol =
+      clause?.isStatutoryZeroTolerance ?? lookupDocumentGuidance(doc)?.isStatutoryZeroTolerance ?? false;
+    if (isZeroTol) statutoryGapDocuments.push(doc);
 
     findings.push({
       document: doc,
@@ -189,19 +267,21 @@ export function computeReadinessScore(
     });
   }
 
-  // Process submitted for expiry
+  // Submitted documents evaluated for expiry.
   for (const doc of submitted) {
     const expStr = expiryDates[doc];
     if (!expStr) continue;
 
     const expDate = new Date(expStr);
+    if (Number.isNaN(expDate.getTime())) continue;
     const diffDays = Math.ceil((expDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-    const clause = APH_CLAUSE_CATALOG[doc];
-    const isZeroTol = clause?.isStatutoryZeroTolerance ?? false;
+    const clause = resolveClauseForDocument(doc);
+    const isZeroTol =
+      clause?.isStatutoryZeroTolerance ?? lookupDocumentGuidance(doc)?.isStatutoryZeroTolerance ?? false;
 
     if (diffDays < 0) {
       expiredCount++;
-      if (isZeroTol) criticalCount++;
+      if (isZeroTol) statutoryGapDocuments.push(doc);
       findings.push({
         document: doc,
         type: "expired",
@@ -209,47 +289,79 @@ export function computeReadinessScore(
         impact: clause ? clause.deficiencyImpact : `Document expired ${Math.abs(diffDays)} days ago.`,
         suggestedAction: clause ? clause.mitigationUndertaking : "Obtain immediate official renewal acknowledgment.",
       });
-    } else if (diffDays <= 60) {
+    } else if (diffDays <= READINESS_WEIGHTS.expiringSoonDays) {
       expiringSoonCount++;
       findings.push({
         document: doc,
         type: "expiring_soon",
         clause,
-        impact: `Document expires in ${diffDays} days (during active APH academic scrutiny window).`,
-        suggestedAction: "Initiate renewal requisition to avoid gap during unannounced EVC surprise audit.",
+        impact: `Document expires in ${diffDays} days (during the active scrutiny window).`,
+        suggestedAction: clause
+          ? clause.mitigationUndertaking
+          : "Request the renewal acknowledgement before the current certificate lapses.",
       });
     }
   }
 
-  // Base score calculation
-  const total = required.length || 1;
-  const validSubmitted = Math.max(0, submitted.filter((d) => reqSet.has(d)).length - expiredCount);
-  let rawScore = Math.round((validSubmitted / total) * 100);
+  const total = required.length;
+  const submittedRequired = submitted.filter((doc) => reqSet.has(doc)).length;
+  const validRequiredSubmitted = Math.max(0, Math.min(total, submittedRequired) - expiredCount);
+  const baseScore = total === 0 ? 0 : Math.round((validRequiredSubmitted / total) * 100);
 
-  // Penalize for critical zero tolerance & expiring items
-  rawScore -= criticalCount * 18;
-  rawScore -= expiringSoonCount * 5;
-  rawScore = Math.max(0, Math.min(100, rawScore));
+  const breakdown: ReadinessAdjustment[] = [
+    {
+      key: "base",
+      points: baseScore,
+      detail: `${Math.min(validRequiredSubmitted, total)} of ${total} required documents valid and unexpired.`,
+    },
+    ...statutoryGapDocuments.map((doc) => ({
+      key: `statutory:${doc}`,
+      points: READINESS_WEIGHTS.statutoryGap,
+      detail: `${doc}: statutory document missing or expired.`,
+    })),
+    ...(expiringSoonCount > 0
+      ? [
+          {
+            key: "expiring-soon",
+            points: expiringSoonCount * READINESS_WEIGHTS.expiringSoon,
+            detail: `${expiringSoonCount} certificate(s) lapse within ${READINESS_WEIGHTS.expiringSoonDays} days.`,
+          },
+        ]
+      : []),
+  ];
+
+  const rawScore = Math.max(
+    0,
+    Math.min(100, breakdown.reduce((sum, adjustment) => sum + adjustment.points, 0)),
+  );
+
+  const criticalCount = statutoryGapDocuments.length;
 
   let tier: ReadinessScoreResult["tier"] = "critical_deficiency_risk";
-  let label = "High Risk of Deficiency Report & SHC Summons";
-  let summary = "Mandatory statutory documents are missing or expired. High likelihood of approval withholding.";
+  let label = "Critical gaps — rectify before submission";
+  let summary =
+    "Statutory documents are missing or expired. Rectify these before the file goes to scrutiny.";
 
-  if (rawScore >= 95 && criticalCount === 0 && expiredCount === 0) {
+  if (rawScore >= 95 && criticalCount === 0 && expiredCount === 0 && expiringSoonCount === 0) {
     tier = "ready_nil_deficiency";
-    label = "Ready for Nil-Deficiency Approval";
-    summary = "Checklist fulfills APH 2024–2027 statutory criteria with zero immediate deficiencies flagged.";
+    label = "Checklist complete — no gaps detected";
+    summary =
+      "Every required document in this request is present with a valid supplied expiry date. This is a preliminary comparison, not an approval.";
   } else if (rawScore >= 65) {
     tier = "conditional_minor_hearing";
-    label = "Conditional / Minor Rectification Required";
-    summary = "Meets primary criteria but requires procedural affidavits or renewal undertakings prior to scrutiny hearing.";
+    label = "Conditional — rectify before scrutiny";
+    summary =
+      "The checklist is largely complete but needs affidavits, renewals or undertakings before the scrutiny window closes.";
   }
 
   return {
     score: rawScore,
+    baseScore,
     tier,
     label,
     summary,
+    scoringVersion: READINESS_SCORING_VERSION,
+    breakdown,
     totalRequired: required.length,
     submittedCount: submitted.length,
     missingCount: missing.length,

@@ -74,3 +74,27 @@ class DuplicateDocumentSlotError(ConflictError):
 class DuplicateRecordError(ConflictError):
     """Raised when a general unique constraint violation occurs."""
     pass
+
+
+class RemediationPlanNotFoundError(NotFoundError):
+    """Raised when a remediation plan is absent from the resolved tenant scope."""
+
+    pass
+
+
+class RemediationTaskNotFoundError(NotFoundError):
+    """Raised when a task key does not exist inside the addressed plan."""
+
+    pass
+
+
+class StaleRemediationTaskVersionError(ConflictError):
+    """Raised when a client updates a task using a version that is no longer current."""
+
+    def __init__(self, expected: int, received: int) -> None:
+        super().__init__(
+            f"Task was modified by another user. Current version is {expected}, "
+            f"the request carried {received}. Reload the plan and retry."
+        )
+        self.expected = expected
+        self.received = received

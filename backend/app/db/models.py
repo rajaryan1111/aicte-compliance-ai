@@ -815,3 +815,126 @@ class RetentionRunRecord(Base):
             f"<RetentionRunRecord(id={self.id}, ref={self.run_reference!r}, "
             f"type={self.execution_type!r}, status={self.status!r})>"
         )
+
+
+class RemediationPlan(Base):
+    """Institution-scoped remediation plan derived from a preliminary validation result.
+
+    Identity is (institution, plan_key). `plan_key` is the deficiency signature computed by the
+    client, so re-running the same checklist reopens the same plan instead of creating a new one.
+    """
+
+    __tablename__ = "remediation_plans"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    institution_id: Mapped[int] = mapped_column(
+        ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    plan_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    application_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    # JSON: the deadline policy the due dates were derived from, kept for auditability.
+    deadline_policy: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "institution_id", "plan_key", name="uq_remediation_plan_institution_key"
+        ),
+    )
+
+    tasks: Mapped[list[RemediationTask]] = relationship(
+        back_populates="plan", cascade="all, delete-orphan", order_by="RemediationTask.id"
+    )
+    deadline_changes: Mapped[list[RemediationDeadlineChange]] = relationship(
+        back_populates="plan",
+        cascade="all, delete-orphan",
+        order_by="RemediationDeadlineChange.id.desc()",
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<RemediationPlan(id={self.id}, institution_id={self.institution_id}, "
+            f"key={self.plan_key!r})>"
+        )
+
+
+class RemediationTask(Base):
+    """One actionable deficiency inside a remediation plan, with attributable progress."""
+
+    __tablename__ = "remediation_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    plan_id: Mapped[int] = mapped_column(
+        ForeignKey("remediation_plans.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    task_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    document_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    document_label: Mapped[str] = mapped_column(String(255), nullable=False)
+    finding_code: Mapped[str] = mapped_column(String(40), nullable=False)
+    priority: Mapped[str] = mapped_column(String(10), nullable=False)
+    owner_role: Mapped[str] = mapped_column(String(120), nullable=False)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    evidence_required: Mapped[str] = mapped_column(Text, nullable=False)
+    clause: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="open", nullable=False, index=True)
+    note: Mapped[str] = mapped_column(String(280), default="", nullable=False)
+    # Optimistic concurrency: clients must send the version they read.
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    status_changed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    status_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("plan_id", "task_key", name="uq_remediation_task_plan_key"),
+    )
+
+    plan: Mapped[RemediationPlan] = relationship(back_populates="tasks")
+
+    def __repr__(self) -> str:
+        return (
+            f"<RemediationTask(id={self.id}, plan_id={self.plan_id}, "
+            f"key={self.task_key!r}, status={self.status!r}, v={self.version})>"
+        )
+
+
+class RemediationDeadlineChange(Base):
+    """Append-only record of a deadline-policy change on a remediation plan.
+
+    A reschedule is an institutional commitment, so the previous policy, the new policy, who made
+    the change and how many tasks moved are preserved even if the plan is later edited again.
+    """
+
+    __tablename__ = "remediation_deadline_changes"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    plan_id: Mapped[int] = mapped_column(
+        ForeignKey("remediation_plans.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    changed_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    previous_policy: Mapped[str] = mapped_column(Text, nullable=False)
+    new_policy: Mapped[str] = mapped_column(Text, nullable=False)
+    rescheduled_tasks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, nullable=False
+    )
+
+    plan: Mapped[RemediationPlan] = relationship(back_populates="deadline_changes")
+
+    def __repr__(self) -> str:
+        return (
+            f"<RemediationDeadlineChange(id={self.id}, plan_id={self.plan_id}, "
+            f"by={self.changed_by!r}, moved={self.rescheduled_tasks})>"
+        )

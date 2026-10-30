@@ -215,6 +215,7 @@ from backend.app.api.v1.applications import router as applications_router  # noq
 from backend.app.api.v1.audit_packages import router as audit_packages_router  # noqa: E402
 from backend.app.api.v1.auth import router as auth_router  # noqa: E402
 from backend.app.api.v1.documents import router as documents_router  # noqa: E402
+from backend.app.api.v1.remediation_plans import router as remediation_plans_router  # noqa: E402
 from backend.app.api.v1.reviews import router as reviews_router  # noqa: E402
 from backend.app.api.v1.validation import router as validation_router  # noqa: E402
 
@@ -224,6 +225,9 @@ app.include_router(documents_router, prefix="/api/v1/applications", tags=["docum
 app.include_router(validation_router, prefix="/api/v1/applications", tags=["validation"])
 app.include_router(reviews_router, prefix="/api/v1", tags=["reviews"])
 app.include_router(audit_packages_router, prefix="/api/v1", tags=["audit-packages"])
+app.include_router(
+    remediation_plans_router, prefix="/api/v1/institutions", tags=["remediation-plans"]
+)
 
 from backend.app.api.v1.compliance import router as compliance_router  # noqa: E402
 app.include_router(compliance_router, prefix="/api/v1/compliance", tags=["compliance"])

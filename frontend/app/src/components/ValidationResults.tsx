@@ -10,6 +10,7 @@ import { formatTimestamp } from "@/lib/utils";
 import { EmptyState } from "./EmptyState";
 import { RequestComparison } from "./RequestComparison";
 import { NilDeficiencyGapPredictor } from "./NilDeficiencyGapPredictor";
+import { RemediationActionPlan } from "./RemediationActionPlan";
 import { ExpiryWatchdogMatrix } from "./ExpiryWatchdogMatrix";
 import { ScrutinyDossierModal } from "./ScrutinyDossierModal";
 import { RegulatoryScrutinyWorkbench } from "./RegulatoryScrutinyWorkbench";
@@ -223,6 +224,8 @@ export function ValidationResults({ data, request, onReset }: ValidationResultsP
           )}
         </CardContent>
       </Card>
+
+      <RemediationActionPlan request={request} response={data} />
 
       <Alert variant="info" title="Notice" icon={<Shield className="h-5 w-5" />}>
         {data.notice}
