@@ -768,6 +768,7 @@ class RuleApprovalRecord(Base):
     source_clause: Mapped[str] = mapped_column(String(120), nullable=False)
     source_page: Mapped[str] = mapped_column(String(40), nullable=False)
     source_document_version: Mapped[str] = mapped_column(String(120), nullable=False)
+    source_document_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_retrieved_at: Mapped[date] = mapped_column(Date, nullable=False)
     source_verified_by: Mapped[str] = mapped_column(String(120), nullable=False)
     source_verified_at: Mapped[date] = mapped_column(Date, nullable=False)

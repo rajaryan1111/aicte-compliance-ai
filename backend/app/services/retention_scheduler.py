@@ -42,8 +42,20 @@ class RetentionBackgroundScheduler:
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def start(self) -> None:
-        """Start the background recurring retention worker thread."""
+    def start(self, force: bool = False) -> None:
+        """Start the background recurring retention worker thread.
+
+        Production designates Celery Beat as the primary retention scheduler.
+        In-process thread requires ENABLE_INPROCESS_RETENTION_SCHEDULER=true or force=True.
+        """
+        is_enabled = force or os.getenv("ENABLE_INPROCESS_RETENTION_SCHEDULER", "false").lower() in ("true", "1")
+        if not is_enabled:
+            logger.info(
+                "In-process RetentionBackgroundScheduler is disabled (production designates Celery Beat). "
+                "Set ENABLE_INPROCESS_RETENTION_SCHEDULER=true to enable for local dev."
+            )
+            return
+
         with self._lock:
             if self.is_running():
                 logger.info("RetentionBackgroundScheduler is already running.")
@@ -120,7 +132,11 @@ class RetentionBackgroundScheduler:
             close_on_exit = True
         try:
             latest = RetentionService.get_latest_run(db)
+            inprocess_enabled = os.getenv("ENABLE_INPROCESS_RETENTION_SCHEDULER", "false").lower() in ("true", "1")
             return {
+                "primary_scheduler": "celery_beat",
+                "celery_beat_configured": True,
+                "inprocess_scheduler_enabled": inprocess_enabled,
                 "scheduler_running": self.is_running(),
                 "schedule_interval_seconds": self.interval_seconds,
                 "quarantine_retention_days": DEFAULT_QUARANTINE_RETENTION_DAYS,

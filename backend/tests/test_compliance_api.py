@@ -298,6 +298,35 @@ def test_approve_regulatory_rule_director(client: TestClient, db_session: Sessio
     )
     dir_headers = {"Authorization": f"Bearer {token}"}
 
+    # 1. Unverified draft cannot be directly approved (returns 422)
+    resp_unverified = client.post(
+        "/api/v1/compliance/rules/APH_2024_FIRE_SAFETY/approve",
+        headers=dir_headers,
+        json={
+            "rationale": "Premature approval attempt without source provenance verification.",
+            "statutory_interpretation_approved": True,
+        },
+    )
+    assert resp_unverified.status_code == 422
+    assert "Source provenance must be verified" in resp_unverified.json()["detail"]
+
+    # 2. Step 1: Perform attributable source verification
+    from backend.app.services.rule_engine import AICTE_APH_DOCUMENT_SHA256
+    resp_verify = client.post(
+        "/api/v1/compliance/rules/APH_2024_FIRE_SAFETY/verify-source",
+        headers=dir_headers,
+        json={
+            "document_sha256": AICTE_APH_DOCUMENT_SHA256,
+            "rationale": "Authoritative AICTE APH 2024-2027 Handbook PDF retrieved and hash verified.",
+        },
+    )
+    assert resp_verify.status_code == 200
+    verify_data = resp_verify.json()
+    assert verify_data["rule_id"] == "APH_2024_FIRE_SAFETY"
+    assert verify_data["status"] == "verified"
+    assert verify_data["document_sha256"] == AICTE_APH_DOCUMENT_SHA256
+
+    # 3. Step 2: Perform statutory interpretation approval
     resp = client.post(
         "/api/v1/compliance/rules/APH_2024_FIRE_SAFETY/approve",
         headers=dir_headers,

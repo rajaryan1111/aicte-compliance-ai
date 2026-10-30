@@ -91,6 +91,23 @@ class FieldCorrectionResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # 6. Regulatory Rule Governance Schemas
 # ---------------------------------------------------------------------------
+class RuleSourceVerificationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    document_sha256: str = Field(pattern=r"^[a-f0-9]{64}$", description="Authoritative SHA-256 digest of source PDF (64 hex characters)")
+    rationale: str = Field(min_length=10, max_length=1000, description="Attributable source verification rationale")
+
+
+class RuleSourceVerificationRead(BaseModel):
+    rule_id: str
+    version: int
+    status: str
+    verified_by: str
+    verified_at: str
+    document_sha256: str
+    message: str
+
+
 class RuleApprovalInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -113,6 +130,7 @@ class RuleApprovalRead(BaseModel):
     source_clause: str
     source_page: str
     source_document_version: str
+    source_document_sha256: str | None = None
     statutory_interpretation_approved: bool
     decided_at: datetime
     effective_from: Any
@@ -163,6 +181,9 @@ class RetentionTriggerInput(BaseModel):
 
 
 class RetentionStatusResponse(BaseModel):
+    primary_scheduler: str = "celery_beat"
+    celery_beat_configured: bool = True
+    inprocess_scheduler_enabled: bool = False
     scheduler_running: bool
     schedule_interval_seconds: int
     quarantine_retention_days: int

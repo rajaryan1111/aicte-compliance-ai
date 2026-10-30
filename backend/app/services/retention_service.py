@@ -99,19 +99,31 @@ class RetentionService:
                 continue
 
             if storage_deleted:
-                # Step 2: Attributable audit event
-                ReviewAuditRepository.create_audit_event(
-                    db,
-                    action="QUARANTINED_FILE_PURGED",
-                    target_type="DocumentVersion",
-                    target_id=str(ver.id),
-                    actor_id=actor_id,
-                    institution_id=ver.document.application.institution_id if (ver.document and ver.document.application) else None,
-                    details=json.dumps({"storage_key": storage_key, "age_days": max_age_days}),
-                )
-                # Step 3: DB record deletion
-                db.delete(ver)
-                purged_count += 1
+                try:
+                    # Step 2: Attributable audit event
+                    ReviewAuditRepository.create_audit_event(
+                        db,
+                        action="QUARANTINED_FILE_PURGED",
+                        target_type="DocumentVersion",
+                        target_id=str(ver.id),
+                        actor_id=actor_id,
+                        institution_id=ver.document.application.institution_id if (ver.document and ver.document.application) else None,
+                        details=json.dumps({"storage_key": storage_key, "age_days": max_age_days}),
+                    )
+                    # Step 3: DB record deletion
+                    db.delete(ver)
+                    purged_count += 1
+                except Exception as db_exc:
+                    logger.error("DB error deleting DocumentVersion %d after storage delete: %s", ver.id, db_exc)
+                    ReviewAuditRepository.create_audit_event(
+                        db,
+                        action="QUARANTINED_PURGE_DB_FAILED_TOMBSTONE",
+                        target_type="DocumentVersion",
+                        target_id=str(ver.id),
+                        actor_id=actor_id,
+                        institution_id=ver.document.application.institution_id if (ver.document and ver.document.application) else None,
+                        details=json.dumps({"storage_key": storage_key, "error": str(db_exc), "status": "storage_deleted_pending_db"}),
+                    )
 
         db.commit()
         return (purged_count, storage_errors) if return_summary else purged_count
@@ -171,6 +183,20 @@ class RetentionService:
         if active_pass is not None:
             logger.warning("Another retention pass is currently running: %s; skipping concurrent pass", active_pass.run_reference)
             return active_pass
+
+        # Check Postgres advisory lock if running on PostgreSQL engine
+        bind = db.get_bind()
+        is_postgres = bind is not None and "postgresql" in getattr(bind.dialect, "name", "").lower()
+        if is_postgres:
+            try:
+                from sqlalchemy import text
+                lock_res = db.execute(text("SELECT pg_try_advisory_lock(83928172)")).scalar()
+                if lock_res is False:
+                    logger.warning("Postgres advisory lock 83928172 held by another worker; skipping concurrent pass.")
+                    if active_pass:
+                        return active_pass
+            except Exception as lock_err:
+                logger.warning("Advisory lock check skipped: %s", lock_err)
 
         now = _utc_now()
         run_ref = f"RET-{now.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6].upper()}"
@@ -241,6 +267,14 @@ class RetentionService:
                 db.refresh(run_rec_cur)
                 return run_rec_cur
             raise exc
+        finally:
+            bind = db.get_bind()
+            if bind is not None and "postgresql" in getattr(bind.dialect, "name", "").lower():
+                try:
+                    from sqlalchemy import text
+                    db.execute(text("SELECT pg_advisory_unlock(83928172)"))
+                except Exception:
+                    pass
 
     # Legacy alias for backward compatibility
     @classmethod

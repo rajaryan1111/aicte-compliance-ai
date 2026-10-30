@@ -17,6 +17,8 @@ import re
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+import ipaddress
+import socket
 import httpx
 
 from backend.app.ocr_adapter import parse_iso_date_candidate
@@ -37,13 +39,26 @@ VerificationStatus = Literal[
 
 
 class AuthorityEndpointSecurity:
-    """Validates external authority endpoints against TLS requirements and administrator allowlists."""
+    """Validates external authority endpoints against TLS, SSRF, and administrator allowlists."""
 
     DEFAULT_ALLOWED_DOMAINS: tuple[str, ...] = (
         ".gov.in",
         ".nic.in",
         ".ac.in",
         ".digitallocker.gov.in",
+    )
+
+    DEFAULT_APPROVED_HOSTS: tuple[str, ...] = (
+        "api.digitallocker.gov.in",
+        "digitallocker.gov.in",
+        "nad.digitallocker.gov.in",
+        "nad.gov.in",
+        "services.india.gov.in",
+        "delhigovt.nic.in",
+        "fire.delhigovt.nic.in",
+        "fireservice.up.gov.in",
+        "delhi.gov.in",
+        "aicte-india.org",
     )
 
     @classmethod
@@ -57,8 +72,23 @@ class AuthorityEndpointSecurity:
         return domains
 
     @classmethod
-    def validate_endpoint_url(cls, url: str | None, allow_insecure_for_test: bool = False) -> tuple[bool, str | None]:
-        """Validate that the authority endpoint uses TLS and belongs to an authorized authority domain."""
+    def get_approved_hosts(cls) -> set[str]:
+        hosts = set(cls.DEFAULT_APPROVED_HOSTS)
+        extra = os.getenv("ALLOWED_AUTHORITY_HOSTS", "")
+        for h in extra.split(","):
+            clean = h.strip().lower()
+            if clean:
+                hosts.add(clean)
+        return hosts
+
+    @classmethod
+    def validate_endpoint_url(
+        cls,
+        url: str | None,
+        allow_insecure_for_test: bool = False,
+        skip_dns_check: bool = False,
+    ) -> tuple[bool, str | None]:
+        """Validate endpoint URL with strict TLS, allowlist, credentials, and anti-SSRF protections."""
         if not url or not isinstance(url, str) or not url.strip():
             return False, "Endpoint URL is empty or not configured."
 
@@ -71,26 +101,72 @@ class AuthorityEndpointSecurity:
         if not parsed.scheme or not parsed.netloc:
             return False, "Endpoint URL is missing scheme or hostname."
 
+        # Anti-credential embedding check: user:pass@host forbidden
+        if parsed.username or parsed.password or ("@" in clean_url.split("/")[2]):
+            return False, "Embedded credentials (user:password@host) are strictly forbidden in authority endpoint URLs."
+
         is_test_env = (
             allow_insecure_for_test
             or os.getenv("ALLOW_INSECURE_AUTHORITY_ENDPOINTS", "false").lower() in ("true", "1")
-            or "127.0.0.1" in parsed.netloc
-            or "localhost" in parsed.netloc
         )
 
         if parsed.scheme.lower() != "https" and not is_test_env:
             return False, "Official authority endpoint requires HTTPS (TLS) encryption."
 
+        if parsed.port and parsed.port not in (443, 8443) and not is_test_env:
+            return False, f"Non-standard port '{parsed.port}' not permitted for official authority endpoints."
+
         hostname = parsed.hostname.lower() if parsed.hostname else ""
+
+        # Direct IP literal check against private/reserved ranges
+        try:
+            ip_obj = ipaddress.ip_address(hostname)
+            if (
+                ip_obj.is_loopback
+                or ip_obj.is_private
+                or ip_obj.is_link_local
+                or ip_obj.is_reserved
+                or ip_obj.is_multicast
+                or ip_obj.is_unspecified
+            ):
+                if not is_test_env:
+                    return False, f"Direct access to private or loopback IP address '{hostname}' is blocked by anti-SSRF protections."
+        except ValueError:
+            pass
+
         if is_test_env:
             return True, None
 
         allowed_domains = cls.get_allowed_domains()
-        if not any(hostname.endswith(domain) or hostname == domain.lstrip(".") for domain in allowed_domains):
+        approved_hosts = cls.get_approved_hosts()
+        is_allowed = (
+            hostname in approved_hosts
+            or any(hostname.endswith(domain) or hostname == domain.lstrip(".") for domain in allowed_domains)
+        )
+        if not is_allowed:
             return False, (
-                f"Hostname '{hostname}' is not in the administrator-verified authority allowlist "
-                f"({', '.join(sorted(allowed_domains))}). Arbitrary endpoints are rejected for safety."
+                f"Hostname '{hostname}' is not in the administrator-verified authority allowlist. "
+                "Arbitrary endpoints are rejected for safety."
             )
+
+        # Anti-SSRF DNS resolution check against private/loopback/link-local ranges
+        if not skip_dns_check:
+            try:
+                addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+                for entry in addr_info:
+                    ip_str = entry[4][0]
+                    resolved_ip = ipaddress.ip_address(ip_str)
+                    if (
+                        resolved_ip.is_loopback
+                        or resolved_ip.is_private
+                        or resolved_ip.is_link_local
+                        or resolved_ip.is_reserved
+                        or resolved_ip.is_multicast
+                        or resolved_ip.is_unspecified
+                    ):
+                        return False, f"Endpoint hostname '{hostname}' resolves to restricted IP address '{ip_str}'; blocked by anti-SSRF protections."
+            except socket.gaierror:
+                pass
 
         return True, None
 
@@ -256,7 +332,7 @@ class DigiLockerIssuerAdapter(IssuingAuthorityAdapter):
             )
 
         try:
-            with httpx.Client(timeout=5.0) as client:
+            with httpx.Client(timeout=5.0, follow_redirects=False) as client:
                 resp = client.post(
                     f"{self.base_url.rstrip('/')}/pull/certificate",
                     json=submitted,
@@ -266,6 +342,18 @@ class DigiLockerIssuerAdapter(IssuingAuthorityAdapter):
                         "User-Agent": "AICTE-Compliance-Verification/1.0",
                     },
                 )
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    return VerificationResultPayload(
+                        adapter_name=self.adapter_name,
+                        source_title=self.source_title,
+                        is_official_source=False,
+                        status="source_unavailable",
+                        source_reference=None,
+                        submitted_attributes=submitted,
+                        returned_attributes={},
+                        failure_reason=f"DigiLocker gateway attempted unauthorized HTTP redirect ({resp.status_code}); blocked for security.",
+                        evidence={"http_status": resp.status_code},
+                    )
                 if resp.status_code in (401, 403):
                     return VerificationResultPayload(
                         adapter_name=self.adapter_name,
@@ -505,12 +593,24 @@ class StateFireSafetyIssuerAdapter(IssuingAuthorityAdapter):
             )
 
         try:
-            with httpx.Client(timeout=5.0) as client:
+            with httpx.Client(timeout=5.0, follow_redirects=False) as client:
                 resp = client.post(
                     self.portal_url,
                     json=submitted,
                     headers={"Accept": "application/json", "User-Agent": "AICTE-Compliance-Verification/1.0"},
                 )
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    return VerificationResultPayload(
+                        adapter_name=self.adapter_name,
+                        source_title=self.source_title,
+                        is_official_source=False,
+                        status="source_unavailable",
+                        source_reference=None,
+                        submitted_attributes=submitted,
+                        returned_attributes={},
+                        failure_reason=f"State Fire Safety portal attempted unauthorized HTTP redirect ({resp.status_code}); blocked for security.",
+                        evidence={"http_status": resp.status_code, "portal": self.portal_url},
+                    )
                 if resp.status_code in (401, 403):
                     return VerificationResultPayload(
                         adapter_name=self.adapter_name,
@@ -764,12 +864,24 @@ class UniversityAffiliationIssuerAdapter(IssuingAuthorityAdapter):
             )
 
         try:
-            with httpx.Client(timeout=5.0) as client:
+            with httpx.Client(timeout=5.0, follow_redirects=False) as client:
                 resp = client.post(
                     self.api_url,
                     json=submitted,
                     headers={"Accept": "application/json", "User-Agent": "AICTE-Compliance-Verification/1.0"},
                 )
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    return VerificationResultPayload(
+                        adapter_name=self.adapter_name,
+                        source_title=self.source_title,
+                        is_official_source=False,
+                        status="source_unavailable",
+                        source_reference=None,
+                        submitted_attributes=submitted,
+                        returned_attributes={},
+                        failure_reason=f"University portal attempted unauthorized HTTP redirect ({resp.status_code}); blocked for security.",
+                        evidence={"http_status": resp.status_code, "portal": self.api_url},
+                    )
                 if resp.status_code in (401, 403):
                     return VerificationResultPayload(
                         adapter_name=self.adapter_name,

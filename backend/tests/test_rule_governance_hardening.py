@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from backend.app.core.rbac import (
     PERMISSION_RULE_APPROVE,
+    PERMISSION_RULE_VERIFY,
     ROLE_INSTITUTION_ADMIN,
     ROLE_SCRUTINY_OFFICER,
     ROLE_REGULATORY_DIRECTOR,
@@ -38,6 +39,7 @@ from backend.app.rule_catalog import (
     SourceVerificationStatus,
 )
 from backend.app.services.rule_engine import (
+    AICTE_APH_DOCUMENT_SHA256,
     RuleApprovalService,
     RuleEngineService,
     RuleEvaluationContext,
@@ -96,25 +98,80 @@ def test_rule_approval_generic_string_rejected(db_session: Session):
         )
 
 
-def test_rule_approval_statutory_interpretation_affirmation_required(db_session: Session):
-    director_user = User(
+def test_rule_approval_blocked_without_source_verification(db_session: Session):
+    director = User(
         id=102,
         username="director_sharma",
         hashed_password="hash",
     )
-    director_user.role = ROLE_REGULATORY_DIRECTOR
-    db_session.add(director_user)
+    director.role = ROLE_REGULATORY_DIRECTOR
+    db_session.add(director)
     db_session.commit()
 
+    # Unverified draft must be blocked from approval
     draft = build_aph_draft_rules()[0]
-    with pytest.raises(ValueError, match="Statutory interpretation approval must be explicitly affirmed"):
+    assert draft.source_provenance.status == SourceVerificationStatus.UNVERIFIED
+
+    with pytest.raises(ValueError, match="Source provenance must be verified before statutory approval"):
         RuleApprovalService.approve_rule_db(
             db_session,
             rule_draft=draft,
-            reviewer_user=director_user,
-            rationale="Valid regulatory rationale.",
-            statutory_interpretation_approved=False,
+            reviewer_user=director,
+            rationale="Attempting approval without source verification.",
+            statutory_interpretation_approved=True,
         )
+
+
+def test_source_verification_permission_and_hash_enforcement(db_session: Session):
+    officer = User(id=110, username="officer_alice", hashed_password="hash")
+    officer.role = ROLE_SCRUTINY_OFFICER
+    director = User(id=111, username="director_raman", hashed_password="hash")
+    director.role = ROLE_REGULATORY_DIRECTOR
+    db_session.add_all([officer, director])
+    db_session.commit()
+
+    draft = build_aph_draft_rules()[0]
+
+    # 1. Scrutiny officer lacks PERMISSION_RULE_VERIFY
+    with pytest.raises(PermissionError, match="lacks PERMISSION_RULE_VERIFY"):
+        RuleApprovalService.verify_source_db(
+            db_session,
+            rule_draft=draft,
+            verifier_user=officer,
+            document_sha256=AICTE_APH_DOCUMENT_SHA256,
+            rationale="Unauthorized source verification attempt.",
+        )
+
+    # 2. Invalid SHA-256 format rejected
+    with pytest.raises(ValueError, match="64-character lowercase hexadecimal"):
+        RuleApprovalService.verify_source_db(
+            db_session,
+            rule_draft=draft,
+            verifier_user=director,
+            document_sha256="not_a_valid_hash",
+            rationale="Verification with bad hash.",
+        )
+
+    # 3. Successful source verification
+    verified_draft = RuleApprovalService.verify_source_db(
+        db_session,
+        rule_draft=draft,
+        verifier_user=director,
+        document_sha256=AICTE_APH_DOCUMENT_SHA256,
+        rationale="Authoritative APH 2024-27 PDF retrieved from AICTE portal and cryptographically verified.",
+    )
+    assert verified_draft.source_provenance.status == SourceVerificationStatus.VERIFIED
+    assert verified_draft.source_provenance.verified_by == "director_raman"
+    assert verified_draft.source_provenance.document_sha256 == AICTE_APH_DOCUMENT_SHA256
+
+    # Verify AuditEvent
+    audit_events = list(
+        db_session.scalars(
+            select(AuditEvent).where(AuditEvent.action == "REGULATORY_SOURCE_VERIFIED")
+        ).all()
+    )
+    assert len(audit_events) == 1
+    assert audit_events[0].actor_id == "director_raman"
 
 
 def test_rule_approval_durable_persistence_and_audit(db_session: Session):
@@ -128,9 +185,20 @@ def test_rule_approval_durable_persistence_and_audit(db_session: Session):
     db_session.commit()
 
     draft = build_aph_draft_rules()[0]
-    approval_rec = RuleApprovalService.approve_rule_db(
+
+    # Step 1: Source verification
+    verified_draft = RuleApprovalService.verify_source_db(
         db_session,
         rule_draft=draft,
+        verifier_user=director,
+        document_sha256=AICTE_APH_DOCUMENT_SHA256,
+        rationale="Cryptographically verified against official AICTE APH PDF.",
+    )
+
+    # Step 2: Statutory interpretation approval
+    approval_rec = RuleApprovalService.approve_rule_db(
+        db_session,
+        rule_draft=verified_draft,
         reviewer_user=director,
         rationale="Approved after scrutiny of AICTE APH 2024-27 Clause 2.4 and Annexure-2.",
         statutory_interpretation_approved=True,
@@ -144,9 +212,10 @@ def test_rule_approval_durable_persistence_and_audit(db_session: Session):
     assert approval_rec.reviewer_username == "director_verma"
     assert approval_rec.reviewer_role == ROLE_REGULATORY_DIRECTOR
     assert approval_rec.source_clause == draft.source_clause
+    assert approval_rec.source_document_sha256 == AICTE_APH_DOCUMENT_SHA256
     assert approval_rec.statutory_interpretation_approved is True
 
-    # Verify AuditEvent
+    # Verify AuditEvent for approval
     audit_events = list(
         db_session.scalars(
             select(AuditEvent).where(AuditEvent.action == "REGULATORY_RULE_APPROVED")
@@ -170,16 +239,23 @@ def test_rule_supersession_governance(db_session: Session):
     db_session.commit()
 
     draft_v1 = build_aph_draft_rules()[0]
-    rec_v1 = RuleApprovalService.approve_rule_db(
+    verified_v1 = RuleApprovalService.verify_source_db(
         db_session,
         rule_draft=draft_v1,
+        verifier_user=director,
+        document_sha256=AICTE_APH_DOCUMENT_SHA256,
+        rationale="Attributable verification of version 1.",
+    )
+    rec_v1 = RuleApprovalService.approve_rule_db(
+        db_session,
+        rule_draft=verified_v1,
         reviewer_user=director,
         rationale="Approval of version 1.",
     )
     assert rec_v1.status == "active"
 
-    # Create version 2 draft
-    draft_v2 = draft_v1.model_copy(update={"version": 2, "title": "Updated Fire Safety Rule V2"}, deep=True)
+    # Create version 2 draft and verify
+    draft_v2 = verified_v1.model_copy(update={"version": 2, "title": "Updated Fire Safety Rule V2"}, deep=True)
 
     rec_v2 = RuleApprovalService.approve_rule_db(
         db_session,
@@ -256,11 +332,18 @@ def test_validation_evaluates_db_approved_rules(db_session: Session):
     db_session.add(director)
     db_session.commit()
 
-    # Approve all 6 canonical rules
+    # Step 1 & 2: Verify and Approve all 6 canonical rules
     for draft in build_aph_draft_rules():
-        RuleApprovalService.approve_rule_db(
+        verified = RuleApprovalService.verify_source_db(
             db_session,
             rule_draft=draft,
+            verifier_user=director,
+            document_sha256=AICTE_APH_DOCUMENT_SHA256,
+            rationale="Authoritative source verification against APH 2024-2027.",
+        )
+        RuleApprovalService.approve_rule_db(
+            db_session,
+            rule_draft=verified,
             reviewer_user=director,
             rationale="Statutory approval under APH 2024-2027 norms.",
         )

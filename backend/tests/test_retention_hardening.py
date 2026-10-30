@@ -316,12 +316,22 @@ def test_periodic_retention_pass_celery_task(db_session: Session):
         set_worker_session_factory(None)
 
 
-def test_background_scheduler_lifecycle(db_session: Session):
+def test_background_scheduler_lifecycle(db_session: Session, monkeypatch: pytest.MonkeyPatch):
     """RetentionBackgroundScheduler start, status, and graceful stop."""
     scheduler = RetentionBackgroundScheduler(interval_seconds=3600)
     assert not scheduler.is_running()
 
+    # 1. By default without ENABLE_INPROCESS_RETENTION_SCHEDULER, start() remains disabled
+    monkeypatch.delenv("ENABLE_INPROCESS_RETENTION_SCHEDULER", raising=False)
     scheduler.start()
+    assert not scheduler.is_running()
+    status_default = scheduler.get_status(db=db_session)
+    assert status_default["primary_scheduler"] == "celery_beat"
+    assert status_default["celery_beat_configured"] is True
+    assert status_default["inprocess_scheduler_enabled"] is False
+
+    # 2. When explicitly enabled for dev/test or forced, scheduler starts and stops gracefully
+    scheduler.start(force=True)
     assert scheduler.is_running()
 
     status = scheduler.get_status(db=db_session)

@@ -20,6 +20,7 @@ from backend.app.core.rbac import (
     PERMISSION_RETENTION_MANAGE,
     PERMISSION_RULE_APPROVE,
     PERMISSION_RULE_READ,
+    PERMISSION_RULE_VERIFY,
     has_permission,
 )
 from backend.app.db.models import Application, Document, DocumentVersion, ExtractedField, User
@@ -37,6 +38,8 @@ from backend.app.schemas.compliance import (
     RetentionTriggerInput,
     RuleApprovalInput,
     RuleApprovalRead,
+    RuleSourceVerificationInput,
+    RuleSourceVerificationRead,
     RuleSummaryRead,
     VerificationAttemptRead,
     VerificationRequestInput,
@@ -355,7 +358,12 @@ def get_retention_status(
     scheduler = RetentionBackgroundScheduler.get_instance()
     latest_run = RetentionService.get_latest_run(db)
 
+    import os
+    inprocess_enabled = os.getenv("ENABLE_INPROCESS_RETENTION_SCHEDULER", "false").lower() in ("true", "1")
     return RetentionStatusResponse(
+        primary_scheduler="celery_beat",
+        celery_beat_configured=True,
+        inprocess_scheduler_enabled=inprocess_enabled,
         scheduler_running=scheduler.is_running(),
         schedule_interval_seconds=scheduler.interval_seconds,
         quarantine_retention_days=DEFAULT_QUARANTINE_RETENTION_DAYS,
@@ -455,6 +463,61 @@ def list_regulatory_rules(
             )
         )
     return summaries
+
+
+@router.post(
+    "/rules/{rule_id}/verify-source",
+    response_model=RuleSourceVerificationRead,
+    status_code=status.HTTP_200_OK,
+    summary="Record attributable source provenance verification for a regulatory rule",
+    tags=["rule-governance"],
+)
+def verify_rule_source(
+    rule_id: str,
+    payload: RuleSourceVerificationInput,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> RuleSourceVerificationRead:
+    """Verify and attest the authoritative document source provenance with document SHA-256."""
+    user_role = _get_effective_user_role(current_user)
+    current_user.role = user_role
+    if not has_permission(user_role, PERMISSION_RULE_VERIFY):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User '{current_user.username}' lacks required permission '{PERMISSION_RULE_VERIFY}'.",
+        )
+
+    from backend.app.services.rule_engine import RuleApprovalService, build_aph_draft_rules
+
+    drafts = {d.rule_id: d for d in build_aph_draft_rules()}
+    draft = drafts.get(rule_id)
+    if draft is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Draft rule '{rule_id}' not found in canonical catalogue.",
+        )
+
+    try:
+        verified_draft = RuleApprovalService.verify_source_db(
+            db,
+            rule_draft=draft,
+            verifier_user=current_user,
+            document_sha256=payload.document_sha256,
+            rationale=payload.rationale,
+        )
+        return RuleSourceVerificationRead(
+            rule_id=verified_draft.rule_id,
+            version=verified_draft.version,
+            status=verified_draft.source_provenance.status.value,
+            verified_by=current_user.username,
+            verified_at=(verified_draft.source_provenance.verified_at or datetime.now(timezone.utc).date()).isoformat(),
+            document_sha256=payload.document_sha256,
+            message="Source provenance verified and attributed successfully.",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
 
 
 @router.post(

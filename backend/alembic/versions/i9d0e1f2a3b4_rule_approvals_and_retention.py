@@ -35,6 +35,7 @@ def upgrade() -> None:
         sa.Column('source_clause', sa.String(length=120), nullable=False),
         sa.Column('source_page', sa.String(length=40), nullable=False),
         sa.Column('source_document_version', sa.String(length=120), nullable=False),
+        sa.Column('source_document_sha256', sa.String(length=64), nullable=True),
         sa.Column('source_retrieved_at', sa.Date(), nullable=False),
         sa.Column('source_verified_by', sa.String(length=120), nullable=False),
         sa.Column('source_verified_at', sa.Date(), nullable=False),

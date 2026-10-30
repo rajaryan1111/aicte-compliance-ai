@@ -2,7 +2,7 @@ name: Backend tests
 
 on:
   push:
-    branches: ["main", "research/grounded-foundation"]
+    branches: ["main", "research/grounded-foundation", "hardening/**", "fix/**"]
   pull_request:
     branches: ["main", "research/grounded-foundation"]
 
