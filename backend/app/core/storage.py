@@ -78,6 +78,14 @@ class LocalStorageBackend:
         if not storage_key or not isinstance(storage_key, str) or not storage_key.strip():
             raise PathTraversalError("Storage key must be a non-empty string.")
 
+        # Reject Windows path syntax on every host OS. os.path.isabs() does not
+        # recognize drive-qualified keys such as C:\\... on POSIX, so they
+        # would otherwise be accepted as opaque subpaths on macOS/Linux.
+        if ":" in storage_key:
+            raise PathTraversalError(
+                f"Windows path syntax not permitted in storage key: {storage_key!r}"
+            )
+
         # Reject absolute paths and leading slashes/backslashes
         if storage_key.startswith(("/", "\\")) or os.path.isabs(storage_key):
             raise PathTraversalError(f"Absolute path not permitted in storage key: {storage_key!r}")
