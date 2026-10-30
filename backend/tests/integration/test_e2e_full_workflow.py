@@ -306,7 +306,7 @@ def test_full_application_workflow_end_to_end(
     assert export_res.status_code == 201, f"Export failed: {export_res.text}"
     pkg_data = export_res.json()
     package_id = pkg_data["id"]
-    expected_root_hash = pkg_data["merkle_root_hash"]
+    expected_root_hash = pkg_data.get("sha256_root_hash") or pkg_data["merkle_root_hash"]
 
     # -------------------------------------------------------------------------
     # Step 10: Download Audit Package Archive

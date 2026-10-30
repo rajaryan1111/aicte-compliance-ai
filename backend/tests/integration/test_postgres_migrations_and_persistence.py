@@ -248,11 +248,10 @@ def test_postgres_validation_run_snapshots_and_reviews(live_postgres_engine: Eng
 
         finding = Finding(
             validation_run_id=vrun.id,
-            finding_code="DOCUMENT_EXPIRED",
+            code="DOCUMENT_EXPIRED",
             severity="high",
             status="open",
-            document_type="aicte_approval",
-            message="Document expiry check flagged.",
+            summary="Document expiry check flagged.",
         )
         session.add(finding)
         session.commit()
@@ -261,11 +260,12 @@ def test_postgres_validation_run_snapshots_and_reviews(live_postgres_engine: Eng
         action = ReviewAction(
             application_id=app.id,
             finding_id=finding.id,
+            validation_run_id=vrun.id,
             reviewer_id="reviewer@aicte.gov.in",
-            action="resolved",
+            action="resolve",
+            previous_status="open",
             new_status="resolved",
-            resolution_outcome="issue_addressed",
-            justification="Valid gazette extension verified by reviewer.",
+            rationale="Valid gazette extension verified by reviewer.",
         )
         session.add(action)
         finding.status = "resolved"
