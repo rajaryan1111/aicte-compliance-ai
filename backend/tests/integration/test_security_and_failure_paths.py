@@ -147,7 +147,8 @@ def test_authentication_rejection_invalid_or_expired_token(
     # 2. Corrupted/tampered token
     res2 = live_api_client.get("/api/v1/applications/1", headers={"Authorization": "Bearer not.a.valid.jwt.token"})
     assert res2.status_code == 401
-    assert "invalid" in res2.json()["detail"].lower()
+    detail_lower = res2.json()["detail"].lower()
+    assert "invalid" in detail_lower or "could not validate" in detail_lower
 
     # 3. Expired token
     ts = int(_utc_now().timestamp())

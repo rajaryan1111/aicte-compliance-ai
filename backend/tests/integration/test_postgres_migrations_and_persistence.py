@@ -239,6 +239,7 @@ def test_postgres_validation_run_snapshots_and_reviews(live_postgres_engine: Eng
             application_id=app.id,
             status="succeeded",
             outcome="attention_required",
+            evaluation_date=_utc_now(),
             consumed_version_ids=snapshot,
             ruleset_version="2026.1-draft",
         )

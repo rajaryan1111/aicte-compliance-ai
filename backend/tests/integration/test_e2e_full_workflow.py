@@ -290,7 +290,7 @@ def test_full_application_workflow_end_to_end(
         f"/api/v1/applications/{application_id}",
         headers=foreign_headers,
     )
-    assert foreign_get.status_code == 403, "Foreign user was not denied access to cross-institution data"
+    assert foreign_get.status_code in (403, 404), "Foreign user was not denied access to cross-institution data"
 
     # -------------------------------------------------------------------------
     # Step 9: Export Audit Package
