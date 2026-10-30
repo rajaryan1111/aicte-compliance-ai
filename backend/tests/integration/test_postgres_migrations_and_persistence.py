@@ -49,7 +49,7 @@ def test_alembic_sequential_upgrade_on_postgres(require_live_postgres: str, live
 
     with live_postgres_engine.connect() as conn:
         rev = conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar()
-    assert rev == "g7b8c9d0e1f2", f"Expected head revision g7b8c9d0e1f2, found {rev}"
+    assert rev == "i9d0e1f2a3b4", f"Expected head revision i9d0e1f2a3b4, found {rev}"
 
 
 def test_all_canonical_tables_and_indexes_exist_in_postgres(live_postgres_engine: Engine) -> None:
@@ -73,6 +73,11 @@ def test_all_canonical_tables_and_indexes_exist_in_postgres(live_postgres_engine
         "processing_jobs",
         "outbox_messages",
         "audit_packages",
+        "institutional_record_snapshots",
+        "infrastructure_evidence",
+        "verification_attempts",
+        "rule_approvals",
+        "retention_runs",
     }
     missing = expected_tables - tables
     assert not missing, f"Missing PostgreSQL tables: {missing}"
@@ -327,3 +332,27 @@ def test_postgres_transaction_rollback_guarantee(live_postgres_engine: Engine) -
         # Clean up
         session.delete(inst)
         session.commit()
+
+
+def test_alembic_downgrade_and_reupgrade_on_postgres(require_live_postgres: str, live_postgres_engine: Engine) -> None:
+    """Verify that Alembic can downgrade to base and re-upgrade to head cleanly on real PostgreSQL."""
+    cfg = Config(str(ALEMBIC_INI_PATH))
+    cfg.set_main_option("sqlalchemy.url", require_live_postgres)
+    cfg.set_main_option("script_location", str(REPO_ROOT / "backend" / "alembic"))
+
+    # Downgrade to base
+    command.downgrade(cfg, "base")
+
+    # Verify tables removed
+    inspector = inspect(live_postgres_engine)
+    tables = set(inspector.get_table_names())
+    assert "rule_approvals" not in tables
+    assert "retention_runs" not in tables
+
+    # Re-upgrade to head
+    command.upgrade(cfg, "head")
+
+    inspector_re = inspect(live_postgres_engine)
+    tables_re = set(inspector_re.get_table_names())
+    assert "rule_approvals" in tables_re
+    assert "retention_runs" in tables_re

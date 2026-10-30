@@ -93,7 +93,7 @@ class InstitutionalRecordService:
             source_category=source_category,
             source_reference=source_reference or f"AICTE-HIST-{record_type.upper()}-2025",
             record_data=json.dumps(default_data),
-            limitations=limitations or "Baseline synthetic demonstration record for scrutiny comparison.",
+            limitations=limitations or "Synthetic baseline demonstration record; not an authorized live AICTE database record.",
             retrieved_at=_utc_now(),
         )
         db.add(snapshot)

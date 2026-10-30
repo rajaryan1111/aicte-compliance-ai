@@ -18,6 +18,7 @@ WORKFLOW_PATH = (
 )
 
 LONG_LIVED_BRANCHES = {"main", "research/grounded-foundation"}
+ALLOWED_PUSH_BRANCHES = {"main", "research/grounded-foundation", "hardening/**", "fix/**"}
 
 
 def _workflow_lines() -> list[str]:
@@ -57,7 +58,7 @@ def _trigger_branches(trigger: str) -> set[str]:
     text = inline + " " + " ".join(
         line.strip().lstrip("-").strip() for line in nested
     )
-    return {value.strip('"').strip("'") for value in re.findall(r"[\w./-]+", text)}
+    return {value.strip('"').strip("'") for value in re.findall(r"[\w./*-]+", text)}
 
 
 def test_workflow_file_is_present():
@@ -71,7 +72,9 @@ def test_pull_requests_targeting_either_base_branch_are_checked():
 
 
 def test_pushes_to_long_lived_branches_are_checked():
-    assert _trigger_branches("push") == LONG_LIVED_BRANCHES
+    push_branches = _trigger_branches("push")
+    assert LONG_LIVED_BRANCHES.issubset(push_branches)
+    assert push_branches == ALLOWED_PUSH_BRANCHES
 
 
 def test_workflow_never_uses_pull_request_target():

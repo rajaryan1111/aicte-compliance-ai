@@ -27,6 +27,7 @@ def valid_rule_payload():
             "retrieved_at": "2025-12-01",
             "verified_by": "synthetic-reviewer",
             "verified_at": "2025-12-02",
+            "document_sha256": "a" * 64,
         },
         "effective_from": "2026-01-01",
         "applicability": {
@@ -210,6 +211,17 @@ def test_active_rule_rejects_effective_date_before_source_publication():
     payload["effective_from"] = "2026-01-01"
 
     with pytest.raises(ValidationError, match="publication_date"):
+        RuleVersionDraft.model_validate(payload)
+
+
+def test_verified_source_requires_valid_sha256_hash():
+    payload = valid_rule_payload()
+    payload["source_provenance"]["document_sha256"] = None
+    with pytest.raises(ValidationError, match="document_sha256 hash"):
+        RuleVersionDraft.model_validate(payload)
+
+    payload["source_provenance"]["document_sha256"] = "invalid_hash"
+    with pytest.raises(ValidationError):
         RuleVersionDraft.model_validate(payload)
 
 

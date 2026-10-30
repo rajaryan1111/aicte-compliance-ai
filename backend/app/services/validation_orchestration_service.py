@@ -68,9 +68,9 @@ class ValidationOrchestrationService:
         load_aph_rules: bool = False,
     ) -> None:
         self.rule_registry = rule_registry or RuleRegistry()
-        if load_aph_rules:
-            from backend.app.services.rule_engine import RuleEngineService
-            RuleEngineService(self.rule_registry)
+        if load_aph_rules and len(self.rule_registry) == 0:
+            from backend.app.services.rule_engine import RuleApprovalService
+            RuleApprovalService.activate_standard_aph_rules(self.rule_registry)
 
     def run_validation(
         self,
@@ -194,11 +194,31 @@ class ValidationOrchestrationService:
         }
 
         # Check official regulatory rule catalogue
+        from backend.app.services.rule_engine import RuleApprovalService
+        db_approved_rules = RuleApprovalService.load_approved_rules_from_db(
+            db, application_type=app.application_type, academic_year=app.academic_year
+        )
+        for r_draft in db_approved_rules:
+            if self.rule_registry.get_active(r_draft.rule_id) is None:
+                try:
+                    self.rule_registry.activate(r_draft)
+                except Exception:
+                    pass
+
         active_official_rules = self.rule_registry.active_rules()
+        app_year = app.academic_year.strip() if app.academic_year else ""
+        year_variants = {app_year}
+        if "-" in app_year:
+            p1, p2 = app_year.split("-", 1)
+            if len(p1) == 4 and len(p2) == 4:
+                year_variants.add(f"{p1}-{p2[2:]}")
+            elif len(p1) == 4 and len(p2) == 2:
+                year_variants.add(f"{p1}-{p1[:2]}{p2}")
+
         applicable_rules = [
             r for r in active_official_rules
             if app.application_type in r.applicability.application_types
-            and app.academic_year in r.applicability.academic_years
+            and any(v in r.applicability.academic_years for v in year_variants)
         ]
 
         if not applicable_rules:
@@ -773,7 +793,7 @@ class ValidationOrchestrationService:
                 category="regulatory",
                 status="not_run",
                 document_version_id=None,
-                message="Official regulatory rules are inactive or unverified. Statutory rule evaluation not run.",
+                message="No active, approved statutory rules in registry for this cycle.",
                 limitations=json.dumps(limitations),
             )
             check_results.append(cr_statutory)

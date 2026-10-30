@@ -139,8 +139,11 @@ class IssuingAuthorityService:
             details=json.dumps({
                 "adapter": result.adapter_name,
                 "status": result.status,
+                "is_official_source": result.is_official_source,
                 "document_version_id": version.id,
                 "source_reference": result.source_reference,
+                "failure_reason": result.failure_reason,
+                "evidence": result.evidence,
             }),
         )
         db.commit()

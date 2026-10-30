@@ -34,6 +34,11 @@ import os
 import random
 import shutil
 import sys
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -61,6 +66,11 @@ DATASET_LANG_TO_TESSERACT: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 _SYSTEM_FONT_CANDIDATES: list[str] = [
+    # Windows font paths
+    "C:/Windows/Fonts/Nirmala.ttf",
+    "C:/Windows/Fonts/mangal.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+    "C:/Windows/Fonts/segoeui.ttf",
     # macOS system / supplemental fonts
     "/System/Library/Fonts/Supplemental/Arial.ttf",
     "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
@@ -1295,7 +1305,7 @@ def _print_multiseed_report(report: dict[str, Any]) -> None:
         f"Time: {report['total_duration_seconds']}s"
     )
     if report["reconciliation"]["evaluated_plus_unavailable_plus_failed_equals_total"]:
-        print("Reconciliation: evaluated + unavailable + failed == total ✓")
+        print("Reconciliation: evaluated + unavailable + failed == total [OK]")
     else:
         print("Reconciliation: WARNING — counts do not sum to total!")
     print("------------------------------------------------------------")

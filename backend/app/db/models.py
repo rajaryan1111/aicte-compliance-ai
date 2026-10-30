@@ -748,3 +748,70 @@ class InfrastructureEvidence(Base):
             f"<InfrastructureEvidence(id={self.id}, type={self.evidence_type!r}, "
             f"inspection={self.inspection_recommended})>"
         )
+
+
+class RuleApprovalRecord(Base):
+    """Durable statutory approval record for a regulatory rule version."""
+
+    __tablename__ = "rule_approvals"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    rule_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    rule_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(50), default="active", nullable=False, index=True)
+    decision: Mapped[str] = mapped_column(String(50), nullable=False)
+    reviewer_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    reviewer_username: Mapped[str] = mapped_column(String(100), nullable=False)
+    reviewer_role: Mapped[str] = mapped_column(String(50), nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    source_title: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_clause: Mapped[str] = mapped_column(String(120), nullable=False)
+    source_page: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_document_version: Mapped[str] = mapped_column(String(120), nullable=False)
+    source_document_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_retrieved_at: Mapped[date] = mapped_column(Date, nullable=False)
+    source_verified_by: Mapped[str] = mapped_column(String(120), nullable=False)
+    source_verified_at: Mapped[date] = mapped_column(Date, nullable=False)
+    source_verification_status: Mapped[str] = mapped_column(String(50), default="verified", nullable=False)
+    statutory_interpretation_approved: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    rule_definition_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("rule_id", "rule_version", "decision", name="uq_rule_approval_version_decision"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<RuleApprovalRecord(id={self.id}, rule={self.rule_id!r}, v={self.rule_version}, "
+            f"decision={self.decision!r}, reviewer={self.reviewer_username!r})>"
+        )
+
+
+class RetentionRunRecord(Base):
+    """Auditable execution record for automated and manual data retention runs."""
+
+    __tablename__ = "retention_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    run_reference: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    execution_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default="running", nullable=False, index=True)
+    quarantined_purged_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    jobs_cleaned_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    storage_errors_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    triggered_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    def __repr__(self) -> str:
+        return (
+            f"<RetentionRunRecord(id={self.id}, ref={self.run_reference!r}, "
+            f"type={self.execution_type!r}, status={self.status!r})>"
+        )

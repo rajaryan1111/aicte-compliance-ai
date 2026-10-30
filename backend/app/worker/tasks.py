@@ -92,3 +92,30 @@ def validate_application_task(
         raise exc
     finally:
         db.close()
+
+
+@celery_app.task(name="backend.app.worker.tasks.periodic_retention_pass_task", bind=True, max_retries=2)
+def periodic_retention_pass_task(self: Any, dry_run: bool = False) -> dict[str, Any]:
+    """Execute scheduled data retention pass in the Celery background worker."""
+    logger.info("Starting periodic retention pass task")
+    db = get_worker_session()
+    try:
+        from backend.app.services.retention_service import RetentionService
+        rec = RetentionService.run_retention_pass(
+            db,
+            execution_type="scheduled",
+            dry_run=dry_run,
+            actor_id="celery_retention_worker",
+        )
+        return {
+            "run_reference": rec.run_reference,
+            "status": rec.status,
+            "quarantined_purged": rec.quarantined_purged_count,
+            "jobs_cleaned": rec.jobs_cleaned_count,
+            "storage_errors": rec.storage_errors_count,
+        }
+    except Exception as exc:
+        logger.exception("Task exception for periodic retention pass: %s", exc)
+        raise exc
+    finally:
+        db.close()

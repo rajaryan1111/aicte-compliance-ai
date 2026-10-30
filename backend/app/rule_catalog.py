@@ -91,6 +91,11 @@ class SourceProvenance(BaseModel):
     retrieved_at: date
     verified_by: str | None = Field(default=None, min_length=3, max_length=120)
     verified_at: date | None = None
+    document_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[a-f0-9]{64}$",
+        description="SHA-256 digest (64 lowercase hex characters) of authoritative source document.",
+    )
 
     @model_validator(mode="after")
     def require_verification_record(self) -> "SourceProvenance":
@@ -101,6 +106,10 @@ class SourceProvenance(BaseModel):
                 )
             if self.verified_at < self.retrieved_at:
                 raise ValueError("verified_at must not precede retrieved_at")
+            if not self.document_sha256:
+                raise ValueError(
+                    "A verified source requires an authoritative document_sha256 hash"
+                )
         elif self.verified_by is not None or self.verified_at is not None:
             raise ValueError(
                 "Verification details require source status 'verified'"
@@ -221,6 +230,8 @@ def _activation_blockers(rule: RuleVersionDraft) -> list[str]:
             blockers.append("source provenance must be verified before activation")
         elif not provenance.verified_by or provenance.verified_at is None:
             blockers.append("verified source must record verified_by and verified_at")
+        elif not provenance.document_sha256:
+            blockers.append("verified source requires authoritative document_sha256 hash")
 
     approval = getattr(rule, "approval", None)
     if approval is None:
