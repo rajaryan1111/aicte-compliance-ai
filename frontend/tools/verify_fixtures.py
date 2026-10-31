@@ -8,13 +8,11 @@ alters the response cannot silently invalidate the frontend.
 It checks, for every file in `frontend/fixtures/`:
 
 1. **Replay** — the recorded request still produces the recorded status code and
-   body (ignoring `checked_at`, which is a timestamp).
+   body (ignoring `checked_at` and the server-generated expiry evaluation date).
 2. **Timestamp** — `checked_at`, when present, is a valid UTC ISO-8601 timestamp.
 3. **Contract** — a 200 `/api/v1/validate` body contains exactly the documented
    top-level keys; a 422 body contains only `detail`.
-4. **Honesty** — no fixture may claim a compliance verdict. Keys such as
-   `compliant`, `approved`, `verdict`, `eligible` and `accuracy` are rejected, and
-   any `status` value must be one the API actually defines.
+4. **Honesty** — no fixture may claim a compliance verdict.
 
 Exit codes: 0 clean, 1 at least one problem, 2 fixtures directory missing/empty.
 """
@@ -22,8 +20,9 @@ Exit codes: 0 clean, 1 at least one problem, 2 fixtures directory missing/empty.
 from __future__ import annotations
 
 import json
+import re
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,41 +36,30 @@ if str(REPO_ROOT) not in sys.path:
 
 from backend.app.main import app  # noqa: E402
 
-# Contract version this checker understands. Update together with
-# docs/development/API_CONTRACT.md; a mismatch is a contract change, not a bug fix.
 CONTRACT_VERSION = "0.1.0-draft"
 
 VALIDATE_TOP_LEVEL_KEYS = {
-    "institution_id",
-    "application_type",
-    "status",
-    "validation_scope",
-    "missing_documents",
-    "expired_documents",
-    "findings",
-    "checked_at",
-    "source",
-    "notice",
+    "institution_id", "application_type", "status", "validation_scope",
+    "missing_documents", "expired_documents", "findings", "checked_at",
+    "source", "notice",
 }
 HEALTH_TOP_LEVEL_KEYS = {"status", "service"}
 VALIDATE_STATUS_VALUES = {"preliminary_checks_passed", "attention_required"}
 FINDING_CODES = {"MISSING_DOCUMENT", "DOCUMENT_EXPIRED"}
 FINDING_KEYS = {"code", "document_type", "message", "evidence"}
 ERROR_TOP_LEVEL_KEYS = {"detail"}
-
-# Words that would turn a preliminary checklist result into a compliance claim.
 FORBIDDEN_KEYS = {
-    "compliant",
-    "compliance",
-    "approved",
-    "approval",
-    "verdict",
-    "eligible",
-    "eligibility",
-    "certified",
-    "accuracy",
-    "confidence_score",
+    "compliant", "compliance", "approved", "approval", "verdict",
+    "eligible", "eligibility", "certified", "accuracy", "confidence_score",
 }
+DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+EVALUATION_MESSAGE_DATE = re.compile(
+    r"evaluation date (?P<date>[^.\s]+)(?P<period>\.)"
+)
+FINDING_EVALUATION_DATE_PATH = re.compile(
+    r"^.+\.findings\[\d+\]\.evidence\.evaluation_date$"
+)
+FINDING_MESSAGE_PATH = re.compile(r"^.+\.findings\[\d+\]\.message$")
 
 
 def _walk_keys(payload: Any) -> set[str]:
@@ -94,8 +82,36 @@ def _is_utc_timestamp(value: str) -> bool:
     return parsed.tzinfo is not None and parsed.utcoffset() is not None
 
 
+def _is_iso_date(value: Any) -> bool:
+    if not isinstance(value, str) or DATE_PATTERN.fullmatch(value) is None:
+        return False
+    try:
+        return date.fromisoformat(value).isoformat() == value
+    except ValueError:
+        return False
+
+
+def _normalize_finding_message(value: str) -> tuple[str, bool]:
+    """Replace only one valid server-generated evaluation date in a finding message."""
+    if "evaluation date" not in value:
+        return value, True
+
+    matches = list(EVALUATION_MESSAGE_DATE.finditer(value))
+    if value.count("evaluation date") != 1 or len(matches) != 1:
+        return value, False
+    match = matches[0]
+    if not _is_iso_date(match.group("date")):
+        return value, False
+    normalized = EVALUATION_MESSAGE_DATE.sub(
+        lambda found: f"evaluation date <EVALUATION_DATE>{found.group('period')}",
+        value,
+        count=1,
+    )
+    return normalized, True
+
+
 def _compare(actual: Any, expected: Any, path: str, problems: list[str]) -> None:
-    """Compare recorded and live payloads, treating checked_at as opaque."""
+    """Compare payloads exactly, except for server-generated date fields."""
     if isinstance(expected, dict):
         if not isinstance(actual, dict):
             problems.append(f"{path}: expected an object, got {type(actual).__name__}")
@@ -118,32 +134,40 @@ def _compare(actual: Any, expected: Any, path: str, problems: list[str]) -> None
         for index, (actual_item, expected_item) in enumerate(zip(actual, expected, strict=False)):
             _compare(actual_item, expected_item, f"{path}[{index}]", problems)
         return
-    if actual != expected:
-        problems.append(f"{path}: live {actual!r} != fixture {expected!r}")
+    if FINDING_EVALUATION_DATE_PATH.fullmatch(path):
+        if not _is_iso_date(actual) or not _is_iso_date(expected):
+            problems.append(f"{path}: expected valid ISO dates, got live {actual!r} and fixture {expected!r}")
+        return
+    if FINDING_MESSAGE_PATH.fullmatch(path) and isinstance(actual, str) and isinstance(expected, str):
+        normalized_actual, actual_valid = _normalize_finding_message(actual)
+        normalized_expected, expected_valid = _normalize_finding_message(expected)
+        if not actual_valid or not expected_valid:
+            problems.append(f"{path}: malformed or ambiguous evaluation date in finding message")
+            return
+        if normalized_actual == normalized_expected:
+            return
+    if actual == expected:
+        return
+    problems.append(f"{path}: live {actual!r} != fixture {expected!r}")
 
 
 def check_fixture(client: TestClient, fixture: dict[str, Any]) -> list[str]:
     case_id = fixture.get("case_id", "<unnamed>")
     problems: list[str] = []
-
     endpoint = fixture.get("endpoint", "")
     method, _, path = endpoint.partition(" ")
     if not path:
         return [f"{case_id}: 'endpoint' must look like 'GET /health'"]
-
     if method == "GET":
         response = client.get(path)
     elif method == "POST":
         response = client.post(path, json=fixture.get("request"))
     else:
         return [f"{case_id}: unsupported method {method!r}"]
-
     if response.status_code != fixture.get("expected_status"):
         problems.append(
-            f"{case_id}: live status {response.status_code} != "
-            f"recorded {fixture.get('expected_status')}"
+            f"{case_id}: live status {response.status_code} != recorded {fixture.get('expected_status')}"
         )
-
     body = response.json()
     _compare(body, fixture.get("expected_response"), case_id, problems)
 
@@ -169,14 +193,12 @@ def check_fixture(client: TestClient, fixture: dict[str, Any]) -> list[str]:
     elif response.status_code == 200 and path == "/health":
         if live_keys != HEALTH_TOP_LEVEL_KEYS:
             problems.append(f"{case_id}: /health keys {sorted(live_keys)}")
-    elif response.status_code == 422:
-        if live_keys != ERROR_TOP_LEVEL_KEYS:
-            problems.append(f"{case_id}: 422 body must contain only 'detail', got {sorted(live_keys)}")
+    elif response.status_code == 422 and live_keys != ERROR_TOP_LEVEL_KEYS:
+        problems.append(f"{case_id}: 422 body must contain only 'detail', got {sorted(live_keys)}")
 
     forbidden = {key for key in _walk_keys(body) if key.lower() in FORBIDDEN_KEYS}
     if forbidden:
         problems.append(f"{case_id}: fixture implies a compliance verdict via {sorted(forbidden)}")
-
     return problems
 
 
@@ -184,12 +206,10 @@ def main() -> int:
     if not FIXTURE_DIR.is_dir():
         print(f"error: no fixtures directory at {FIXTURE_DIR}", file=sys.stderr)
         return 2
-
     paths = sorted(FIXTURE_DIR.glob("*.json"))
     if not paths:
         print(f"error: no fixtures in {FIXTURE_DIR}", file=sys.stderr)
         return 2
-
     client = TestClient(app)
     problems: list[str] = []
     for path in paths:
@@ -199,19 +219,16 @@ def main() -> int:
             problems.append(f"{path.name}: invalid JSON ({error})")
             continue
         problems.extend(check_fixture(client, fixture))
-
     if problems:
         print(f"{len(problems)} problem(s) across {len(paths)} fixture(s):", file=sys.stderr)
         for problem in problems:
             print(f"  - {problem}", file=sys.stderr)
         print(
-            "\nIf the API change is intended, re-capture with "
-            "`python frontend/tools/capture_fixtures.py` and update "
-            "docs/development/API_CONTRACT.md in the same PR.",
+            "\\nIf the API contract changed, update the fixture deliberately with "
+            "`python frontend/tools/capture_fixtures.py` and review the diff.",
             file=sys.stderr,
         )
         return 1
-
     print(f"fixtures OK: {len(paths)} case(s) match the live API (contract {CONTRACT_VERSION})")
     return 0
 

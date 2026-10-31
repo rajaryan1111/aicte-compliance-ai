@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -31,7 +31,7 @@ ALEMBIC_INI_PATH = REPO_ROOT / "backend" / "alembic.ini"
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def test_alembic_sequential_upgrade_on_postgres(require_live_postgres: str, live_postgres_engine: Engine) -> None:
@@ -49,7 +49,7 @@ def test_alembic_sequential_upgrade_on_postgres(require_live_postgres: str, live
 
     with live_postgres_engine.connect() as conn:
         rev = conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar()
-    assert rev == "i9d0e1f2a3b4", f"Expected head revision i9d0e1f2a3b4, found {rev}"
+    assert rev == "j0e1f2a3b4c5", f"Expected head revision j0e1f2a3b4c5, found {rev}"
 
 
 def test_all_canonical_tables_and_indexes_exist_in_postgres(live_postgres_engine: Engine) -> None:
@@ -78,6 +78,8 @@ def test_all_canonical_tables_and_indexes_exist_in_postgres(live_postgres_engine
         "verification_attempts",
         "rule_approvals",
         "retention_runs",
+        "consistency_checks",
+        "consistency_findings",
     }
     missing = expected_tables - tables
     assert not missing, f"Missing PostgreSQL tables: {missing}"
@@ -88,6 +90,19 @@ def test_all_canonical_tables_and_indexes_exist_in_postgres(live_postgres_engine
 
     ver_uqs = {uq["name"] for uq in inspector.get_unique_constraints("document_versions")}
     assert "uq_document_version_number" in ver_uqs
+
+    consistency_check_fks = inspector.get_foreign_keys("consistency_checks")
+    assert any(
+        fk["referred_table"] == "applications"
+        and fk["constrained_columns"] == ["application_id"]
+        for fk in consistency_check_fks
+    )
+    consistency_finding_fks = inspector.get_foreign_keys("consistency_findings")
+    assert any(
+        fk["referred_table"] == "consistency_checks"
+        and fk["constrained_columns"] == ["consistency_check_id"]
+        for fk in consistency_finding_fks
+    )
 
 
 def test_postgres_persistence_across_separate_sessions(live_postgres_engine: Engine) -> None:

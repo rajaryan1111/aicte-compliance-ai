@@ -10,12 +10,14 @@ import {
   Shield,
   X,
   GraduationCap,
+  GitCompareArrows,
 } from "lucide-react";
 import { Button } from "./Button";
 
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
   { path: "/validate", label: "Validate", icon: ClipboardCheck },
+  { path: "/consistency", label: "Consistency Checks", icon: GitCompareArrows },
   { path: "/cadre-calculator", label: "Cadre & FSR Norms", icon: GraduationCap },
   { path: "/history", label: "Audit History", icon: Clock3 },
   { path: "/about", label: "Compliance Guide", icon: Info },
@@ -26,11 +28,6 @@ export function Sidebar({
   onToggle,
   open,
   onClose,
-}: {
-  collapsed: boolean;
-  onToggle: () => void;
-  open: boolean;
-  onClose: () => void;
 }) {
   const location = useLocation();
   const items = navItems;
@@ -80,7 +77,7 @@ export function Sidebar({
               key={item.path}
               to={item.path}
               className={({ isActive: active }) => cn(
-                "flex items-center gap-3 px-3 py-2.5 min-h-10 rounded-lg border-l-[3px] border-transparent transition-all duration-200",
+                "flex items-center gap-3 px-3 py-2.5 min-h-10 rounded-lg border-transparent transition-all duration-200",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500",
                 active
                   ? "bg-primary-500/10 text-text-heading border-l-primary-500 pl-2"

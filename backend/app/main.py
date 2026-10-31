@@ -214,6 +214,8 @@ def validate_application(request: ValidationRequest) -> ValidationResponse:
 from backend.app.api.v1.applications import router as applications_router  # noqa: E402
 from backend.app.api.v1.audit_packages import router as audit_packages_router  # noqa: E402
 from backend.app.api.v1.auth import router as auth_router  # noqa: E402
+from backend.app.api.v1.compliance import router as compliance_router  # noqa: E402
+from backend.app.api.v1.consistency import router as consistency_router  # noqa: E402
 from backend.app.api.v1.documents import router as documents_router  # noqa: E402
 from backend.app.api.v1.reviews import router as reviews_router  # noqa: E402
 from backend.app.api.v1.validation import router as validation_router  # noqa: E402
@@ -225,7 +227,8 @@ app.include_router(validation_router, prefix="/api/v1/applications", tags=["vali
 app.include_router(reviews_router, prefix="/api/v1", tags=["reviews"])
 app.include_router(audit_packages_router, prefix="/api/v1", tags=["audit-packages"])
 
-from backend.app.api.v1.compliance import router as compliance_router  # noqa: E402
+app.include_router(consistency_router)
+
 app.include_router(compliance_router, prefix="/api/v1/compliance", tags=["compliance"])
 
 

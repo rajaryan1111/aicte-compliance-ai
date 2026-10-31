@@ -153,6 +153,44 @@ Not implemented: PDF input, multi-frame coverage (first frame only, warned), bou
 - State is in-memory: no durability, no audit trail, no concurrency handling.
 - Supersession and retirement are **not implemented**.
 
+## Consistency API — implemented
+
+The persistence backend implements seven institution-scoped routes under `/consistency`.
+This is separate from the frontend's existing historical-record comparison endpoint at
+`/api/v1/compliance/applications/{application_id}/institutional-records`; that existing
+response contract is unchanged. The consistency API records a check and its findings. It
+does not claim to run an AI or statutory evaluation.
+
+Every route requires a valid active database-backed user through `get_current_user`.
+Read access uses the existing `application:read` permission; mutations use
+`application:update`. Membership and role checks are applied to the parent application's
+institution. Missing and cross-institution resources return the same `404` response;
+same-institution roles without the required permission receive `403`. Writes and audit
+events commit together.
+
+| Method and path | Purpose | Permission |
+|---|---|---|
+| `POST /consistency/` | Create a check for an existing `application_id`; initial status is `pending`. | `application:update` |
+| `GET /consistency/{check_id}` | Retrieve an authorized check. | `application:read` |
+| `GET /consistency/` | List checks visible to the caller; optional `application_id` and `status_filter` query parameters further filter results. | `application:read` |
+| `POST /consistency/findings` | Add a finding to an authorized check; check status becomes `discrepancy_detected`. | `application:update` |
+| `GET /consistency/findings/{finding_id}` | Retrieve a finding through its parent check and application. | `application:read` |
+| `GET /consistency/checks/{check_id}/findings` | List authorized findings; optional `severity_filter` and `resolved` filters. | `application:read` |
+| `PATCH /consistency/findings/{finding_id}` | Update finding severity, description, evidence, or resolution. When all findings are resolved, the parent status becomes `resolved`. | `application:update` |
+
+Create-check fields: `application_id`, `check_name`, optional `description` and
+`related_field`. Create-finding fields: `consistency_check_id`, `field_name`, `value_1`,
+`value_2`, `severity`, `description`, optional `confidence` in `[0, 1]` and optional
+structured `evidence`. Finding updates accept one or more of `severity`, `description`,
+`evidence` and `resolved`; parent IDs and compared values are immutable through this API.
+Responses expose database IDs, parent IDs, persisted values, status/resolution and UTC
+timestamps. Request models reject unknown fields.
+
+The check's `pending` and `discrepancy_detected` states describe record workflow only.
+They do not imply that a comparison engine ran or that an AICTE requirement was met.
+Finding severity remains a string to match the existing persisted finding model, which
+uses both validation (`error`/`warning`/`info`) and review (`high`/`medium`) labels.
+
 ## Proposed endpoints — do not build against these
 
 | Endpoint | Status | Blocker |
@@ -171,13 +209,16 @@ functionality that does not exist.
 
 ## Authentication assumptions
 
-**None are implemented.** There is no auth dependency, no session, no token, no role.
-Therefore:
+The consistency API documented above requires a valid database-backed user and applies
+institution membership and permission checks on every route. Other endpoints retain their
+own authentication contracts; in particular, do not infer that one route's enforcement
+applies to another. The following statements describe only the rule-gate endpoints in the
+earlier proposal:
 
-- Every endpoint is anonymous. No endpoint may return institution-scoped data until
-  authentication and tenant scoping exist.
-- The frontend must not implement a login screen that implies server-side enforcement.
-- The rule gate's reviewer identity is a string assertion, never proof.
+- The rule gate does not authenticate the reviewer identity; it remains a string assertion,
+  not proof of identity.
+- Do not expose institution-scoped data from any endpoint that lacks its own authentication
+  and tenant-scoping checks.
 
 ## Versioning and compatibility
 
