@@ -1,5 +1,3 @@
-// ConsistencyDetailView.tsx
-
 import { useEffect, useState } from "react";
 import { Button } from "@/components/Button";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -80,4 +78,4 @@ export function ConsistencyDetailView({ token, baseUrl }: ConsistenceDetailViewP
   );
 }
 
-// ConsistencyDetailView.tsx self-fetches check+findings with cancelled guard; resolve/reopen via updateConsistencyFinding; add-finding form; EvidenceTable. Uses formatTimestamp/formatDate from @/lib/utils.
+export function ConsistencyDetailView;
