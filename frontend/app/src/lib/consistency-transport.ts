@@ -1,6 +1,6 @@
-/* consistency-transport.ts - Base-URL bootstrap, JSON fetch, error mapping and shared request pipeline; injectable for Node regression tests */
-
-import { fetchJson } from "@/lib/utils";
+// Transport module for consistency API
+// Base-URL bootstrap, JSON fetch, error mapping and shared request pipeline
+// Injectable for Node regression tests
 
 export interface TransportOptions {
   baseUrl: string;
