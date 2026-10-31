@@ -7,7 +7,7 @@ Branch: `feat/complete-intelligent-compliance-gap-analyzer`
 
 The deterministic Gap Analyzer implementation was continued without rebuilding its requirement registry, validation integration, persisted evidence mapping, or assessment model. The reported Consistency TypeScript failures and malformed test were repaired while preserving authenticated Consistency routes. Frontend type checking, production build, lint command, and frontend tests pass locally. Backend verification passed at 496 tests passed and 21 skipped, including the newly added document-field endpoint test.
 
-This branch is **not production release-ready**. Render service health, live RLS/Supabase behavior, production migration application, preview workflow, and real production assessment have not been verified. Vercel’s latest deployment is currently ERROR. No production deployment or production database operation has been performed.
+This branch is **not production release-ready**. A warm Render preview health probe and DB readiness pass, but the configured Render API service is pinned to an old arena branch without Gap Analyzer endpoints. Live RLS policy inspection was blocked by the database IP allowlist. Production migration application, preview API integration, and real assessment have not been verified. Vercel’s latest deployment is currently ERROR. No production deployment or production database operation has been performed.
 
 ## Existing implementation reused
 
@@ -38,9 +38,9 @@ See [GAP_ANALYZER_RELEASE_TEST_REPORT.md](./GAP_ANALYZER_RELEASE_TEST_REPORT.md)
 ## Infrastructure and deployment
 
 - Vercel project `aicte-compliance-frontend` is connected to `rajaryan1111/aicte-compliance-ai`. Latest deployment observed: ERROR, feature branch commit `6af070e446a0aea742004c4234685de8ed083fce`, error code `missing_export`. A preview for commit `fce00040a739162e1f4f4370def071344d592e32` is READY and `/gap-analyzer` returned HTTP 200. Production remains on its prior ERROR deployment; no production deployment has been triggered.
-- Render lists one workspace, “My Workspace”; service inspection is waiting for user workspace confirmation required by the Render connector.
+- Render inspection found only `aicte-compliance-api-preview`, configured on stale branch `arena/5614862e-aicte-compliance-ai` at `1229e3227c20a9f4dfdad1d9306588a4a437ef9f`; it is a Free plan service with no health-check path. The preview `/health` returned 200 after startup, and `/health/ready` reported PostgreSQL reachable at migration revision `g7b8c9d0e1f2`. Deployed OpenAPI has no Gap Analyzer/Consistency routes. The external DB metadata query was blocked because its IP is not on the database allowlist; no allowlist change was made.
 - Historical frontend URL: https://aicte-compliance-ai.vercel.app/ (HTTP 200 was previously observed; this alone does not prove application functionality).
-- Historical backend health URL: https://aicte-compliance-backend.onrender.com/health (previously timed out; current service identity/health not verified).
+- Backend health URLs: `https://aicte-compliance-api-preview.onrender.com/health` returned 200 after cold start; `/health/ready` reported ready. The historical `https://aicte-compliance-backend.onrender.com/health` also returned 200, but its OpenAPI schema has no Gap Analyzer routes. That hostname was not among services in the confirmed Render workspace.
 - The preview route is available, but no authenticated Gap Analyzer workflow or production deployment has been completed.
 
 ## GitHub
@@ -65,15 +65,15 @@ PR #20 remains a draft. Changes are committed and pushed through `f524069` (`doc
 | Production build | Passed; non-fatal chunk-size advisory |
 | Security | API-level auth/ownership checks and suite tenant-negative coverage; production RLS unverified |
 | GitHub push | Pushed through `f524069`; PR #20 updated and remains draft |
-| Render deployment | Not verified; waiting for workspace selection and service access |
+| Render deployment | Existing preview service healthy when warm but stale `arena/...` branch, no Gap Analyzer routes, health check unset; deployment of this feature not performed |
 | Vercel deployment | Feature branch preview READY (HTTP 200 for `/gap-analyzer`); production still ERROR, no production promotion |
 | Production workflow | Not run |
 
 ## Remaining release gates
 
 1. Complete final backend test rerun.
-2. Confirm Render workspace and inspect service/startup/health/database configuration.
-3. Verify live Supabase schema, RLS, and storage access.
+2. Reconfigure the Render API service to deploy the approved feature branch, configure a health check, and validate the safe migration path; this workspace currently points to stale `arena/...`.
+3. Obtain a safe approved path for live DB metadata/RLS inspection; current Render Postgres IP allowlist blocks the read-only connector.
 4. Continue keeping draft PR #20 updated with verified preview results.
 5. Obtain green preview deployment and test authenticated assessment, evidence review, finding navigation, and refresh persistence.
 6. Only then use the established safe production migration/deployment process and verify the live workflow.
