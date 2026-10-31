@@ -1,40 +1,48 @@
-# Application Flow — Proposed
+# Product Flows — Current and Proposed
 
-**Status:** workflow proposal; no authentication or persistence is claimed to exist yet.
+**Status:** Existing flows are implemented in part; flows marked proposed are future work. A UI route does not prove that the workflow behind it exists.
 
-## Applicant / institution representative
-1. Sign in.
-2. Select an institution the user is authorized to represent.
-3. Create an EOA application for a selected academic year.
-4. View the applicable checklist only if a reviewed, active ruleset exists for that category/year; otherwise show that the checklist is not yet configured.
-5. Upload PDF or JPG/PNG files. Display file-level validation and processing status.
-6. Review extracted fields with page/evidence references and correct them only through an attributable correction workflow.
-7. Run preliminary validation. Show findings with source, rule version, evidence and limitations.
-8. Replace a document by creating a new version; preserve prior runs.
-9. Submit for human review when ready.
+## Existing application and evidence flow
 
-## Reviewer
-1. Sign in and view only assigned/authorized applications.
-2. Open the validation run and inspect rule source, evidence, extracted values and processing limitations.
-3. Mark a finding acknowledged, resolved or requiring more information; provide a comment for any override/waiver.
-4. Record a human review outcome distinct from automated findings.
-5. Review status history and audit events.
+1. User signs in and accesses an institution through active membership/role.
+2. Authorized institution admin creates an application for type and academic year.
+3. User uploads a document to an application slot. API validates the upload, writes privately, creates a version and processing job/outbox message.
+4. Worker scans/processes the version and stores extracted fields with available OCR provenance and processing status.
+5. Authorized user requests validation. System freezes eligible version IDs, rule snapshot/context and evaluation date; evaluates configured readiness/consistency/expiry and approved rules; stores run, check results and findings. Async execution can return 202 and polling URL.
+6. User/reviewer reads findings and evidence, records review actions and rationale, and may use audit package export. The legacy `/api/v1/validate` is separate caller-supplied demo validation and is not an authoritative rules workflow.
 
-## Rule manager
-1. Draft a rule with exact source citation, applicable categories/years, conditions, dates, logic, limitations and test cases.
-2. Submit the rule for review; do not activate it automatically.
-3. Authorized approver publishes a new immutable rule version and records an audit event.
-4. New validation runs use the newly applicable version; historical runs retain the original version.
+## Proposed Gap Analyzer flow
 
-## External verification outcomes
-- Not attempted: no source call made.
-- Simulated: demo-only stub, clearly labelled.
-- Unavailable: authorized source could not be reached.
-- Inconclusive: source responded but did not settle the claim.
-- Externally verified: documented authoritative source supports the exact claim.
+1. Resolve institution/application context and candidate requirements; show applicability reason, source version, unknown conditions and reviewer controls.
+2. Retrieve only evidence authorized for this institution/application; display document version, extraction status and field/page provenance.
+3. Map evidence to requirements; user/reviewer confirms ambiguous mappings.
+4. Run deterministic checks and only approved optional AI-assisted cited analysis. A missing/unreadable/conflicting input remains distinct from a failure/pass.
+5. Persist a new assessment with exact input/version snapshot and evidence-linked findings.
+6. Route uncertain/high-impact cases to a reviewer, who accepts, rejects or requests more evidence with rationale.
+7. Reassessment creates another run; prior assessments/findings remain accessible.
 
-## Failure states
-Upload rejected, extraction failed, partial extraction, unsupported format, rule trigger unevaluable, provider timeout and permission denied must be visible, actionable states—not silently converted into success.
+## Proposed Action Planner flow
 
-## Research-dependent checklist behaviour — 2026-10-23
-If the 1 April 2024 scrutiny circular, applicable current amendments or academic-year applicability are unresolved, the applicant must see a clear “checklist not yet verified/configured” notice. Do not present the provisional document list in the source verification report as a complete current checklist. Keep any exploratory checklist visibly provisional and prevent it from generating an adverse outcome. SIH deadline and theme details are also unverified and should not be presented as confirmed product facts.
+1. Authorized user converts an actionable reviewed finding into a task, preserving finding/run/requirement links; reviews/edits any suggested instructions.
+2. Authorized admin assigns user/department, priority and due date. Validate scope on server.
+3. Owner updates progress and uploads corrective evidence through existing secure document intake; files become new document versions linked to the task.
+4. Reviewer approves/rejects evidence or requests more, with reason. Approval alone does not change compliance result.
+5. Reviewer triggers revalidation; system creates a new assessment. Authorized reviewer confirms task closure or sends it back/reopens with reason.
+6. Append every assignment, status transition, comment, evidence and decision to task history/audit. Overdue state is derived from due date and open status unless product decision says otherwise.
+
+## Proposed Regulatory Change flow
+
+1. Authorized process discovers an official publication, captures original file and source metadata, checksum and retrieval time.
+2. Verify source identity and publication version; unverified/contradictory items stay quarantined from authoritative evaluation.
+3. Extract clauses and compare with predecessor using text/structured comparison; semantic output is advisory. Human verifies clause alignment and whether change is substantive.
+4. Map approved change to governed requirement versions and affected application/evidence; reviewers confirm applicability and impact.
+5. Approving impact can queue explicit reassessment with a new requirement/source snapshot. Discovery itself changes no institution status and invalidates no document.
+6. Reassessment may produce findings; confirmed actionable findings may create tasks; corrective evidence follows the revalidation flow above.
+
+## Authorization, state and errors
+
+Every listed protected action authenticates the user and verifies active membership, permission and record ownership server-side. Worker rechecks ownership and current authorization constraints from durable IDs. Current global roles are the source for initial design; department scoping and new roles require decision. Show separate states for queued, processing, partial, failed, source unverified, applicability unknown, review pending, evidence rejected, overdue and resolved. Never convert failure or missing information to successful compliance. Use 404 concealment consistently for inaccessible tenant resources.
+
+## External/regulatory state vocabulary
+
+Reuse honest states `not_attempted`, `simulated`, `unavailable`, `inconclusive`, and `externally_verified` only for their existing source verification meaning. Regulatory source verification must be distinguished from a clause interpretation approval, a detected change, an impact approval and an institution compliance decision. Proposed action states and transitions are in `prd.md`.

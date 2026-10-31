@@ -149,12 +149,16 @@ class ValidationRepository:
         severity: str = "warning",
         status: str = "open",
         document_version_id: int | None = None,
+        requirement_assessment_id: int | None = None,
+        confidence: float | None = None,
         evidence: str | None = None,
     ) -> Finding:
         """Create a Finding linked to a validation run and optional document version."""
         finding = Finding(
             validation_run_id=validation_run_id,
             document_version_id=document_version_id,
+            requirement_assessment_id=requirement_assessment_id,
+            confidence=confidence,
             code=code,
             summary=summary,
             severity=severity,

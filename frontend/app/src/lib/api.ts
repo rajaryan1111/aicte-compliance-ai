@@ -85,6 +85,35 @@ export interface SavedValidationRunPage {
   has_more: boolean;
 }
 
+export interface GapRequirement { id: number; rule_id: string; version: number; title: string; description: string; source_title: string; source_clause: string; source_page: string; applicable: boolean; applicability_reason: string; required_evidence_type?: string | null }
+export interface GapAssessment { id: number; rule_id: string; rule_version: number; title: string; applicability_status: string; outcome_status: string; evidence_sufficiency: string; result_message: string; evidence: Array<Record<string, unknown>>; review_status: string }
+export interface GapAnalysis { metrics: { validation_run_id: number; total_requirements: number; applicable_requirements: number; compliant: number; partially_compliant: number; potential_gaps: number; missing_evidence: number; manual_verification_required: number; not_applicable: number; pending_review: number; coverage_percent: number | null; overall_status: string }; requirements: GapAssessment[] }
+export interface GapMapping { id: number; rule_approval_id: number; rule_id: string; document_version_id: number; document_type: string; version_number: number; processing_status: string; status: string; evidence_excerpt?: string | null; page_number?: number | null }
+export interface GapDocument { id: number; document_type: string; current_version?: { id: number; version_number: number; file_name?: string | null; processing_status: string; scan_status?: string | null } | null }
+function isGapMapping(value: unknown): value is GapMapping { return isRecord(value) && typeof value.id === "number" && typeof value.rule_id === "string" && typeof value.document_version_id === "number"; }
+
+export function fetchGapRequirements(applicationId: number, token: string) {
+  return authenticatedJson<GapRequirement[]>(`/api/v1/applications/${applicationId}/gap-requirements`, token, {}, (v): v is GapRequirement[] => Array.isArray(v));
+}
+export function fetchGapDocuments(applicationId: number, token: string) {
+  return authenticatedJson<{ items: GapDocument[]; total: number }>(`/api/v1/applications/${applicationId}/documents`, token, {}, (v): v is { items: GapDocument[]; total: number } => isRecord(v) && Array.isArray(v.items));
+}
+export function fetchGapAnalysis(applicationId: number, token: string) {
+  return authenticatedJson<GapAnalysis>(`/api/v1/applications/${applicationId}/gap-analysis`, token, {}, (v): v is GapAnalysis => isRecord(v) && isRecord(v.metrics) && Array.isArray(v.requirements));
+}
+export function fetchGapMappings(applicationId: number, token: string) {
+  return authenticatedJson<GapMapping[]>(`/api/v1/applications/${applicationId}/requirement-evidence-mappings`, token, {}, (v): v is GapMapping[] => Array.isArray(v));
+}
+export function submitGapMapping(applicationId: number, token: string, payload: { rule_approval_id: number; document_version_id: number; rationale: string }) {
+  return authenticatedJson<GapMapping>(`/api/v1/applications/${applicationId}/requirement-evidence-mappings`, token, { method: "POST", body: JSON.stringify(payload) }, isGapMapping);
+}
+export function reviewGapMapping(applicationId: number, mappingId: number, token: string, status: "confirmed" | "rejected") {
+  return authenticatedJson<GapMapping>(`/api/v1/applications/${applicationId}/requirement-evidence-mappings/${mappingId}`, token, { method: "PATCH", body: JSON.stringify({ status, rationale: `Reviewer ${status} this evidence mapping.` }) }, isGapMapping);
+}
+export function runGapAssessment(applicationId: number, token: string) {
+  return authenticatedJson<Record<string, unknown>>(`/api/v1/applications/${applicationId}/validate`, token, { method: "POST", body: JSON.stringify({}) }, isRecord);
+}
+
 // ── Error types ────────────────────────────────────────────────
 
 export interface ValidationErrorDetail {

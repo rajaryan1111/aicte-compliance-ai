@@ -27,6 +27,11 @@ from backend.app.db.models import (
     Document,
     DocumentVersion,
     Finding,
+    FindingEvidence,
+    RequirementAssessment,
+    RequirementAssessmentEvidence,
+    RequirementEvidenceMapping,
+    RuleApprovalRecord,
     ValidationCheckResult,
     ValidationRun,
 )
@@ -219,7 +224,30 @@ class ValidationOrchestrationService:
             r for r in active_official_rules
             if app.application_type in r.applicability.application_types
             and any(v in r.applicability.academic_years for v in year_variants)
+            and (r.effective_from is None or eval_date >= r.effective_from)
+            and (r.effective_to is None or eval_date <= r.effective_to)
         ]
+
+        rule_approval_records = list(db.scalars(
+            select(RuleApprovalRecord).where(
+                RuleApprovalRecord.status == "active",
+                RuleApprovalRecord.decision == "approved",
+                RuleApprovalRecord.source_verification_status == "verified",
+                RuleApprovalRecord.statutory_interpretation_approved.is_(True),
+                RuleApprovalRecord.source_document_sha256.is_not(None),
+            )
+        ).all())
+        approval_by_version = {
+            (r.rule_id, r.rule_version): r
+            for r in rule_approval_records
+            if r.source_document_sha256
+        }
+        all_mappings = list(db.scalars(select(RequirementEvidenceMapping).where(
+            RequirementEvidenceMapping.application_id == app.id
+        ).order_by(RequirementEvidenceMapping.id.asc())).all())
+        mappings_by_approval: dict[int, list[RequirementEvidenceMapping]] = {}
+        for mapping in all_mappings:
+            mappings_by_approval.setdefault(mapping.rule_approval_id, []).append(mapping)
 
         if not applicable_rules:
             reg_limitation = (
@@ -784,6 +812,8 @@ class ValidationOrchestrationService:
             check_results.append(cr)
 
         # Check H: Statutory AICTE Rules Check
+        requirement_assessment_by_rule: dict[str, RequirementAssessment] = {}
+        rule_eval_results = []
         if not applicable_rules:
             cr_statutory = ValidationRepository.create_check_result(
                 db,
@@ -807,34 +837,210 @@ class ValidationOrchestrationService:
                 institution_id=app.institution.institution_id if app.institution else str(app.institution_id),
                 evaluation_date=eval_date,
                 eligible_versions=eligible_versions,
+                requirement_evidence_versions={
+                    next((r.rule_id for r in active_official_rules if approval_by_version.get((r.rule_id, r.version)) is not None and approval_by_version[(r.rule_id, r.version)].id == approval_id), ""): db.get(DocumentVersion, selected.document_version_id)
+                    for approval_id, mapping_rows in mappings_by_approval.items()
+                    for selected in mapping_rows
+                    if selected.status == "confirmed"
+                    and selected.document_version_id in {v.id for v in eligible_versions.values()}
+                    and db.get(DocumentVersion, selected.document_version_id) is not None
+                    and any(approval_by_version.get((r.rule_id, r.version)) is not None and approval_by_version[(r.rule_id, r.version)].id == approval_id for r in active_official_rules)
+                },
             )
             rule_eval_results = rule_svc.evaluate_rules(eval_ctx)
-            for r_res in rule_eval_results:
-                cr_rule = ValidationRepository.create_check_result(
+
+        # Persist one immutable requirement outcome for every currently approved
+        # rule version, including rules that do not apply to this application.
+        from backend.app.services.gap_analyzer_service import _year_variants
+        from backend.app.services.rule_engine import required_evidence_type_for_rule
+        eval_by_rule = {result.rule_id: result for result in rule_eval_results}
+        eligible_by_id = {version.id: version for version in eligible_versions.values()}
+        for approval in rule_approval_records:
+            try:
+                definition = json.loads(approval.rule_definition_json)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if definition.get("rule_id") != approval.rule_id or definition.get("version") != approval.rule_version:
+                continue
+            type_match = app.application_type in definition.get("applicability", {}).get("application_types", [])
+            year_match = bool(_year_variants(app.academic_year).intersection(definition.get("applicability", {}).get("academic_years", [])))
+            date_match = approval.effective_from <= eval_date and (approval.effective_to is None or eval_date <= approval.effective_to)
+            applicable = type_match and year_match and date_match
+            result = eval_by_rule.get(approval.rule_id) if applicable else None
+            mappings = mappings_by_approval.get(approval.id, [])
+            evidence_rows: list[dict[str, Any]] = []
+            evidence_sufficiency = "missing"
+            confidence_values: list[float] = []
+            for mapping in mappings:
+                version = db.get(DocumentVersion, mapping.document_version_id)
+                if version is None:
+                    continue
+                field = next((item for item in version.extracted_fields if item.id == mapping.extracted_field_id), None) if mapping.extracted_field_id else None
+                sufficient_state = (
+                    "sufficient" if result and result.status == "passed" and mapping.status == "confirmed"
+                    else "insufficient" if result and result.status == "failed" and mapping.status == "confirmed"
+                    else "requires_manual_verification" if mapping.status != "rejected"
+                    else "rejected"
+                )
+                evidence_item = {
+                    "mapping_id": mapping.id,
+                    "document_version_id": version.id,
+                    "document_id": version.document_id,
+                    "document_type": version.document.document_type if version.document else "unknown",
+                    "version_number": version.version_number,
+                    "sha256": version.sha256,
+                    "extracted_field_id": field.id if field else None,
+                    "field_name": field.field_name if field else None,
+                    "page_number": mapping.page_number if mapping.page_number is not None else (field.page_number if field else None),
+                    "evidence_excerpt": mapping.evidence_excerpt or (field.raw_text if field else None),
+                    "extraction_confidence": field.confidence if field else None,
+                    "mapping_status": mapping.status,
+                    "evidence_sufficiency": sufficient_state,
+                }
+                evidence_rows.append(evidence_item)
+                if field and field.confidence is not None:
+                    confidence_values.append(field.confidence)
+
+            if not applicable:
+                applicability_status = "not_applicable"
+                applicability_reason = (
+                    f"Application type/year/effective-date scope did not match approved rule {approval.rule_id} v{approval.rule_version}."
+                )
+                evaluation_status = "not_applicable"
+                outcome_status = "not_applicable"
+                message = "This approved requirement does not apply to the selected application context."
+            else:
+                applicability_status = "applicable"
+                applicability_reason = "Approved rule scope matches application type, academic year, and effective date; evaluator conditions are recorded in the result."
+                evaluation_status = result.status if result else "inconclusive"
+                message = result.message if result else "The approved requirement was not evaluated by an available deterministic evaluator."
+                expected_type = required_evidence_type_for_rule(approval.rule_id)
+                mapped_confirmed = any(m.status == "confirmed" and m.document_version_id in eligible_by_id for m in mappings)
+                exact_version_present = bool(expected_type and expected_type in eligible_versions)
+                if result and result.status == "not_applicable":
+                    applicability_status = "not_applicable"
+                    outcome_status = "not_applicable"
+                    applicability_reason = result.message
+                    evidence_sufficiency = "not_applicable"
+                elif result and result.status in ("trigger_unevaluable", "inconclusive"):
+                    applicability_status = "requires_manual_verification"
+                    outcome_status = "manual_verification_required"
+                    evidence_sufficiency = "requires_manual_verification"
+                elif not mapped_confirmed:
+                    if not evidence_rows and not exact_version_present:
+                        outcome_status = "missing_evidence"
+                        evidence_sufficiency = "missing"
+                        message = "No eligible evidence was supplied for this applicable requirement; this is an evidence gap, not a determination of statutory non-compliance."
+                    else:
+                        outcome_status = "manual_verification_required"
+                        evidence_sufficiency = "requires_manual_verification"
+                        applicability_status = "requires_manual_verification"
+                        applicability_reason = "Requirement scope matches, but evidence mapping has not been confirmed by an authorized reviewer."
+                elif result and result.status == "passed":
+                    outcome_status = "compliant"
+                    evidence_sufficiency = "sufficient"
+                elif result and result.status == "failed":
+                    outcome_status = "potential_gap"
+                    evidence_sufficiency = "insufficient" if evidence_rows else "missing"
+                else:
+                    outcome_status = "manual_verification_required"
+                    evidence_sufficiency = "requires_manual_verification"
+
+            assessment = RequirementAssessment(
+                application_id=app.id,
+                validation_run_id=run.id,
+                rule_approval_id=approval.id,
+                applicability_status=applicability_status,
+                applicability_reason=applicability_reason,
+                evaluation_status=evaluation_status,
+                outcome_status=outcome_status,
+                evidence_sufficiency=evidence_sufficiency,
+                result_message=message,
+                source_snapshot=json.dumps({
+                    "title": approval.source_title,
+                    "clause": approval.source_clause,
+                    "page": approval.source_page,
+                    "document_version": approval.source_document_version,
+                    "sha256": approval.source_document_sha256,
+                    "effective_from": approval.effective_from.isoformat(),
+                    "effective_to": approval.effective_to.isoformat() if approval.effective_to else None,
+                    "verified_by": approval.source_verified_by,
+                    "verified_at": approval.source_verified_at.isoformat(),
+                    "rule_id": approval.rule_id,
+                    "rule_version": approval.rule_version,
+                }),
+                evidence_snapshot=json.dumps(evidence_rows),
+                confidence=min(confidence_values) if confidence_values else None,
+            )
+            db.add(assessment)
+            db.flush()
+            requirement_assessment_by_rule[approval.rule_id] = assessment
+            # Store the snapshot rows after the assessment primary key exists.
+            for evidence_item in evidence_rows:
+                db.add(RequirementAssessmentEvidence(
+                    requirement_assessment_id=assessment.id,
+                    mapping_id=evidence_item["mapping_id"],
+                    document_version_id=evidence_item["document_version_id"],
+                    extracted_field_id=evidence_item["extracted_field_id"],
+                    mapping_status=evidence_item["mapping_status"],
+                    page_number=evidence_item["page_number"],
+                    evidence_excerpt=evidence_item["evidence_excerpt"],
+                    extraction_confidence=evidence_item["extraction_confidence"],
+                    evidence_sufficiency=evidence_item["evidence_sufficiency"],
+                ))
+            if result and result.status in ("failed", "inconclusive", "trigger_unevaluable"):
+                for evidence_item in evidence_rows:
+                    if evidence_item["mapping_status"] == "rejected":
+                        continue
+        for r_res in rule_eval_results:
+            cr_rule = ValidationRepository.create_check_result(
+                db,
+                validation_run_id=run.id,
+                check_id=f"RULE_{r_res.rule_id}",
+                check_name=f"{r_res.rule_id} ({r_res.clause_citation})",
+                category="regulatory",
+                status=r_res.status if r_res.status in ("passed", "failed", "inconclusive", "not_applicable", "not_run") else "inconclusive",
+                document_version_id=r_res.document_version_id,
+                message=r_res.message,
+                evidence=json.dumps(r_res.evidence),
+                limitations=json.dumps(r_res.limitations) if r_res.limitations else None,
+            )
+            check_results.append(cr_rule)
+
+            if r_res.status in ("failed", "inconclusive", "trigger_unevaluable"):
+                f_rule = ValidationRepository.create_finding(
                     db,
                     validation_run_id=run.id,
-                    check_id=f"RULE_{r_res.rule_id}",
-                    check_name=f"{r_res.rule_id} ({r_res.clause_citation})",
-                    category="regulatory",
-                    status=r_res.status if r_res.status in ("passed", "failed", "inconclusive", "not_applicable", "not_run") else "inconclusive",
                     document_version_id=r_res.document_version_id,
-                    message=r_res.message,
+                    requirement_assessment_id=(requirement_assessment_by_rule.get(r_res.rule_id).id if requirement_assessment_by_rule.get(r_res.rule_id) else None),
+                    confidence=None,
+                    code=f"REGULATORY_DEFICIENCY_{r_res.rule_id}",
+                    severity=r_res.severity,
+                    summary=r_res.message,
                     evidence=json.dumps(r_res.evidence),
-                    limitations=json.dumps(r_res.limitations) if r_res.limitations else None,
                 )
-                check_results.append(cr_rule)
-
-                if r_res.status in ("failed", "inconclusive", "trigger_unevaluable"):
-                    f_rule = ValidationRepository.create_finding(
-                        db,
-                        validation_run_id=run.id,
-                        document_version_id=r_res.document_version_id,
-                        code=f"REGULATORY_DEFICIENCY_{r_res.rule_id}",
-                        severity=r_res.severity,
-                        summary=r_res.message,
-                        evidence=json.dumps(r_res.evidence),
-                    )
-                    findings.append(f_rule)
+                findings.append(f_rule)
+                db.flush()
+                assessment = requirement_assessment_by_rule.get(r_res.rule_id)
+                if assessment is not None:
+                    for evidence_item in json.loads(assessment.evidence_snapshot or "[]"):
+                        if evidence_item.get("mapping_status") == "rejected":
+                            continue
+                        evidence_row = db.scalars(select(RequirementAssessmentEvidence).where(
+                            RequirementAssessmentEvidence.requirement_assessment_id == assessment.id,
+                            RequirementAssessmentEvidence.document_version_id == evidence_item.get("document_version_id"),
+                        ).limit(1)).first()
+                        if evidence_row is not None:
+                            db.add(FindingEvidence(
+                                finding_id=f_rule.id,
+                                assessment_evidence_id=evidence_row.id,
+                                document_version_id=evidence_row.document_version_id,
+                                extracted_field_id=evidence_row.extracted_field_id,
+                                page_number=evidence_row.page_number,
+                                evidence_excerpt=evidence_row.evidence_excerpt,
+                                evidence_role="supporting",
+                                confidence=evidence_row.extraction_confidence,
+                            ))
 
         # ----------------------------------------------------------------------
         # Stage 4: Summary Counts and Outcome Synthesis

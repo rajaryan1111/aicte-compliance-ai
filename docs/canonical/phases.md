@@ -1,56 +1,35 @@
-# Delivery Phases — SIH26261
+# Implementation Phases — Existing Platform Expansion
 
-**Status:** proposed sequence. Phase completion requires evidence, not just code being present.
+**Status:** Proposed roadmap. This task updates documentation only. Do not start Phase 1 without explicit approval after this specification is reviewed.
 
-## Phase 0 — Research closure
-Deliverables: official SIH statement and deadline; applicable EOA clauses; circular/corrigendum register; resolved reuse licensing decision.
-Gate: every enabled regulatory rule has an authoritative source, applicability conditions, effective period, interpretation and tests.
+## Phase 0 — Close source and product gates
 
-## Phase 1 — Secure application foundation (P0)
-Deliverables: selected DB/migrations, user and institution membership model, server-side authorization, tenant-isolation tests, application lifecycle, safe upload metadata.
-Gate: cross-tenant negative tests pass; no client-supplied institution ID alone grants access.
+**Dependencies:** official source register and product owner. **Deliverables:** retrieve/reconcile the outstanding circular/amendment and applicability questions recorded in `docs/research/`; define approved sources, requirement authority, institution/program/academic-year context and review roles; decide whether a model provider is needed and its privacy terms. **Likely areas:** `docs/research/*`, rule catalogue seed definitions. **DB/API/UI:** none. **Tests:** evidence checks/source review only. **Risks:** unverified current rules create incorrect findings. **Done:** no target requirement is activated without provenance, applicability, interpretation approval and tests; unresolved claims remain explicitly unavailable.
 
-## Phase 2 — Evidence-preserving document pipeline (P0)
-Deliverables: immutable document versions, hash, upload limits, processing states, PDF text/OCR adapter contract, extracted-field provenance.
-Gate: valid, malformed, oversized and unsupported files have deterministic tested outcomes; failures are never silently treated as success.
+## Phase 1 — Shared requirement/evidence foundation
 
-## Phase 3 — Source-governed deterministic rules (P0)
-Deliverables: rule and rule-version model, reviewed active rules only, validation runs, findings and evidence links.
-Gate: every active rule is source-backed and has positive, negative, boundary and exception tests.
+**Dependencies:** Phase 0 and data-model ADR. **Deliverables:** canonical requirement/version/applicability representation; many-to-many evidence mapping; finding references to requirement/source and multiple evidence observations; migration plan that preserves existing `DocumentVersion`, `ValidationRun`, `Finding`, `RuleApprovalRecord`. **Likely areas:** `backend/app/db/models.py`, repositories/services, Alembic, Pydantic schemas, API contract and evidence detail components. **API:** versioned requirement/applicability and mapping operations, exact schemas to be approved first. **Tests:** migrations from clean and prior DB, tenant isolation, immutable history, mapping cardinality, source gate. **Risks:** duplicating rule catalogue or findings. **Done:** source of truth per concept documented; no parallel evidence store; old clients still work.
 
-## Phase 4 — Review workflow and audit (P0)
-Deliverables: applicant view, reviewer evidence view, comments, human outcomes, status history, audit events.
-Gate: complete synthetic workflow can be reproduced and sensitive actions are attributable.
+## Phase 2 — Intelligent Compliance Gap Analyzer
 
-## Phase 5 — Bounded authenticity verification (P1)
-Deliverables: signature checks where applicable, document hashes, cautious metadata/visual indicators and authorized verification adapters.
-Gate: method, source, outcome and limitations are visible; simulated checks cannot be mistaken for live verification.
+**Dependencies:** approved requirement/applicability and evidence mapping. **Deliverables:** requirement selection/explanation, evidence retrieval, deterministic validation extension, optional model-neutral cited analysis only if approved, finding review, new assessment/revalidation and backend-backed summary. **Likely areas:** validation orchestration/rule engine, finding schema/service/review API, frontend app routes and reviewer components. **Migrations:** justified requirement/evidence/assessment references only. **Tests:** applicability boundaries, missing/incomplete/expired/invalid/inconsistent states, source/evidence citation, low confidence, reproducibility, AI failure, RAG citation validity and cross-tenant negatives. **Risk:** confusing absence/uncertainty with non-compliance. **Done:** all Feature 1 acceptance criteria in `prd.md` pass; human review and prior run history remain intact.
 
-## Phase 6 — Demo quality and measurement (P1/P2)
-Deliverables: labelled synthetic corpus, OCR evaluation, accessibility, performance observations, demo script and deployment fallback.
-Gate: claims about accuracy/performance are supported by recorded measurements.
+## Phase 3 — Compliance Action Planner
 
-## Work allocation proposal
-- Backend/security/data: API, DB, auth, tenant isolation, audit.
-- Document/rules: file-processing adapter, extraction evidence, rule engine and test corpus.
-- Frontend/review: applicant/reviewer/admin screens, evidence display, workflow and demo.
+**Dependencies:** actionable reviewed finding and Phase 1 links. **Deliverables:** persistent action records, assignment/department scope decision, due dates/priorities, legal transition service, comments/history, corrective evidence via existing upload, reviewer evidence decision and closure after revalidation. Reuse current outbox/worker; notification channels remain a separate decision. **Likely areas:** new action service/repository/schema/router/migration, frontend routes/components, audit hooks. **Tests:** transition table, unauthorized assignment/reassignment, tenant/department boundary, due-date behavior, evidence rejection/retry, revalidation history, concurrency/idempotency and audit. **Risk:** coupling task status to finding/compliance status. **Done:** all Feature 2 acceptance criteria; no automatic AI task closure or permission change.
 
-Before parallel coding, agree the API schemas and finding contract. Protect main; work in feature branches and merge only after review and tests.
+## Phase 4 — Regulatory Change Impact Analyzer
 
-## Updated Phase 0 gate — research snapshot 2026-10-23
-Phase 0 remains **open**. The source verification report is at [docs/research/official-source-verification-report.md](../research/official-source-verification-report.md). Closure requires: (1) retrieve and reconcile the complete 1 April 2024 scrutiny document; (2) establish official publication/finality/effective date of the 2026–27 addendum; (3) check Annexure-2 §2.1 pagination and Clause 7.17 directly in the official handbook PDF; (4) resolve the NBA-validity-through-30-April-2025 reference for AY 2026–27; (5) verify the official SIH statement and deadline; and (6) resolve reuse-repository licensing/authorship/data-history risks before copying anything. API availability remains unresearched, not disproven. No candidate document rule becomes active while these gates are open.
+**Dependencies:** source authority and version/applicability decisions plus requirement graph. **Deliverables:** source registry, immutable publication versions/checksums, clause records, idempotent ingestion and text/OCR extraction, exact/structured comparison, optional reviewed semantic comparison, impact case and human approval. **Likely areas:** regulatory source/ingestion services and worker jobs, persistence/API/UI, dashboards/reports. **Tests:** checksum/idempotency, source spoofing, version immutability, clause alignment, editorial/substantive test set, human overrides, tenant scope, import failures and provenance reports. **Risks:** false impacts, outdated or unverified sources, scraper/legal constraints. **Done:** all Feature 3 acceptance criteria; no silent compliance/evidence changes.
 
-**Current user instruction:** finish system preparation first. Do not start implementation or make further code changes as part of this preparation phase.
+## Phase 5 — End-to-end lifecycle and operational readiness
 
+**Dependencies:** Phases 1–4. **Deliverables:** approved regulatory change can queue scoped reassessments; new findings can be reviewed and converted to actions; new evidence results in a new assessment and human closure; historical reports and metrics are complete. **Likely areas:** outbox/Celery tasks, orchestration, UI workflow, audit package/report. **Tests:** full synthetic journey, retry/idempotency, failure recovery, authorization, audit completeness, accessibility and measured performance. **Risks:** cross-feature state drift and partial failure. **Done:** user can trace each outcome through source, versions, evidence, assessment, finding, action and reviewer decision.
 
-## Pre-coding preparation phases — separate from the implementation phases above
+## Cross-phase gates
 
-The five preparation phases are tracked in [docs/pre-coding/README.md](../pre-coding/README.md). They are not the same numbering as the delivery/implementation phases above.
-
-- Phase 1 — repository inventory and preparation: documented; implementation gaps remain.
-- Phase 2 — research system and source evidence: documented; regulatory verification remains open.
-- Phase 3 — technology option evaluation: documented; decisions are provisional, not locked.
-- Phase 4 — security and testing preparation: documented; controls/tests have not been implemented or verified by this document.
-- Phase 5 — coding-readiness gate: assessed **BLOCKED** pending evidence, approvals and clean setup/test verification.
-
-Do not interpret the existence of preparation documents as a GO decision. The official-source verification report remains authoritative for the currently known regulatory research gaps.
+- Each migration is reviewed for ownership, FK/index, retention, immutability and rollback; never add candidate tables solely because they were listed in a prompt.
+- Every API contract is agreed before frontend/backend parallel work; document it in `docs/development/API_CONTRACT.md`.
+- Verify with unit, service, API, authorization, integration and end-to-end tests. Use synthetic or authorized data only.
+- Measure actual workload before committing latency/scale SLOs. No numeric targets are approved yet.
+- Existing source-only audit found tests for related foundation behavior (see `prd.md`), but this documentation update does not claim those tests were rerun.

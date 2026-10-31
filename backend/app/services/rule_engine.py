@@ -57,10 +57,25 @@ class RuleEvaluationContext:
     institution_id: str
     evaluation_date: date
     eligible_versions: dict[str, DocumentVersion]
+    requirement_evidence_versions: dict[str, DocumentVersion] = field(default_factory=dict)
     declared_parameters: dict[str, Any] = field(default_factory=dict)
 
-    def get_extracted_fields(self, document_type: str) -> dict[str, ExtractedField]:
-        version = self.eligible_versions.get(document_type)
+    def get_evidence_version(self, rule_id: str, document_type: str, *fallback_types: str) -> DocumentVersion | None:
+        mapped = self.requirement_evidence_versions.get(rule_id)
+        if mapped is not None:
+            return mapped
+        for candidate in (document_type, *fallback_types):
+            version = self.eligible_versions.get(candidate)
+            if version is not None:
+                return version
+        return None
+
+    def get_extracted_fields(self, document_type: str, rule_id: str | None = None) -> dict[str, ExtractedField]:
+        version = (
+            self.get_evidence_version(rule_id, document_type)
+            if rule_id is not None
+            else self.eligible_versions.get(document_type)
+        )
         if not version or not version.extracted_fields:
             return {}
         return {f.field_name: f for f in version.extracted_fields}
@@ -151,6 +166,23 @@ def get_applicable_checklist(
 RuleEvaluatorFn = Callable[[RuleVersionDraft, RuleEvaluationContext], RuleEvaluationResult]
 _EVALUATOR_REGISTRY: dict[str, RuleEvaluatorFn] = {}
 
+# This is the evaluator's canonical evidence slot map. It exposes the exact
+# document types already consumed by deterministic rules to the Gap Analyzer;
+# it is not an independent regulatory checklist.
+REQUIRED_EVIDENCE_TYPE_BY_RULE: dict[str, str] = {
+    "APH_2024_FIRE_SAFETY": "fire_safety_certificate",
+    "APH_2024_STRUCTURAL_STABILITY": "structural_stability",
+    "APH_2024_BUILDING_OCCUPANCY": "occupancy_certificate",
+    "APH_2024_LAND_TITLE": "land_document",
+    "APH_2024_MANDATORY_AFFIDAVIT": "mandatory_affidavit",
+    "APH_2024_NBA_ACCREDITATION": "nba_accreditation",
+}
+
+
+def required_evidence_type_for_rule(rule_id: str) -> str | None:
+    """Return the existing evaluator's canonical document slot, if defined."""
+    return REQUIRED_EVIDENCE_TYPE_BY_RULE.get(rule_id)
+
 
 def register_evaluator(rule_id: str) -> Callable[[RuleEvaluatorFn], RuleEvaluatorFn]:
     def decorator(fn: RuleEvaluatorFn) -> RuleEvaluatorFn:
@@ -162,8 +194,8 @@ def register_evaluator(rule_id: str) -> Callable[[RuleEvaluatorFn], RuleEvaluato
 @register_evaluator("APH_2024_FIRE_SAFETY")
 def evaluate_fire_safety(rule: RuleVersionDraft, ctx: RuleEvaluationContext) -> RuleEvaluationResult:
     """Evaluate compliance with APH Annexure-2 §2.1(v) & Chapter II §2.4 Fire and Life Safety Clearance."""
-    doc_type = "fire_safety_certificate"
-    version = ctx.eligible_versions.get(doc_type)
+    doc_type = required_evidence_type_for_rule(rule.rule_id) or "fire_safety_certificate"
+    version = ctx.get_evidence_version(rule.rule_id, doc_type)
 
     if not version:
         return RuleEvaluationResult(
@@ -179,7 +211,7 @@ def evaluate_fire_safety(rule: RuleVersionDraft, ctx: RuleEvaluationContext) -> 
             required_action="Submit valid Fire Safety NOC or AICTE Format 3 Renewal Undertaking with official fee challan.",
         )
 
-    fields = ctx.get_extracted_fields(doc_type)
+    fields = ctx.get_extracted_fields(doc_type, rule.rule_id)
     expiry_str = fields.get("valid_until", fields.get("expiry_date", None))
     parsed_expiry = parse_iso_date_candidate(expiry_str.normalized_value) if (expiry_str and expiry_str.normalized_value) else None
 
@@ -227,8 +259,8 @@ def evaluate_fire_safety(rule: RuleVersionDraft, ctx: RuleEvaluationContext) -> 
 @register_evaluator("APH_2024_STRUCTURAL_STABILITY")
 def evaluate_structural_stability(rule: RuleVersionDraft, ctx: RuleEvaluationContext) -> RuleEvaluationResult:
     """Evaluate compliance with APH Annexure-2 §2.1(iv) Structural Soundness Certification."""
-    doc_type = "structural_stability"
-    version = ctx.eligible_versions.get(doc_type) or ctx.eligible_versions.get("structural_certificate")
+    doc_type = required_evidence_type_for_rule(rule.rule_id) or "structural_stability"
+    version = ctx.get_evidence_version(rule.rule_id, doc_type, "structural_certificate")
 
     # Evaluate statutory applicability condition: building age > 30 years
     building_age = ctx.declared_parameters.get("building_age_years")
@@ -278,7 +310,7 @@ def evaluate_structural_stability(rule: RuleVersionDraft, ctx: RuleEvaluationCon
         )
 
     # Document submitted: evaluate expiry date
-    fields = ctx.get_extracted_fields(doc_type)
+    fields = ctx.get_extracted_fields(doc_type, rule.rule_id)
     expiry_str = fields.get("valid_until", fields.get("expiry_date", None))
     parsed_expiry = parse_iso_date_candidate(expiry_str.normalized_value) if (expiry_str and expiry_str.normalized_value) else None
 
@@ -312,8 +344,8 @@ def evaluate_structural_stability(rule: RuleVersionDraft, ctx: RuleEvaluationCon
 @register_evaluator("APH_2024_BUILDING_OCCUPANCY")
 def evaluate_building_occupancy(rule: RuleVersionDraft, ctx: RuleEvaluationContext) -> RuleEvaluationResult:
     """Evaluate compliance with APH Annexure-2 §2.1(iii) & Chapter II §2.4 Building Occupancy / Completion Certificate."""
-    doc_type = "occupancy_certificate"
-    version = ctx.eligible_versions.get(doc_type) or ctx.eligible_versions.get("completion_certificate")
+    doc_type = required_evidence_type_for_rule(rule.rule_id) or "occupancy_certificate"
+    version = ctx.get_evidence_version(rule.rule_id, doc_type, "completion_certificate")
 
     if not version:
         return RuleEvaluationResult(
@@ -345,8 +377,8 @@ def evaluate_building_occupancy(rule: RuleVersionDraft, ctx: RuleEvaluationConte
 @register_evaluator("APH_2024_LAND_TITLE")
 def evaluate_land_title(rule: RuleVersionDraft, ctx: RuleEvaluationContext) -> RuleEvaluationResult:
     """Evaluate compliance with APH Chapter I §1.7 Contiguous Land Title & NA Conversion."""
-    doc_type = "land_document"
-    version = ctx.eligible_versions.get(doc_type)
+    doc_type = required_evidence_type_for_rule(rule.rule_id) or "land_document"
+    version = ctx.get_evidence_version(rule.rule_id, doc_type)
 
     # For regular EoA, land documents are simplified per APH Foreword unless site expansion requested
     if ctx.application_type == "eoa" and not version:
@@ -378,7 +410,7 @@ def evaluate_land_title(rule: RuleVersionDraft, ctx: RuleEvaluationContext) -> R
             required_action="Submit registered title deed or minimum 30-year registered lease with educational NA order.",
         )
 
-    fields = ctx.get_extracted_fields(doc_type)
+    fields = ctx.get_extracted_fields(doc_type, rule.rule_id)
     expiry_str = fields.get("valid_until", fields.get("expiry_date", None))
     parsed_expiry = parse_iso_date_candidate(expiry_str.normalized_value) if (expiry_str and expiry_str.normalized_value) else None
 
@@ -412,8 +444,8 @@ def evaluate_land_title(rule: RuleVersionDraft, ctx: RuleEvaluationContext) -> R
 @register_evaluator("APH_2024_MANDATORY_AFFIDAVIT")
 def evaluate_mandatory_affidavit(rule: RuleVersionDraft, ctx: RuleEvaluationContext) -> RuleEvaluationResult:
     """Evaluate compliance with APH Annexure-2 §2.1(i) Mandatory Self-Disclosure Affidavit."""
-    doc_type = "mandatory_affidavit"
-    version = ctx.eligible_versions.get(doc_type) or ctx.eligible_versions.get("affidavit_undertaking")
+    doc_type = required_evidence_type_for_rule(rule.rule_id) or "mandatory_affidavit"
+    version = ctx.get_evidence_version(rule.rule_id, doc_type, "affidavit_undertaking")
 
     if not version:
         return RuleEvaluationResult(
@@ -445,6 +477,7 @@ def evaluate_mandatory_affidavit(rule: RuleVersionDraft, ctx: RuleEvaluationCont
 @register_evaluator("APH_2024_NBA_ACCREDITATION")
 def evaluate_nba_accreditation(rule: RuleVersionDraft, ctx: RuleEvaluationContext) -> RuleEvaluationResult:
     """Evaluate compliance with APH Chapter II §2.5 & Chapter IV §4.2 Programmatic NBA Accreditation."""
+    doc_type = required_evidence_type_for_rule(rule.rule_id) or "nba_accreditation"
     # Not mandatory for regular EoA
     if ctx.application_type == "eoa":
         return RuleEvaluationResult(
@@ -454,7 +487,7 @@ def evaluate_nba_accreditation(rule: RuleVersionDraft, ctx: RuleEvaluationContex
             severity="info",
             message="NBA programmatic accreditation is not mandatory for standard annual EoA (Clause 2.1(a)(iii) 3-year EoA NBA validity reference to 30 April 2025 is an optional/time-sensitive criterion).",
             clause_citation=rule.source_clause,
-            document_type="nba_accreditation",
+            document_type=doc_type,
             document_version_id=None,
             evidence={"application_type": "eoa", "mandatory": False},
         )
@@ -470,12 +503,12 @@ def evaluate_nba_accreditation(rule: RuleVersionDraft, ctx: RuleEvaluationContex
                 severity="info",
                 message="NBA accreditation not required when no intake increase is requested.",
                 clause_citation=rule.source_clause,
-                document_type="nba_accreditation",
+                document_type=doc_type,
                 document_version_id=None,
                 evidence={"intake_increase_requested": False},
             )
 
-    version = ctx.eligible_versions.get("nba_accreditation")
+    version = ctx.get_evidence_version(rule.rule_id, doc_type)
     if not version:
         return RuleEvaluationResult(
             rule_id=rule.rule_id,
@@ -484,7 +517,7 @@ def evaluate_nba_accreditation(rule: RuleVersionDraft, ctx: RuleEvaluationContex
             severity="error",
             message="APH Chapter II §2.5: Intake expansion or new program requires minimum 50% eligible courses with valid NBA accreditation.",
             clause_citation=rule.source_clause,
-            document_type="nba_accreditation",
+            document_type=doc_type,
             document_version_id=None,
             evidence={"observed": "missing", "application_type": ctx.application_type},
             required_action="Submit valid NBA Accreditation Certificate for eligible technical courses.",
@@ -497,7 +530,7 @@ def evaluate_nba_accreditation(rule: RuleVersionDraft, ctx: RuleEvaluationContex
         severity="info",
         message="NBA Accreditation Certificate submitted for expansion review.",
         clause_citation=rule.source_clause,
-        document_type="nba_accreditation",
+        document_type=doc_type,
         document_version_id=version.id,
         evidence={"sha256": version.sha256},
     )

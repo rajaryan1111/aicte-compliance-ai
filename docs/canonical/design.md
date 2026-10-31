@@ -1,36 +1,32 @@
-# Product Design — Evidence-First Workflow
+# Product Design — Evidence-First Compliance Workflow
 
-**Status:** design principles and screen requirements; no visual implementation is implied.
+**Status:** Product requirements, not a claim that every screen exists. Reuse the current React layout, route conventions, cards, badges, tables, forms and `RegulatoryScrutinyWorkbench`, `DocumentOcrVerifier`, `FindingsTable`, `ExpiryWatchdogMatrix`, and `ScrutinyDossierModal` where fit. Do not redesign the whole application.
 
-## Design principles
-- Show what the system checked and what it did not check.
-- Place evidence next to each finding, including document version and page where available.
-- Distinguish deterministic findings, OCR observations, external verification and human decisions.
-- Make uncertainty visible; do not use colour alone to convey status.
-- Keep the next action clear: upload, replace, correct extraction, request clarification or review evidence.
-- Show rule source/version and applicability conditions for compliance findings.
-- Avoid a single opaque fraud score and avoid alarmist language.
+## Navigation
 
-## Main screens
-1. Sign-in and access-denied states.
-2. Institution/application list scoped to the signed-in user's permissions.
-3. Application creation and applicable-checklist view.
-4. Document upload queue with type, size, processing state and retry guidance.
-5. Document detail/evidence viewer with extracted fields and page references.
-6. Validation summary grouped by missing, expired, inconsistent, unreadable, verification state and human review.
-7. Reviewer workspace with source/evidence, comments, resolution and human outcome.
-8. Rule catalogue with source/version/effective dates and draft/review/active states.
-9. Audit/history view showing actor, action, timestamp and affected object without leaking secrets.
+Keep the existing Dashboard, Validate, Cadre & FSR Norms, Audit History, Consistency Check and Compliance Guide. Proposed destinations may group Gap Analyzer, Action Planner and Regulatory Intelligence under the current application/compliance workspace after user testing. A label or route is not evidence of a working feature. The new screens must be authenticated and backend-authorized.
 
-## Required wording
-- Use “preliminary checks passed” rather than “compliant” for local checks.
-- Use “authenticity concern” rather than “forged” for unconfirmed indicators.
-- Use “verification unavailable” or “inconclusive” when appropriate.
-- Label simulated checks prominently as “DEMO — SIMULATED”.
-- If no applicable reviewed ruleset exists, say so rather than showing an empty checklist as complete.
+## Gap Analyzer screens
 
-## Accessibility and usability
-Use keyboard-accessible controls, visible focus, semantic headings, descriptive errors, readable contrast, and status text in addition to icons/colour. Preserve form values after recoverable failures and make upload limits clear before submission.
+1. **Compliance overview:** scoped totals by applicable requirement, evidence sufficiency, open/review findings and trend; each metric linked to its filterable source records. No static demo counts presented as live.
+2. **Requirements:** application/year/program context; applicability state and why; source/version/clause; expected evidence; filters by category/status. Unknown applicability is conspicuous and not a failure.
+3. **Evidence and analysis:** original document viewer with page/location when available, document version and extraction provenance; separate extracted value, confidence, correction history and rule result; show source alongside the claim.
+4. **Finding detail/review:** category, severity, confidence, deficient information, rationale, affected requirement, regulatory citation/version, evidence references, limitations and proposed corrective action. Accept, reject or request evidence with mandatory rationale as policy requires; show immutable review history.
 
-## Research-status communication — 2026-10-23
-Provide a visible distinction between verified primary-source requirements, source-reported claims, proposals and unresolved items. When the applicable EOA checklist is not closed, display that the checklist is provisional/not configured; do not render an empty list as complete. Any provisional document suggestions must link to their source and show limitations. Avoid presenting the reported 28 October 2026 SIH deadline or circulating 2026–27 amendments as officially confirmed.
+## Action Planner screens
+
+Proposed views: My Tasks; authorized Department Tasks; Institution Overview; list/board/calendar views; task detail; evidence submission; review queue; task history. Detail shows originating finding/requirement, owner/department, priority/deadline, expected evidence, valid next transitions, comments, uploaded evidence and review/revalidation outcomes. Use role-scoped views; never expose institution-wide lists to ordinary members. Overdue indicator is explicit and does not erase workflow status.
+
+## Regulatory Intelligence screens
+
+Proposed views: verified/unverified source library; publication/version detail; clause comparison; change record; impacted requirement/evidence list; impact report; review/approval queue; history. Visibly label source verification, publication/effective date, retrieval time, version and checksum. Show old/new text and machine-detected classification separately from reviewer decision. Allow authorized reviewers to correct extracted clauses, confirm applicability, approve/reject change and queue reassessment. Discovery must not look like a compliance status change.
+
+## Shared interaction states and content
+
+All screens need loading, empty, error, permission denied, partial processing, stale data and retry states. Preserve user input after recoverable failures. Use accessible labels, keyboard operation, visible focus and text/icon status (never color alone); responsive layouts and readable evidence citations. Explain successful upload, failed scan, extraction uncertainty, async polling and processing retry.
+
+Use precise labels: “preliminary checks passed” for limited local checks; “evidence missing” for absence; “manual verification required” for uncertainty; “evidence approved” distinct from “requirement revalidated”; “DEMO — SIMULATED” for any simulation. Avoid “compliant”, “forged”, or “regulation changed” absent an approved basis and human decision.
+
+## Product signals
+
+Finding severity, extraction confidence, regulatory impact, task priority and review status have distinct text labels and filters. Every AI summary links to source evidence and carries its model/version/status. Dashboard counts are computed from authorized persisted data; if source data is unavailable, show unavailable rather than zero. Historical versions and assessment results are reachable without overwriting the current view.

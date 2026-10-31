@@ -1,49 +1,48 @@
-# Backend Schema — Proposed
+# Backend Schema — Current Source of Truth and Proposed Extensions
 
-**Status:** design proposal; no database or ORM is selected/implemented yet.
+**Status:** Existing tables are based on `backend/app/db/models.py` and Alembic migrations. Proposed rows are design candidates, not migration instructions. First decide whether to extend existing entities.
 
-## Core entities
+## Current persisted entities
 
-| Entity | Purpose | Key fields / constraints |
+| Concept/table | Current purpose and key links | Relevance / limitation |
 |---|---|---|
-| User | Authenticated person | id, normalized email, password/identity-provider reference, active flag, created_at; credentials never logged. |
-| Institution | Tenant boundary | id, display name, external reference if authorized, status. |
-| InstitutionMembership | Institution access | user_id, institution_id, role; unique pair; applicant access scoped through membership. |
-| Application | Reviewable submission | id, institution_id, type, academic_year, status, created_by, created_at, updated_at. |
-| Document | Logical document slot | id, application_id, document_type, current_version_id nullable. |
-| DocumentVersion | Immutable uploaded bytes | id, document_id, storage_key, sha256, media_type, byte_size, page_count, uploaded_by, uploaded_at, processing_status. |
-| ExtractedField | OCR observation | id, document_version_id, field_name, raw_text, normalized_value, confidence nullable, page_number nullable, bounding_box nullable, engine_name/version, extraction_status. |
-| Rule | Stable rule identity | id, rule_key, owner, created_at. |
-| RuleVersion | Immutable rule revision | id, rule_id, version, source_title, source_url, clause, page, effective dates, applicability, logic config, limitations, status, reviewed_by, reviewed_at. |
-| ValidationRun | Reproducible evaluation | id, application_id, triggered_by, started_at, completed_at, status, evaluation_date, ruleset/source version snapshot. |
-| Finding | Evidence-linked result | id, validation_run_id, rule_version_id nullable for non-rule processing errors, code, status, severity, summary, limitations. |
-| FindingEvidence | Traceable observation | id, finding_id, document_version_id nullable, page/bounding box nullable, observed_value, normalized_value, evidence_kind, artifact reference. |
-| ReviewAction | Human review | id, application_id, reviewer_id, action, comment, created_at. |
-| AuditEvent | Attributable history | id, actor_id nullable for system, institution_id nullable, action, target_type/id, timestamp, request_id, metadata with sensitive values excluded, previous_hash/event_hash if hash chaining is adopted. |
+| `institutions`, `users`, `institution_memberships` | Tenant; credentials/identity; unique user-institution membership and role. | Canonical tenant/access records. No departments/program catalog. |
+| `applications` | Institution FK, type, academic year, status and timestamps. | Assessment context, but no program/course or institution profile applicability attributes. |
+| `documents`, `document_versions` | Logical application slot; version, opaque storage key, hash, type, size, scan/process state. | Canonical institutional uploaded evidence. Never create a second vault. |
+| `extracted_fields` | Version FK, field/raw/normalized values, confidence, page, bounding box, engine/version and status. | Canonical extraction observation; location can be absent and corrections need provenance review. |
+| `validation_runs`, `validation_check_results`, `findings` | Application/run; date/rule snapshot/consumed version IDs/counts/limitations; deterministic check and finding results; finding optionally points to one document version. | Canonical assessment and finding history. No requirement FK, model metadata, confidence field on main finding, or many-to-many evidence references. |
+| `review_actions`, `audit_events`, `audit_packages` | Review actor/action/rationale/history; scoped audit event; exported integrity package. | Reuse for review/audit. Not action tasks; audit integrity claims remain bounded by implementation. |
+| `consistency_checks`, `consistency_findings` | Application-linked manually persisted check and discrepancy values/confidence/evidence/resolved flag. | Generic record CRUD; not a comparison engine or canonical regulatory finding. |
+| `processing_jobs`, `outbox_messages` | Durable async job state/retry and transactional message publication. | Reuse for ingestion, assessment and notification jobs where suitable. |
+| `verification_attempts`, `institutional_record_snapshots`, `infrastructure_evidence` | Application/document verification; institution snapshot; document-linked infra metrics/inspection recommendation. | Reuse only for these concepts; not regulatory source versions or generalized requirements. |
+| `rule_approvals`, `retention_runs` | Rule version/source/checksum/reviewer/approval/effective dates/definition; auditable retention job. | Rule governance base and retention, not official source document archive or clause-change history. |
 
-## Invariants
-- Every application belongs to exactly one institution.
-- Tenant authorization is checked server-side on every application/document/run/finding/review read and write; never trust institution_id from a client without membership verification.
-- Uploaded bytes are immutable per DocumentVersion; a replacement creates a new version.
-- ValidationRun records exact rule versions and evaluation date; past runs are not recomputed in place.
-- A finding references the exact document version and rule version used, when applicable.
-- Rule versions are append-only after publication; corrections create a new version.
-- Only authorized rule managers can publish a rule version; publish action creates an audit event.
-- Review outcomes record the human actor and timestamp and never get silently overwritten by automated findings.
-- Store files outside the public web root using opaque keys; database records do not expose raw filesystem paths.
-- Hash chaining is tamper-evident, not immutable; protect the signing/anchoring key separately if used.
+Migrations currently cover the initial persistence/auth foundation, document metadata, jobs/outbox, validation results, review actions, audit packages, verification/infrastructure records, rule approvals/retention, and consistency records (see `backend/alembic/versions/`).
 
-## Recommended status enums
-- Application: draft, submitted, processing, review_required, reviewed, closed.
-- Document processing: queued, processing, succeeded, partial, failed, rejected.
-- Rule version: draft, in_review, active, superseded, retired.
-- Validation run: queued, running, succeeded, partial, failed.
-- Finding: open, acknowledged, resolved, waived_by_authorized_reviewer.
-- External check: not_attempted, simulated, unavailable, inconclusive, externally_verified, externally_failed.
+## Candidate extensions to evaluate
 
-These are proposed product states, not AICTE-defined legal statuses. Final enum names should be aligned with API contracts before migration work.
+| Concept | Existing equivalent? | Proposed purpose/keys and tenant policy | Version/retention note |
+|---|---|---|---|
+| Regulatory source | No dedicated entity; source fields appear in rule approval. | Source identity, official issuer/URL, verification status; centrally governed, separate permission. | Preserve source changes and verification events. |
+| Regulatory document/publication version | No. Rule checksum identifies a referenced source artifact but does not preserve it. | Immutable original publication, source FK, title/version/dates/retrieval/hash/artifact key. | Retain original and checksum; new publication creates version, never overwrite. |
+| Regulatory clause | No. Rule has citation text only. | Version FK, stable clause key, exact extracted text/page/section and extraction provenance. | Clause correction creates a new publication extraction/version. |
+| Requirement + requirement version | Partial conceptual equivalent in code-defined `RuleVersionDraft`/approval, but no durable independent requirement registry. | Stable requirement identity; immutable definition/version, source clause refs, expected evidence, interpretation/test evidence. | Approval and supersession explicit; do not duplicate rule evaluator. Decide whether rules are requirement versions or link to them. |
+| Requirement applicability | No persisted entity; rule filters type/year only. | Requirement version + application/institution/program/year scope, effective dates, decision/reason and reviewer. Tenant data scoped to institution. | Preserve evaluated applicability snapshot in each assessment. |
+| Evidence-to-requirement mapping | No. Application document slot is not a mapping. | Requirement↔document version/extracted field or source record; include mapping provenance/status/actor. | Mapping changes append history; assessment snapshots exact mapping. |
+| Assessment/finding evidence references | Existing run/finding covers part. | Prefer extending existing run/finding with requirement and source refs, and a child evidence-reference relation for many-to-many. | Assessment snapshot immutable; preserve nullable legacy fields and API compatibility. |
+| Corrective action/task | No. `ReviewAction` is a review event, not task. | Task FK to institution/application/finding/requirement; assignee, department if approved, priority, due, status, creator/version. | Append `TaskEvent`/audit history; task links evidence versions and revalidation run. Tenant is derivable through application but verify joins. |
+| Regulatory change/impact assessment | No. Rule approval history is not a diff/impact record. | Change points to old/new clause/version; impact records requirement/application/evidence, reason, category, confidence, review state/actor. Institution scoped when it references institution data. | Immutable source versions and impact decisions; reassessment links to new `ValidationRun`. |
+| Notification | No general notification table/channel identified. | Add only after delivery/channel decision; recipient and tenant, template/event, delivery/retry status. | Define retention and dedupe/idempotency.
 
-## Research provenance fields and lifecycle requirements — 2026-10-23
-For every source-backed rule version, persist source status, issuer, canonical URL, document title/version, publication/retrieval dates, exact clause and page, effective interval, applicability conditions, supersession link, review decision and evidence hash where available. Support provisional/in-review/inactive rules so unresolved source claims cannot be evaluated as active requirements. Preserve conflicting source records rather than overwriting them. For source verification attempts, retain attempt status and source/result metadata; do not mark a simulated or unattempted check externally verified. These are design requirements, not a finalized database migration.
+## Data invariants
 
-The current research leaves the 1 April 2024 scrutiny circular unread, the 2026–27 addendum's official status unresolved, the SIH listing/deadline unverified and the Clause 7.17 cross-reference unresolved. Schema and APIs must represent these uncertainties rather than encoding the candidate EOA document list as universal mandatory data.
+- Tenant-owned records must be linked by FK to an institution or derive a fully verified path through application; query and mutation must validate that path and permission.
+- Add composite constraints/indexes for the actual tenant/query patterns; avoid redundant institution IDs unless required for safe row-level scoping and constrained to parent ownership.
+- `DocumentVersion`, publication version, approved requirement version and completed assessment are append-only evidence snapshots. Corrections/reassessment create new records.
+- Task/event, source verification, requirement approval, impact review and revalidation are attributable. Avoid cascading deletes where legal/audit retention needs historical records; align with documented retention and deletion policy.
+- Store originals in private object storage and persist opaque keys, hashes and metadata only. Minimize personal data; define retention separately for evidence, extraction, prompts/results and regulatory artifacts.
+- Do not claim DB immutability from application conventions alone. Define backup, retention, access and audit integrity controls.
+
+## Canonical concept ownership
+
+Application and institution membership remain tenant context. `DocumentVersion` is the evidence-byte/version source of truth; `ExtractedField` is an observation, not source truth. `ValidationRun` is assessment history; `Finding` is the current finding record; `ReviewAction` is human finding review; `AuditEvent` is sensitive-operation history. `RuleApprovalRecord` governs rule definitions but is not a source document archive. New requirement/applicability, task, regulatory-version and impact concepts have no existing canonical table and require an ADR/migration design before coding.

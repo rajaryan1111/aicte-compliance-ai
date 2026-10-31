@@ -1,55 +1,52 @@
-# Architecture — Proposed
+# Architecture — Existing Platform and Proposed Expansion
 
-**Status:** proposed architecture; not all components exist in the current repository.
+**Status:** Current implementation and target architecture are distinguished below. This file does not claim proposed modules already exist.
 
-## System boundaries
+## Current system
 
-1. **Web client** — applicant, reviewer and rule-manager workflows; never makes authorization decisions itself.
-2. **FastAPI application** — authenticated API, request validation, tenant authorization, application workflow and audit-event creation.
-3. **Relational database** — users/memberships, applications, document metadata, immutable versions, extracted fields, rule versions, validation runs, findings, review actions and audit events.
-4. **Private object storage** — uploaded document bytes and generated evidence artifacts, addressed through opaque storage keys.
-5. **Document processing worker/interface** — safe PDF text extraction, scanned-page rendering, OCR adapter, field normalization and explicit partial/failure states.
-6. **Deterministic rule evaluator** — executes only active, reviewed rule versions; outputs discrete findings with evidence and limitations.
-7. **External-verification adapters** — optional, authorized integrations with timeouts and explicit not-attempted/unavailable/inconclusive/simulated states.
+- React 19/TypeScript/Vite client (`frontend/app`); FastAPI/Pydantic API (`backend/app`); SQLAlchemy 2 and Alembic; SQLite development/PostgreSQL deployment; private local storage abstraction; Celery/Redis worker with transactional outbox and eager dispatcher option. Manifests: `frontend/app/package.json`, `backend/requirements*.txt`, `render.yaml`, `docker-compose.integration.yml`.
+- Authenticated application, document, validation, compliance, review, audit-package and consistency routers. Server-side RBAC/membership helpers are in `core/rbac.py`, `api/deps.py`. Not every legacy route is protected: `/api/v1/documents/analyze` and `/api/v1/institutions` are mounted directly in `main.py`; audit and resolve those separately before real institutional data is accepted.
+- Current pipeline: institution/application → private document slot/version → scan and durable processing job → PDF text/OCR extraction → `ExtractedField` observations → application validation and rule evaluation → persisted run/check results/findings → human review actions/audit package. `ValidationRun` snapshots consumed version IDs, rule metadata, counts and limitations.
+- Deterministic rule catalog/engine and durable rule verification/approval are implemented (`rule_catalog.py`, `services/rule_engine.py`, `RuleApprovalRecord`). Requirement coverage and applicability remain limited; the code catalogue is not a regulatory-publication repository. Current source research gates remain open.
+- No LLM, RAG, vector database, task planner, or regulatory change ingestion/impact service is present in manifests/source.
 
-## Main flow
-1. Applicant authenticates and creates an application under an institution they are authorized to access.
-2. API creates a document slot/version and stores bytes privately after upload validation.
-3. Processing extracts embedded PDF text where appropriate and/or runs OCR; every field retains provenance and confidence.
-4. Rule evaluator snapshots applicable rule versions and evaluates only the inputs it can reliably observe.
-5. Validation run stores findings, evidence references, source versions and limitations.
-6. Applicant sees advisory findings; reviewer inspects evidence and records an attributable human outcome.
-7. Every sensitive operation and rule publication emits an audit event.
+## Capability audit summary
 
-## Trust boundaries
-- Browser to API: authenticate, validate requests, enforce CSRF/CORS policy appropriate to deployment and rate-limit.
-- API to storage: opaque keys, least-privilege credentials, size limits and no public bucket by default.
-- Uploaded file to parser/OCR: treat as hostile; limit bytes/pages/time/memory; isolate processing and reject malformed or unsupported files safely.
-- Rule configuration to evaluator: schema-validate, version and review before activation; do not execute arbitrary Python supplied by a user.
-- External provider: only call documented and authorized endpoints; record request/result metadata while excluding secrets and unnecessary personal data.
+| Feature | Overall status | Reusable components | Missing boundary |
+|---|---|---|---|
+| Gap Analyzer | **PARTIAL** | Application/academic year; secure document versions; extraction; deterministic checks/rules; findings/runs; human review and audit. | Explicit requirements/applicability and evidence mappings; generalized cross-document analysis; verified source retrieval; LLM analysis; requirement-scoped dashboard. |
+| Action Planner | **NOT IMPLEMENTED** | Finding links, review workflow/history, secure document intake, RBAC, audit events, worker/outbox. | Task persistence, assignments/deadlines, state machine, corrective-evidence review, notifications/escalations, revalidation-to-closure workflow. |
+| Regulatory Change Impact | **NOT IMPLEMENTED** | Rule provenance/approval, source checksum fields, role `regulatory_director`, audit and background job infrastructure. | Source/publication/version/clause/change/dependency/impact records; ingestion, diffing, impact assessment UI/API and reassessment trigger. |
 
-## Current repository reality
-- The repository currently has a small FastAPI validation endpoint and tests for caller-supplied missing-document and expiry checks.
-- The endpoint does not yet load an authoritative AICTE ruleset, authenticate users, isolate institution records, persist runs or process uploaded files.
-- The response must remain explicit that a passing result covers only supplied inputs and does not establish regulatory compliance or document authenticity.
+Feature evidence paths and test references are listed in `prd.md`. Existing review `resolved` or consistency `resolved` states do not mean an action task exists or that a requirement was revalidated.
 
-## Technology choices to confirm before implementation
-- Database: PostgreSQL is a candidate; select after deployment and migration review.
-- ORM/migrations: select a supported SQLAlchemy/Alembic combination only after dependency compatibility review.
-- Auth: choose a supported OIDC provider or secure local-auth design; enforce role and tenant checks server-side.
-- Object storage: choose private local development storage and a production-compatible private backend.
-- OCR: keep engine behind an adapter and select by measured synthetic-data evaluation; do not choose solely from third-party benchmark claims.
-- Background processing: introduce only when synchronous processing limits and resource use are understood.
+## Target connected lifecycle
 
-## Explicit non-goals
-- No assumed AICTE portal API or scraping.
-- No autonomous official approval/rejection.
-- No opaque fraud score as the sole reason for an adverse outcome.
-- No production deployment with real sensitive documents before security/privacy review.
+`Official source` → immutable `regulatory version` → `clause` → governed `requirement` → explicit `applicability` → existing institution/application `evidence versions` → `assessment` → shared `finding` → optional `corrective action` → new `evidence version` → new `assessment` → human resolution.
 
-## Research-driven architecture constraints — 2026-10-23
-- Treat the AICTE handbook as an identified base source, not a complete current rulebook. The 1 April 2024 scrutiny document and 2026–27 addendum status remain unresolved.
-- Rule ingestion must preserve source status (verified, source-reported, provisional, unresolved), retrieval date, document/version, exact clause/page, effective interval and reviewer decision. Never activate unresolved rules.
-- The external-verification adapter contract must distinguish not attempted, unavailable, inconclusive, simulated and externally verified; “verified” requires an authorized authoritative source supporting the exact claim.
-- No official SIH portal access, AICTE API or private integration is established by the current research. Do not architect around assumed access; adapters remain optional and explicitly unavailable until verified.
-- The candidate fake-id-screening repository remains off-limits for code/data reuse until licensing/authorship and personal-data/history risks are resolved.
+A regulatory change creates a reviewable impact case and may enqueue reassessment of affected requirement/application pairs. The reassessment uses the changed requirement only after source and interpretation approval. It creates a new run and never mutates prior run, finding, evidence, task, or regulatory version. Task creation is a user/reviewer action from an actionable confirmed finding; no automatic status changes on model output.
+
+## Logical components and boundaries
+
+1. **Source governance** (new): official source registry, original artifact, immutable publication versions and extracted clauses. Human verification and interpretation approval precede authoritative use. Reuse rule source provenance/approval patterns; do not duplicate their purpose without a migration plan.
+2. **Requirement/applicability registry** (new or justified extension): stable requirement identity, immutable version, source clause references, applicability logic, expected evidence and test cases. Existing rules encode checks, not complete requirements or institutional applicability records.
+3. **Evidence** (existing plus mapping): existing `Document`/`DocumentVersion` and `ExtractedField` remain canonical uploaded evidence/extraction records. Add explicit requirement↔evidence associations only after decisions on direct requirement IDs versus assessment-scoped mappings.
+4. **Assessment** (extend existing): `ValidationRun` is canonical assessment execution/history; `Finding` is canonical finding. Extend only with justified requirement/source/evidence references, confidence and classification; do not create a second analyzer/findings table. Preserve existing endpoint contracts compatibly.
+5. **Action management** (new): task aggregate references an existing finding and requirement; uses existing auth, evidence upload, audit and outbox. Task state is separate from finding review and compliance outcomes.
+6. **Impact engine** (new): compare approved source versions, map clause dependencies, create human-reviewable impact cases, and emit idempotent reassessment work through outbox/Celery.
+7. **Optional AI adapter** (new only after model decision): model-neutral interface for extraction assistance, cited retrieval, summarization and semantic diff. Deterministic rules remain authoritative for deterministic checks. No direct model-provider calls in domain logic.
+
+## Proposed workflow and failure semantics
+
+- Assessment inputs are frozen to exact document versions, requirement/rule/source versions and evaluation context. Idempotency key protects duplicate job dispatch. Failed/incomplete model or worker calls result in explicit queued/running/partial/failed states; never success-shaped empty results.
+- Official source ingestion is idempotent by canonical source/version/checksum. Preserve original and extracted artifacts, and record OCR/parser/model version. Quarantine unverified or contradictory publications; never use them as active requirements.
+- Impact review does not automatically mark documents invalid, open statutory failures, or change institution status. It can propose a new assessment for a human-authorized scope.
+- Cross-tenant authorization is performed before retrieval and before queueing; worker payloads contain opaque authorized IDs and recheck tenant ownership at execution.
+
+## API boundaries
+
+Keep established `/api/v1/applications/{application_id}/...` routes for application documents, validation runs and findings/review. Existing governance is `/api/v1/compliance/rules...`; consistency CRUD is currently unversioned `/consistency`. New APIs should be versioned under `/api/v1`, follow current Pydantic response-model and `get_current_user`/membership/permission conventions, and be added to `docs/development/API_CONTRACT.md` before implementation. Proposed endpoint candidates and contracts are in `trd.md`; they are not live APIs.
+
+## Security and operations
+
+Use private storage, bounded streaming uploads, file validation/scanning and retention controls already present. Add department scope only after role/organizational ownership decision. Audit source verification, rule publication, impact decisions, task assignment/state/evidence/revalidation and permission-sensitive downloads. Avoid logging source/evidence contents or secrets. Celery/outbox retries must be bounded, idempotent, observable and preserve terminal failures. No service choice or performance target beyond current infrastructure is presumed.

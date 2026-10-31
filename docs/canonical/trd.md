@@ -1,40 +1,63 @@
-# Technical Requirements — Provisional
+# Technical Requirements and Proposed API Contracts
 
-**Status:** technology selection pending dependency and deployment review.
+**Status:** The stack and current routes below are implemented; endpoints marked **proposed** are design candidates only and must be reviewed into `docs/development/API_CONTRACT.md` before implementation.
 
-## Confirmed current baseline
-- Python FastAPI API under `backend/app/main.py`.
-- Pydantic request validation.
-- Current endpoint accepts caller-supplied document lists and expiry dates; it does not load an authoritative AICTE ruleset, persist applications or process uploaded files.
-- Backend tests live in `backend/tests/` and run in the `Backend tests` GitHub Actions workflow for `main`, `research/grounded-foundation` and pull requests targeting either branch.
+## Verified stack and API conventions
 
-## Technical requirements
-1. API requests and responses use documented schemas and consistent error structures.
-2. Authentication and authorization run server-side; all application/document/finding queries are tenant-scoped.
-3. Database migrations are version-controlled and tested from a clean database.
-4. Uploaded files are treated as hostile input; impose byte/page/time limits, validate content signatures and store privately using opaque names.
-5. Document versions and validation runs are preserved; hashes identify bytes but do not establish authenticity.
-6. Extraction records raw text, normalized value, confidence when available, engine/version and page/bounding-box provenance.
-7. Rule evaluation is deterministic for a given input, rule version and evaluation date.
-8. Failures are explicit and observable; no broad exception swallowing or success-shaped empty results.
-9. External providers use adapters, timeouts and safe retries; never imply a call succeeded when it was not performed.
-10. Logs exclude credentials and unnecessary document contents; secrets are supplied through environment/secret management, not committed.
-11. Tests include authorization, tenant isolation, malformed uploads, rule boundaries, processing failures and historical version behaviour.
+React 19 + TypeScript + Vite; FastAPI + Pydantic v2; SQLAlchemy 2 + Alembic; SQLite/PostgreSQL; private storage abstraction; Celery + Redis + transactional outbox, with eager dispatcher configuration available. OCR uses pdfplumber/Pillow/Tesseract adapter and regex normalization. No LLM, embeddings or vector store currently exist. Sources: dependency manifests, `render.yaml`, `docker-compose.integration.yml`, backend modules.
 
-## Decisions still open
-- Database and migration tooling.
-- Authentication provider or local-auth approach.
-- Private file storage backend.
-- OCR engine and language/model configuration.
-- Synchronous versus background processing threshold.
-- Deployment target and cost constraints.
+Routes use `/api/v1` for core application APIs. Application operations are nested under `/api/v1/applications/{application_id}`; reviews are nested under `/api/v1`; rule governance is `/api/v1/compliance/rules...`. The consistency API is an existing exception at `/consistency`. Current contracts use Pydantic response schemas, FastAPI validation/errors, JWT-authenticated `get_current_user`, membership/permission checks, and 404 concealment for cross-tenant records. Async document/validation operations use 202 and polling URLs. Preserve existing response semantics.
 
-## Decision rule
-Choose the smallest supported stack that meets tenant isolation, traceability, safe file processing and reliable end-to-end demonstration. Record the selected version, reason, alternatives, migration implications and rollback plan in `docs/decisions/` before adding dependencies.
+## Existing endpoint reuse
 
-## Research-informed technical constraints — 2026-10-23
-- Store research/source provenance and rule lifecycle status so provisional or unresolved material cannot be activated by default.
-- Record exact source document/version, URL, clause/page, retrieval date, effective interval and reviewer decision for active rules.
-- Keep official integration status honest: current research did not establish an AICTE public API or authorized issuer integrations. “Not researched/confirmed” is not equivalent to “does not exist.”
-- Regulatory blockers remain: missing contents of the 1 April 2024 scrutiny document; unverified official status/effective date of the 2026–27 addendum; unresolved Annexure-2 §2.1 pagination and Clause 7.17 reference; unresolved applicability of the NBA validity date ending 30 April 2025; official SIH listing/deadline not directly verified.
-- These findings do not choose the database, auth provider, storage or OCR engine. Those remain explicit decisions for the pre-coding phase.
+- `POST /api/v1/applications/{application_id}/documents`, list/get/version/download and processing status: secure versioned evidence intake.
+- `POST /api/v1/applications/{application_id}/validate`; validation runs/report/findings under that application: assessment execution/history.
+- `/api/v1/applications/{application_id}/findings`, review summary/queue/actions and run/finding details: human review.
+- `/api/v1/compliance/rules`, `/rules/{rule_id}/verify-source`, `/approve`, `/history`: existing code-defined rule catalogue and governance.
+- `/api/v1/compliance/...`: issuer verification, infrastructure review, institutional record comparisons, extracted field correction and retention operations.
+- `/consistency`: persisted discrepancy record CRUD; does not run an analysis engine.
+- `/api/v1/audit-packages...`: audit export and integrity verification.
+
+The stateless `/api/v1/validate` still evaluates only caller-supplied lists/dates. `/api/v1/documents/analyze` and `/api/v1/institutions` in `main.py` are legacy direct routes and need auth/scope review before sensitive production use.
+
+## Proposed API surface
+
+All proposed paths are candidates under `/api/v1`; exact route naming and DTOs remain a contract decision. All endpoints are authenticated and tenant/permission scoped. Do not expose client-chosen institution authority.
+
+| Operation (proposed candidate) | Request/response contract outline | Authorization |
+|---|---|---|
+| `GET /api/v1/applications/{id}/requirements` | Query academic/program context; return requirement ID/version, applicability state/reason, source clause/version, expected evidence, status. | application read; applicability edits separately permissioned |
+| Extend `POST /api/v1/applications/{id}/validate` | Existing validation request gains reviewed requirement/context selectors and optional idempotency key; response continues to use the existing run/report contract, returning 202 + polling URL or the synchronous report. | application update |
+| Extend `GET /api/v1/applications/{id}/validation-runs/{run_id}` and `.../findings` | Existing `ValidationRun`/`Finding` response adds requirement, source and multiple evidence references, confidence and limitations compatibly. | application/review read |
+| Reuse existing `POST /api/v1/applications/{id}/validation-runs/{run_id}/findings/{finding_id}/actions` | Existing review action + decision/rationale/request ID append immutable review history; do not add a parallel finding-review operation. | review action; role policy |
+| `POST /api/v1/applications/{id}/tasks` (proposed) | Body carries `finding_id`, title, description, expected evidence, priority, due date and optional owner/department; returns task with source links and initial state. Finding must belong to this authorized application; kept distinct from existing review-action route. | application update/action create |
+| `GET/PATCH /api/v1/actions`, `.../{task_id}` | Scoped list filters; patch only legal fields/state transition with expected record version and rationale where needed. | assigned scope, department/institution permission |
+| `POST /api/v1/actions/{task_id}/evidence` and `.../evidence/{id}/review` | Reference existing secure upload or create linked version; reviewer decision + reason. | task update/review permission |
+| `POST /api/v1/actions/{task_id}/revalidations` | Idempotency key and target requirement; returns new validation run, never updates previous run. | review/action permission |
+| `GET /api/v1/regulatory/sources`, `/documents/{id}/versions`, `/changes/{id}` | Source status and metadata, immutable versions/checksums, clause diff and review state. | regulatory read permission |
+| `POST /api/v1/regulatory/documents` | Source reference and uploaded/approved artifact; returns queued ingestion job. Verification workflow required before authoritative use. | regulatory ingest permission |
+| `POST /api/v1/regulatory/changes/{id}/impact-assessments` | Scope and idempotency key; return queued impact assessment and affected requirement/evidence references. | regulatory impact permission |
+| `POST /api/v1/regulatory/changes/{id}/review-actions` | Approve/reject/correct applicability with rationale; may queue explicit reassessment. | regulatory review/approve permission |
+
+### Shared data shapes
+
+- `RequirementRef`: stable `requirement_id`, immutable `requirement_version`, clause/source-version reference, application applicability result and reason.
+- `EvidenceRef`: document/version, extracted-field or record ID, page/location where available, observed and normalized values, confidence/engine where relevant, evidence role and limitations.
+- `Finding`: existing ID/run/status compatibility plus requirement ref, category, description, missing/deficient detail, why it matters, source ref, `evidence_refs[]`, severity, confidence (nullable, separate), suggested correction and review state. No model-generated unsupported citation.
+- `Task`: institution/application/finding/requirement refs, description, expected evidence, owner/department, priority, due date, controlled status, creator/timestamps and optimistic version.
+- `RegulatoryVersion`: source, title, issuer, URL, publication/effective dates, retrieval time, checksum, verification state and predecessor. `ImpactAssessment` records old/new clauses, affected requirements/evidence, reason, classification, confidence, review outcome and actor.
+
+These are proposed DTOs, not existing schemas. Error codes/status meanings, pagination and filtering must be added to the contract before coding; preserve FastAPI behavior elsewhere.
+
+## Non-functional requirements
+
+- Tenant/role enforcement at API, query, file download and worker execution boundaries; negative tests for cross-institution and (if added) cross-department access.
+- Assessment reproducibility snapshots exact evidence, rule, requirement, source and model versions and evaluation date.
+- Ingestion and analysis jobs are idempotent, bounded-retry, observable and explicit on partial/failure. Outbox messages commit with state; no fake success.
+- Regulatory versions and submitted evidence are immutable; correction adds a version. Audit sensitive state changes.
+- File/model calls have resource and timeout bounds. Minimize personal data; approve provider retention and region before use.
+- Accessibility follows the frontend design standard. No numeric latency, accuracy or scale target is set until workload and deployment constraints are measured.
+
+## Dependencies and open decisions
+
+Resolve source and applicability gates; requirement/mapping schema; action roles and department model; notification provider/escalation policy; regulatory source intake/approval; optional model selection and evaluation/privacy; storage/version retention; dashboard metrics. Add no dependencies or migrations as part of this documentation-only update.
