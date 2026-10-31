@@ -223,7 +223,7 @@ function ConsistencyWorkflowPage() {
                 onChange={(e) => setDescription(e.target.value)}
                 className="app-control w-full rounded-lg border border-border bg-bg-3 p-3 text-sm text-text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/30"
               />
-            </div>
+            </FormField>
             <div>
               <Button type="submit" loading={creating} disabled={applicationItems.length === 0}>Save check</Button>
             </div>
