@@ -65,3 +65,40 @@ function ConsistencyWorkflowPage() {
 
   const applyChecksResult = (
     result: Awaited<ReturnType<typeof listConsistencyChecks>>,
+    onSuccess: () => void,
+    onError: (error: string) => void,
+  ) => {
+    setCreating(false);
+    setChecksLoading(false);
+    if (onError) onError("Failed to load checks");
+    else onSuccess();
+  };
+
+  if (creating) return <p>Creating…</p>;
+
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold">Consistency Checks</h1>
+      <p className="text-text-muted">{formatTimestamp(new Date())}</p>
+      <select
+        onChange={(e) => setSelectedApplication({ id: Number(e.target.value), ...selectedApplication } as any)}
+        className="border rounded p-2"
+      >
+        <option value="">-- Select Application --</option>
+        {applications.map((app) => (
+          <option key={app.id} value={app.id}>
+            {app.application_type} — {app.institution_id}
+          </option>
+        ))}
+      </select>
+      <Button onClick={handleCreate} disabled={creating}>
+        {creating ? "Creating…" : "Add Consistency Check"}
+      </Button>
+      <hr className="my-4" />
+      <DataGrid data={checks} columns={[{ field: "check_name", header: "Check Name" }, { field: "status", header: "Status" }, { field: "created_at", header: "Created" }]} />
+      <Button onClick={() => navigate("/consistency/")}>Back</Button>
+    </div>
+  );
+}
+
+export default ConsistencyWorkflowPage;
