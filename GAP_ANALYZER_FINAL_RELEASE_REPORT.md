@@ -45,7 +45,7 @@ See [GAP_ANALYZER_RELEASE_TEST_REPORT.md](./GAP_ANALYZER_RELEASE_TEST_REPORT.md)
 
 ## GitHub
 
-PR #20 remains a draft. The remediation changes have not yet been committed or pushed. The remote head was confirmed at `6af070e446a0aea742004c4234685de8ed083fce` at the start of this work; final push awaits completion of the final checks and infrastructure diagnosis.
+PR #20 remains a draft. Changes are committed and pushed through `f524069` (`docs: record green gap analyzer preview deployment`). PR #20 is open and remains draft; its description now records the test and preview results. No merge was performed.
 
 ## Final status
 
@@ -64,7 +64,7 @@ PR #20 remains a draft. The remediation changes have not yet been committed or p
 | TypeScript | `npx tsc -b` passed |
 | Production build | Passed; non-fatal chunk-size advisory |
 | Security | API-level auth/ownership checks and suite tenant-negative coverage; production RLS unverified |
-| GitHub push | Not yet pushed |
+| GitHub push | Pushed through `f524069`; PR #20 updated and remains draft |
 | Render deployment | Not verified; waiting for workspace selection and service access |
 | Vercel deployment | Feature branch preview READY (HTTP 200 for `/gap-analyzer`); production still ERROR, no production promotion |
 | Production workflow | Not run |
@@ -74,6 +74,6 @@ PR #20 remains a draft. The remediation changes have not yet been committed or p
 1. Complete final backend test rerun.
 2. Confirm Render workspace and inspect service/startup/health/database configuration.
 3. Verify live Supabase schema, RLS, and storage access.
-4. Keep draft PR #20 updated with verified preview results.
+4. Continue keeping draft PR #20 updated with verified preview results.
 5. Obtain green preview deployment and test authenticated assessment, evidence review, finding navigation, and refresh persistence.
 6. Only then use the established safe production migration/deployment process and verify the live workflow.
