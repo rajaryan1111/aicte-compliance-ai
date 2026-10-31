@@ -112,4 +112,32 @@ export default function ConsistencyPage({ token, baseUrl }: ConsistencePageProps
   );
 }
 
-export default ConsistencyWorkflowPage;
+function ConsistencyWorkflowPage() {
+  const auth = useAuth();
+  const { session } = auth;
+  const token = session?.access_token ?? null;
+  const { checkId } = useParams();
+
+  const detailId = checkId && /^\d+$/.test(checkId) ? Number(checkId) : null;
+
+  // ── Tenant-scoped application selector ──
+  const [applications, setApplications] = useState<ApplicationPage | null>(null);
+  const [applicationError, setApplicationError] = useState("");
+  const [selectedApplication, setSelectedApplication] = useState("");
+
+  // ── Saved checks list ──
+  const [checks, setChecks] = useState<ConsistencyCheck[]>([]);
+  const [statusFilter, setStatusFilter] = useState("");
+  const [checksLoading, setChecksLoading] = useState(true);
+  const [checksError, setChecksError] = useState("");
+
+  // ── Create-check form ──
+  const [checkName, setCheckName] = useState("");
+  const [relatedField, setRelatedField] = useState("");
+  const [description, setDescription] = useState("");
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [creating, setCreating] = useState(false);
+  const [createdNotice, setCreatedNotice] = useState("");
+
+  const applyChecksResult = (
+    result: Awaited<ReturnType<typeof listConsistencyChecks>>,
