@@ -21,3 +21,10 @@ Branch: `feat/complete-intelligent-compliance-gap-analyzer`
 - Added API regression coverage for authenticated extracted-field access, missing versions, and unauthenticated access.
 - Frontend tests exercise the existing Node API/helper suite; no browser E2E or end-to-end live backend workflow was run.
 - Production RLS policies and Supabase behavior were not independently verified in a live project.
+
+
+## Preview deployment probe
+
+- Vercel preview for commit `fce00040a739162e1f4f4370def071344d592e32`: READY.
+- Authenticated Vercel fetch of `/gap-analyzer`: HTTP 200 and SPA HTML returned.
+- This confirms deployment and SPA route fallback only; authenticated API calls and end-to-end assessment remain unverified because Render service inspection is pending.

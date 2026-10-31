@@ -37,11 +37,11 @@ See [GAP_ANALYZER_RELEASE_TEST_REPORT.md](./GAP_ANALYZER_RELEASE_TEST_REPORT.md)
 
 ## Infrastructure and deployment
 
-- Vercel project `aicte-compliance-frontend` is connected to `rajaryan1111/aicte-compliance-ai`. Latest deployment observed: ERROR, feature branch commit `6af070e446a0aea742004c4234685de8ed083fce`, error code `missing_export`. Current local branch build passes, but no new deployment has been triggered.
+- Vercel project `aicte-compliance-frontend` is connected to `rajaryan1111/aicte-compliance-ai`. Latest deployment observed: ERROR, feature branch commit `6af070e446a0aea742004c4234685de8ed083fce`, error code `missing_export`. A preview for commit `fce00040a739162e1f4f4370def071344d592e32` is READY and `/gap-analyzer` returned HTTP 200. Production remains on its prior ERROR deployment; no production deployment has been triggered.
 - Render lists one workspace, “My Workspace”; service inspection is waiting for user workspace confirmation required by the Render connector.
 - Historical frontend URL: https://aicte-compliance-ai.vercel.app/ (HTTP 200 was previously observed; this alone does not prove application functionality).
 - Historical backend health URL: https://aicte-compliance-backend.onrender.com/health (previously timed out; current service identity/health not verified).
-- No live Gap Analyzer workflow or production deployment has been completed.
+- The preview route is available, but no authenticated Gap Analyzer workflow or production deployment has been completed.
 
 ## GitHub
 
@@ -66,7 +66,7 @@ PR #20 remains a draft. The remediation changes have not yet been committed or p
 | Security | API-level auth/ownership checks and suite tenant-negative coverage; production RLS unverified |
 | GitHub push | Not yet pushed |
 | Render deployment | Not verified; waiting for workspace selection and service access |
-| Vercel deployment | Latest observed deployment ERROR (`missing_export`); no repaired deployment verified |
+| Vercel deployment | Feature branch preview READY (HTTP 200 for `/gap-analyzer`); production still ERROR, no production promotion |
 | Production workflow | Not run |
 
 ## Remaining release gates
@@ -74,6 +74,6 @@ PR #20 remains a draft. The remediation changes have not yet been committed or p
 1. Complete final backend test rerun.
 2. Confirm Render workspace and inspect service/startup/health/database configuration.
 3. Verify live Supabase schema, RLS, and storage access.
-4. Push and update draft PR #20 after final source checks.
+4. Keep draft PR #20 updated with verified preview results.
 5. Obtain green preview deployment and test authenticated assessment, evidence review, finding navigation, and refresh persistence.
 6. Only then use the established safe production migration/deployment process and verify the live workflow.
