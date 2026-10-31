@@ -45,7 +45,7 @@ See [GAP_ANALYZER_RELEASE_TEST_REPORT.md](./GAP_ANALYZER_RELEASE_TEST_REPORT.md)
 
 ## GitHub
 
-PR #20 remains a draft. Changes are committed and pushed through `f524069` (`docs: record green gap analyzer preview deployment`). PR #20 is open and remains draft; its description now records the test and preview results. No merge was performed.
+PR #20 remains a draft. Changes are committed and pushed through `4bd2563` (`docs: record Render service and database verification`). PR #20 is open and remains draft; its description now records the test and preview results. No merge was performed.
 
 ## Final status
 
