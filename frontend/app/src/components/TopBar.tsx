@@ -2,7 +2,7 @@ import { useLocation } from "react-router-dom";
 import { Link } from "react-router-dom";
 import { HealthIndicator } from "./HealthIndicator";
 import { useTheme, type ThemeName } from "./ThemeContext";
-import { Shield, ChevronRight, LayoutDashboard, ClipboardCheck, Info, FileLock2, FileText, Menu, X, Clock3, GraduationCap } from "lucide-react";
+import { Shield, ChevronRight, LayoutDashboard, ClipboardCheck, Info, FileLock2, FileText, Menu, X, Clock3, GraduationCap, ListChecks } from "lucide-react";
 import { useAuth } from "./useAuth";
 
 const pageTitles: Record<string, { title: string; description: string; icon: React.ReactNode }> = {
@@ -25,6 +25,11 @@ const pageTitles: Record<string, { title: string; description: string; icon: Rea
     title: "Audit History",
     description: "Saved institutional runs",
     icon: <Clock3 className="h-5 w-5" />,
+  },
+  "/consistency": {
+    title: "Consistency Checks",
+    description: "Institution-scoped consistency reviews",
+    icon: <ListChecks className="h-5 w-5" />,
   },
   "/about": {
     title: "Compliance Guide",
@@ -50,7 +55,9 @@ const pageTitles: Record<string, { title: string; description: string; icon: Rea
 
 export function TopBar({ onMenuToggle, mobileMenuOpen }: { onMenuToggle: () => void; mobileMenuOpen: boolean }) {
   const location = useLocation();
-  const page = pageTitles[location.pathname] || pageTitles["/"];
+  const page = location.pathname.startsWith("/consistency")
+    ? pageTitles["/consistency"]
+    : pageTitles[location.pathname] || pageTitles["/"];
   const { theme, setTheme } = useTheme();
   const { session, signOut } = useAuth();
   const activeUser = session?.user

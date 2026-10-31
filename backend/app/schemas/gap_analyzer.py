@@ -47,8 +47,17 @@ class EvidenceMappingCreate(BaseModel):
 class EvidenceMappingReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    status: Literal["confirmed", "rejected"]
+    status: Literal["confirmed", "rejected", "request_information"]
+    sufficiency_status: Literal["sufficient", "insufficient"] | None = None
     rationale: str = Field(min_length=5, max_length=1000)
+
+
+class EvidenceReviewHistory(BaseModel):
+    actor: str | None = None
+    status: str | None = None
+    sufficiency_status: str | None = None
+    rationale: str
+    reviewed_at: datetime
 
 
 class EvidenceMappingRead(BaseModel):
@@ -63,6 +72,7 @@ class EvidenceMappingRead(BaseModel):
     version_number: int
     file_name: str | None = None
     scan_status: str | None = None
+    uploaded_at: datetime | None = None
     processing_status: str
     sha256: str
     extracted_field_id: int | None = None
@@ -71,6 +81,7 @@ class EvidenceMappingRead(BaseModel):
     evidence_excerpt: str | None = None
     extraction_confidence: float | None = None
     status: str
+    sufficiency_status: str | None = None
     source: str
     rationale: str
     created_by: str
@@ -78,6 +89,32 @@ class EvidenceMappingRead(BaseModel):
     reviewed_at: datetime | None = None
     review_rationale: str | None = None
     created_at: datetime
+    review_history: list[EvidenceReviewHistory] = Field(default_factory=list)
+
+
+class FindingEvidenceRead(BaseModel):
+    id: int
+    document_id: int | None = None
+    document_type: str | None = None
+    file_name: str | None = None
+    sha256: str | None = None
+    uploaded_at: datetime | None = None
+    document_version_id: int
+    extracted_field_id: int | None = None
+    page_number: int | None = None
+    evidence_excerpt: str | None = None
+    evidence_role: str
+    confidence: float | None = None
+
+
+class GapFindingRead(BaseModel):
+    id: int
+    code: str
+    summary: str
+    severity: str
+    status: str
+    document_version_id: int | None = None
+    evidence: list[FindingEvidenceRead] = Field(default_factory=list)
 
 
 class RequirementAssessmentRead(BaseModel):
@@ -107,6 +144,7 @@ class RequirementAssessmentRead(BaseModel):
     reviewed_at: datetime | None = None
     review_rationale: str | None = None
     created_at: datetime
+    findings: list[GapFindingRead] = Field(default_factory=list)
 
 
 class RequirementAssessmentReview(BaseModel):

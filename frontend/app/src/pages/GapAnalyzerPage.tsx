@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "@/components/useAuth";
-import { fetchGapAnalysis, fetchGapDocuments, fetchGapMappings, fetchGapRequirements, reviewGapMapping, runGapAssessment, submitGapMapping, type GapAnalysis, type GapDocument, type GapMapping, type GapRequirement } from "@/lib/api";
+import { fetchGapAnalysis, fetchGapDocuments, fetchGapMappings, fetchGapRequirements, reviewGapMapping, runGapAssessment, submitGapMapping, fetchGapExtractedFields, fetchGapDocumentVersion, type GapAnalysis, type GapDocument, type GapExtractedField, type GapMapping, type GapRequirement } from "@/lib/api";
 
 export function GapAnalyzerPage() {
   const { session } = useAuth();
@@ -12,6 +12,10 @@ export function GapAnalyzerPage() {
   const [mappings, setMappings] = useState<GapMapping[]>([]);
   const [ruleId, setRuleId] = useState("");
   const [versionId, setVersionId] = useState("");
+  const [fieldId, setFieldId] = useState("");
+  const [fields, setFields] = useState<GapExtractedField[]>([]);
+  const [mappingRationale, setMappingRationale] = useState("");
+  const [reviewComments, setReviewComments] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const load = async (run = false) => {
@@ -32,17 +36,32 @@ export function GapAnalyzerPage() {
     } catch (e) { setError(e instanceof Error ? e.message : "Request failed."); }
     finally { setBusy(false); }
   };
+  const selectVersion = async (value: string) => {
+    setVersionId(value); setFieldId(""); setFields([]);
+    const doc = documents.find((item) => String(item.current_version?.id) === value);
+    if (!doc || !value) return;
+    const result = await fetchGapExtractedFields(Number(applicationId), doc.id, Number(value), token);
+    if (result.ok) setFields(result.data);
+    else setError(result.errors._server ?? "Could not load extracted fields.");
+  };
+  const downloadSource = async (documentId: number, sourceVersionId: number, filename: string | null) => {
+    const result = await fetchGapDocumentVersion(Number(applicationId), documentId, sourceVersionId, token);
+    if (!result.ok) { setError(result.errors._server ?? "Source document is unavailable."); return; }
+    const url = URL.createObjectURL(result.data); const link = document.createElement("a");
+    link.href = url; link.download = filename ?? `document-version-${sourceVersionId}`; link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  };
   const createMapping = async () => {
     const id = Number(applicationId);
-    if (!ruleId || !versionId) { setError("Select a requirement and a processed document version."); return; }
+    if (!ruleId || !versionId || mappingRationale.trim().length < 5) { setError("Select a requirement and processed version, then enter a rationale of at least five characters."); return; }
     setBusy(true); setError("");
-    const result = await submitGapMapping(id, token, { rule_approval_id: Number(ruleId), document_version_id: Number(versionId), rationale: "Institutional evidence manually mapped for reviewer assessment." });
+    const result = await submitGapMapping(id, token, { rule_approval_id: Number(ruleId), document_version_id: Number(versionId), extracted_field_id: fieldId ? Number(fieldId) : null, rationale: mappingRationale.trim(), ...(fields.find((field) => String(field.id) === fieldId)?.raw_text ? { evidence_excerpt: fields.find((field) => String(field.id) === fieldId)?.raw_text } : {}) });
     setBusy(false);
     if (!result.ok) { setError(result.errors._server ?? "Could not save the evidence mapping."); return; }
     setMappings((items) => [result.data, ...items]);
   };
-  const reviewMapping = async (mappingId: number, status: "confirmed" | "rejected") => {
-    const result = await reviewGapMapping(Number(applicationId), mappingId, token, status);
+  const reviewMapping = async (mappingId: number, status: "confirmed" | "rejected" | "request_information", sufficiency: "sufficient" | "insufficient" | null, rationale: string) => {
+    const result = await reviewGapMapping(Number(applicationId), mappingId, token, status, sufficiency, rationale);
     if (!result.ok) { setError(result.errors._server ?? "Could not review the evidence mapping."); return; }
     setMappings((items) => items.map((item) => item.id === mappingId ? result.data : item));
   };
@@ -61,8 +80,8 @@ export function GapAnalyzerPage() {
     </section>}
     <section className="space-y-3"><h2 className="text-xl font-semibold">Approved requirements</h2>{requirements.length === 0 ? <p className="rounded-xl border border-border p-5 text-text-secondary">No active requirements match this application, or no requirement versions have completed source verification and approval.</p> : requirements.map((r) => {
       const assessment = analysis?.requirements.find((x) => x.rule_id === r.rule_id);
-      return <article key={`${r.id}-${r.version}`} className="rounded-xl border border-border bg-bg-1 p-5"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-xs text-text-secondary">{r.rule_id} · v{r.version}</p><h3 className="mt-1 font-semibold">{r.title}</h3></div><span className="rounded-full bg-bg-2 px-3 py-1 text-sm">{assessment?.outcome_status ?? (r.applicable ? "Not assessed" : "Not applicable")}</span></div><p className="mt-3 text-sm text-text-secondary">{r.description}</p><p className="mt-3 text-sm">Applicability: {r.applicability_reason}</p>{assessment && <p className="mt-2 text-sm">Evidence: {assessment.evidence_sufficiency} · {assessment.result_message}</p>}<p className="mt-3 text-sm"><strong>{r.source_title} §{r.source_clause}, p. {r.source_page}</strong></p></article>;
+      return <article key={`${r.id}-${r.version}`} className="rounded-xl border border-border bg-bg-1 p-5"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-xs text-text-secondary">{r.rule_id} · v{r.version}</p><h3 className="mt-1 font-semibold">{r.title}</h3></div><span className="rounded-full bg-bg-2 px-3 py-1 text-sm">{assessment?.outcome_status ?? (r.applicable ? "Not assessed" : "Not applicable")}</span></div><p className="mt-3 text-sm text-text-secondary">{r.description}</p><p className="mt-3 text-sm">Applicability: {r.applicability_reason}</p>{assessment && <><p className="mt-2 text-sm">Evidence: {assessment.evidence_sufficiency} · {assessment.result_message}</p><div className="mt-3 space-y-2">{assessment.findings.map((finding) => <article id={`finding-${finding.id}`} key={finding.id} className="rounded border border-border p-3"><h4 className="font-medium">Finding {finding.code} · {finding.severity}</h4><p>{finding.summary}</p>{finding.evidence.map((evidence) => <div key={evidence.id} className="mt-2"><p>{evidence.file_name ?? "Source document"} · version {evidence.document_version_id} · page {evidence.page_number ?? "not recorded"}</p><blockquote>{evidence.evidence_excerpt ?? "No excerpt recorded."}</blockquote></div>)}</article>)}</div></>}<p className="mt-3 text-sm"><strong>{r.source_title} §{r.source_clause}, p. {r.source_page}</strong></p></article>;
     })}</section>
-    {requirements.length > 0 && <section className="space-y-3 rounded-xl border border-border bg-bg-1 p-5"><h2 className="text-xl font-semibold">Map evidence from the Document Vault</h2><p className="text-sm text-text-secondary">Only clean, successfully processed versions from this application are selectable. New mappings need reviewer confirmation before they can support a compliant result.</p><div className="flex flex-wrap items-end gap-3"><label className="grid gap-1 text-sm">Requirement<select className="rounded-md border border-border bg-bg-1 px-3 py-2" value={ruleId} onChange={(e) => setRuleId(e.target.value)}><option value="">Choose requirement</option>{requirements.map((r) => <option key={r.id} value={r.id}>{r.rule_id} · {r.title}</option>)}</select></label><label className="grid gap-1 text-sm">Document version<select className="rounded-md border border-border bg-bg-1 px-3 py-2" value={versionId} onChange={(e) => setVersionId(e.target.value)}><option value="">Choose processed version</option>{documents.filter((d) => d.current_version?.scan_status === "clean" && ["succeeded", "partial"].includes(d.current_version.processing_status)).map((d) => <option key={d.current_version!.id} value={d.current_version!.id}>{d.document_type} · v{d.current_version!.version_number} · {d.current_version!.file_name ?? "document"}</option>)}</select></label><button disabled={busy} onClick={() => void createMapping()} className="rounded-md bg-primary-600 px-4 py-2 text-white disabled:opacity-50">Save mapping</button></div><div className="space-y-2">{mappings.map((m) => <div key={m.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3 text-sm"><span>{m.rule_id} ← {m.document_type} v{m.version_number} · {m.status}</span>{m.status === "suggested" && <span className="flex gap-2"><button className="underline" onClick={() => void reviewMapping(m.id, "confirmed")}>Confirm</button><button className="underline" onClick={() => void reviewMapping(m.id, "rejected")}>Reject</button></span>}</div>)}{mappings.length === 0 && <p className="text-sm text-text-secondary">No evidence mappings yet.</p>}</div></section>}
+    {requirements.length > 0 && <section className="space-y-3 rounded-xl border border-border bg-bg-1 p-5"><h2 className="text-xl font-semibold">Map evidence from the Document Vault</h2><p className="text-sm text-text-secondary">Only clean, successfully processed versions from this application are selectable. New mappings need reviewer confirmation before they can support a compliant result.</p><div className="flex flex-wrap items-end gap-3"><label className="grid gap-1 text-sm">Requirement<select className="rounded-md border border-border bg-bg-1 px-3 py-2" value={ruleId} onChange={(e) => setRuleId(e.target.value)}><option value="">Choose requirement</option>{requirements.map((r) => <option key={r.id} value={r.id}>{r.rule_id} · {r.title}</option>)}</select></label><label className="grid gap-1 text-sm">Document version<select className="rounded-md border border-border bg-bg-1 px-3 py-2" value={versionId} onChange={(e) => void selectVersion(e.target.value)}><option value="">Choose processed version</option>{documents.filter((d) => d.current_version?.scan_status === "clean" && ["succeeded", "partial"].includes(d.current_version.processing_status)).map((d) => <option key={d.current_version!.id} value={d.current_version!.id}>{d.document_type} · v{d.current_version!.version_number} · {d.current_version!.file_name ?? "document"}</option>)}</select></label>{fields.length > 0 && <label className="grid gap-1 text-sm">Extracted field<select value={fieldId} onChange={(e) => setFieldId(e.target.value)}><option value="">Optional field</option>{fields.map((field) => <option key={field.id} value={field.id}>{field.field_name} · page {field.page_number ?? "unknown"}</option>)}</select></label>}<label className="grid gap-1 text-sm">Mapping rationale<input value={mappingRationale} onChange={(e) => setMappingRationale(e.target.value)} required minLength={5} /></label><button disabled={busy} onClick={() => void createMapping()} className="rounded-md bg-primary-600 px-4 py-2 text-white disabled:opacity-50">Save mapping</button></div><div className="space-y-2">{mappings.map((m) => <article key={m.id} className="space-y-2 rounded-lg border border-border p-3 text-sm"><p>{m.rule_id} - {m.document_type} {m.file_name ?? "document"} v{m.version_number} · {m.status} {m.sufficiency_status ?? ""}</p><p>Uploaded: {m.uploaded_at ?? "not recorded"} · Page: {m.page_number ?? "not recorded"} · Field: {m.field_name ?? "not selected"}</p><blockquote>{m.evidence_excerpt ?? "No excerpt recorded."}</blockquote><p>Rationale: {m.rationale}</p><button className="underline" onClick={() => void downloadSource(m.document_id, m.document_version_id, m.file_name)}>Open original document version</button><details><summary>Review history ({m.review_history.length})</summary><ol>{m.review_history.map((h, i) => <li key={i}>{h.status} {h.sufficiency_status ?? ""} · {h.actor ?? "reviewer"} · {h.reviewed_at} · {h.rationale}</li>)}</ol></details><label>Review comment<textarea value={reviewComments[m.id] ?? ""} onChange={(e) => setReviewComments({ ...reviewComments, [m.id]: e.target.value })} /></label><span className="flex flex-wrap gap-2"><button onClick={() => void reviewMapping(m.id, "confirmed", "sufficient", reviewComments[m.id] ?? "")}>Confirm sufficient</button><button onClick={() => void reviewMapping(m.id, "confirmed", "insufficient", reviewComments[m.id] ?? "")}>Confirm insufficient</button><button onClick={() => void reviewMapping(m.id, "rejected", null, reviewComments[m.id] ?? "")}>Reject</button><button onClick={() => void reviewMapping(m.id, "request_information", null, reviewComments[m.id] ?? "")}>Request evidence</button></span></article>)}{mappings.length === 0 && <p className="text-sm text-text-secondary">No evidence mappings yet.</p>}</div></section>}
   </main>;
 }

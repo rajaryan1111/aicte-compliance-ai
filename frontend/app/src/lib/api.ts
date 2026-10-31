@@ -86,32 +86,85 @@ export interface SavedValidationRunPage {
 }
 
 export interface GapRequirement { id: number; rule_id: string; version: number; title: string; description: string; source_title: string; source_clause: string; source_page: string; applicable: boolean; applicability_reason: string; required_evidence_type?: string | null }
-export interface GapAssessment { id: number; rule_id: string; rule_version: number; title: string; applicability_status: string; outcome_status: string; evidence_sufficiency: string; result_message: string; evidence: Array<Record<string, unknown>>; review_status: string }
+export interface GapFindingEvidence { id: number; document_id: number | null; document_type: string | null; file_name: string | null; sha256: string | null; uploaded_at: string | null; document_version_id: number; extracted_field_id: number | null; page_number: number | null; evidence_excerpt: string | null; evidence_role: string; confidence: number | null }
+export interface GapFinding { id: number; code: string; summary: string; severity: string; status: string; document_version_id: number | null; evidence: GapFindingEvidence[] }
+export interface GapAssessment { id: number; rule_id: string; rule_version: number; title: string; applicability_status: string; applicability_reason: string; outcome_status: string; evidence_sufficiency: string; result_message: string; evidence: Array<Record<string, unknown>>; review_status: string; review_rationale: string | null; findings: GapFinding[] }
 export interface GapAnalysis { metrics: { validation_run_id: number; total_requirements: number; applicable_requirements: number; compliant: number; partially_compliant: number; potential_gaps: number; missing_evidence: number; manual_verification_required: number; not_applicable: number; pending_review: number; coverage_percent: number | null; overall_status: string }; requirements: GapAssessment[] }
-export interface GapMapping { id: number; rule_approval_id: number; rule_id: string; document_version_id: number; document_type: string; version_number: number; processing_status: string; status: string; evidence_excerpt?: string | null; page_number?: number | null }
+export interface GapReviewHistory { actor: string | null; status: string | null; sufficiency_status: string | null; rationale: string; reviewed_at: string }
+export interface GapMapping { id: number; application_id: number; rule_approval_id: number; rule_id: string; rule_version: number; document_id: number; document_type: string; document_version_id: number; version_number: number; file_name: string | null; scan_status: string | null; uploaded_at: string | null; processing_status: string; sha256: string; extracted_field_id: number | null; field_name: string | null; page_number: number | null; evidence_excerpt: string | null; extraction_confidence: number | null; status: string; sufficiency_status: string | null; source: string; rationale: string; created_by: string; reviewed_by: string | null; reviewed_at: string | null; review_rationale: string | null; created_at: string; review_history: GapReviewHistory[] }
 export interface GapDocument { id: number; document_type: string; current_version?: { id: number; version_number: number; file_name?: string | null; processing_status: string; scan_status?: string | null } | null }
+export interface GapExtractedField { id: number; document_version_id: number; field_name: string; raw_text: string; normalized_value: string | null; confidence: number | null; page_number: number | null; engine_name: string; extraction_status: string }
 function isGapMapping(value: unknown): value is GapMapping { return isRecord(value) && typeof value.id === "number" && typeof value.rule_id === "string" && typeof value.document_version_id === "number"; }
+function isGapAssessment(value: unknown): value is GapAssessment { return isRecord(value) && typeof value.id === "number" && typeof value.rule_id === "string" && Array.isArray(value.findings); }
 
-export function fetchGapRequirements(applicationId: number, token: string) {
-  return authenticatedJson<GapRequirement[]>(`/api/v1/applications/${applicationId}/gap-requirements`, token, {}, (v): v is GapRequirement[] => Array.isArray(v));
+export interface ApplicationRecord {
+  id: number;
+  institution_id: number;
+  application_type: string;
+  academic_year: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
 }
-export function fetchGapDocuments(applicationId: number, token: string) {
-  return authenticatedJson<{ items: GapDocument[]; total: number }>(`/api/v1/applications/${applicationId}/documents`, token, {}, (v): v is { items: GapDocument[]; total: number } => isRecord(v) && Array.isArray(v.items));
+
+export interface ApplicationRecordPage {
+  items: ApplicationRecord[];
+  total: number;
+  skip: number;
+  limit: number;
 }
-export function fetchGapAnalysis(applicationId: number, token: string) {
-  return authenticatedJson<GapAnalysis>(`/api/v1/applications/${applicationId}/gap-analysis`, token, {}, (v): v is GapAnalysis => isRecord(v) && isRecord(v.metrics) && Array.isArray(v.requirements));
+
+export type ConsistencyStatus = "pending" | "discrepancy_detected" | "resolved";
+
+export interface ConsistencyCheck {
+  id: number;
+  application_id: number;
+  check_name: string;
+  description: string | null;
+  related_field: string | null;
+  status: ConsistencyStatus;
+  created_at: string;
+  updated_at: string;
 }
-export function fetchGapMappings(applicationId: number, token: string) {
-  return authenticatedJson<GapMapping[]>(`/api/v1/applications/${applicationId}/requirement-evidence-mappings`, token, {}, (v): v is GapMapping[] => Array.isArray(v));
+
+export interface ConsistencyFinding {
+  id: number;
+  consistency_check_id: number;
+  field_name: string;
+  value_1: string;
+  value_2: string;
+  severity: string;
+  confidence: number | null;
+  description: string;
+  evidence: Record<string, unknown> | null;
+  resolved: boolean;
+  created_at: string;
+  updated_at: string;
 }
-export function submitGapMapping(applicationId: number, token: string, payload: { rule_approval_id: number; document_version_id: number; rationale: string }) {
-  return authenticatedJson<GapMapping>(`/api/v1/applications/${applicationId}/requirement-evidence-mappings`, token, { method: "POST", body: JSON.stringify(payload) }, isGapMapping);
+
+export interface ConsistencyCheckCreate {
+  application_id: number;
+  check_name: string;
+  description?: string | null;
+  related_field?: string | null;
 }
-export function reviewGapMapping(applicationId: number, mappingId: number, token: string, status: "confirmed" | "rejected") {
-  return authenticatedJson<GapMapping>(`/api/v1/applications/${applicationId}/requirement-evidence-mappings/${mappingId}`, token, { method: "PATCH", body: JSON.stringify({ status, rationale: `Reviewer ${status} this evidence mapping.` }) }, isGapMapping);
+
+export interface ConsistencyFindingCreate {
+  consistency_check_id: number;
+  field_name: string;
+  value_1: string;
+  value_2: string;
+  severity: string;
+  confidence?: number | null;
+  description: string;
+  evidence?: Record<string, unknown> | null;
 }
-export function runGapAssessment(applicationId: number, token: string) {
-  return authenticatedJson<Record<string, unknown>>(`/api/v1/applications/${applicationId}/validate`, token, { method: "POST", body: JSON.stringify({}) }, isRecord);
+
+export interface ConsistencyFindingUpdate {
+  severity?: string;
+  description?: string;
+  evidence?: Record<string, unknown> | null;
+  resolved?: boolean;
 }
 
 // ── Error types ────────────────────────────────────────────────
@@ -178,9 +231,10 @@ export function mapValidationErrors(
 // Defaults to the canonical Render backend deployment for this project.
 const DEFAULT_PROD_API_BASE = "https://aicte-compliance-api-preview.onrender.com";
 
-const RAW_API_BASE = import.meta.env.VITE_API_BASE_URL
-  ? import.meta.env.VITE_API_BASE_URL
-  : (import.meta.env.DEV ? "" : DEFAULT_PROD_API_BASE);
+const viteEnv = import.meta.env ?? { DEV: false, VITE_API_BASE_URL: undefined };
+const RAW_API_BASE = viteEnv.VITE_API_BASE_URL
+  ? viteEnv.VITE_API_BASE_URL
+  : (viteEnv.DEV ? "" : DEFAULT_PROD_API_BASE);
 
 export const API_BASE = RAW_API_BASE.trim().replace(/\/+$/, "");
 
@@ -348,6 +402,7 @@ async function authenticatedJson<T>(
   token: string,
   init: RequestInit = {},
   valid: (body: unknown) => body is T,
+  resourceName = "History",
 ): Promise<ApiResult<T>> {
   try {
     const headers = new Headers(init.headers);
@@ -357,14 +412,14 @@ async function authenticatedJson<T>(
     if (response.status === 204) return { ok: true, data: undefined as T };
     if (response.ok && !parseError && valid(body)) return { ok: true, data: body };
     if (response.ok) {
-      return { ok: false, kind: "invalid_response", status: response.status, errors: { _server: "History service returned an invalid response." }, raw: body };
+      return { ok: false, kind: "invalid_response", status: response.status, errors: { _server: `${resourceName} service returned an invalid response.` }, raw: body };
     }
     const mapped = mapValidationErrors(body);
     return {
       ok: false,
       kind: response.status === 422 ? "validation" : "server",
       status: response.status,
-      errors: Object.keys(mapped).length ? mapped : { _server: historyErrorMessage(response.status, body) },
+      errors: Object.keys(mapped).length ? mapped : { _server: authenticatedErrorMessage(response.status, body, resourceName) },
       raw: body,
     };
   } catch (error) {
@@ -376,6 +431,16 @@ async function authenticatedJson<T>(
       errors: { _network: timedOut ? "History request timed out." : "Unable to reach the history service." },
     };
   }
+}
+
+function authenticatedErrorMessage(status: number, body: unknown, resourceName: string) {
+  if (resourceName === "History") return historyErrorMessage(status, body);
+  if (status === 401) return "Your session expired. Sign in again.";
+  if (status === 403) return `Your account does not have access to this ${resourceName.toLowerCase()} action.`;
+  if (status === 404) return `This ${resourceName.toLowerCase()} record was not found or access is denied.`;
+  if (status === 503) return `${resourceName} is not configured or is temporarily unavailable.`;
+  if (isRecord(body) && typeof body.detail === "string") return body.detail;
+  return `${resourceName} service returned an error (${status}).`;
 }
 
 function historyErrorMessage(status: number, body: unknown) {
@@ -413,8 +478,200 @@ function isSavedRunPage(value: unknown): value is SavedValidationRunPage {
     && value.items.every(isSavedRun) && typeof value.has_more === "boolean";
 }
 
+function isApplicationRecord(value: unknown): value is ApplicationRecord {
+  return isRecord(value)
+    && Number.isInteger(value.id)
+    && Number.isInteger(value.institution_id)
+    && typeof value.application_type === "string"
+    && typeof value.academic_year === "string"
+    && typeof value.status === "string"
+    && typeof value.created_at === "string"
+    && typeof value.updated_at === "string";
+}
+
+function isApplicationRecordPage(value: unknown): value is ApplicationRecordPage {
+  return isRecord(value)
+    && Array.isArray(value.items)
+    && value.items.every(isApplicationRecord)
+    && Number.isInteger(value.total)
+    && Number.isInteger(value.skip)
+    && Number.isInteger(value.limit);
+}
+
+const CONSISTENCY_STATUSES = ["pending", "discrepancy_detected", "resolved"];
+
+function isConsistencyCheck(value: unknown): value is ConsistencyCheck {
+  return isRecord(value)
+    && Number.isInteger(value.id)
+    && Number.isInteger(value.application_id)
+    && typeof value.check_name === "string"
+    && (value.description === null || typeof value.description === "string")
+    && (value.related_field === null || typeof value.related_field === "string")
+    && CONSISTENCY_STATUSES.includes(String(value.status))
+    && typeof value.created_at === "string"
+    && typeof value.updated_at === "string";
+}
+
+function isConsistencyFinding(value: unknown): value is ConsistencyFinding {
+  return isRecord(value)
+    && Number.isInteger(value.id)
+    && Number.isInteger(value.consistency_check_id)
+    && typeof value.field_name === "string"
+    && typeof value.value_1 === "string"
+    && typeof value.value_2 === "string"
+    && typeof value.severity === "string"
+    && (value.confidence === null || typeof value.confidence === "number")
+    && typeof value.description === "string"
+    && (value.evidence === null || isRecord(value.evidence))
+    && typeof value.resolved === "boolean"
+    && typeof value.created_at === "string"
+    && typeof value.updated_at === "string";
+}
+
+function isConsistencyCheckList(value: unknown): value is ConsistencyCheck[] {
+  return Array.isArray(value) && value.every(isConsistencyCheck);
+}
+
+function isConsistencyFindingList(value: unknown): value is ConsistencyFinding[] {
+  return Array.isArray(value) && value.every(isConsistencyFinding);
+}
+
 export function fetchInstitutions(token: string) {
   return authenticatedJson<InstitutionAccess[]>("/api/v1/institutions", token, {}, isInstitutionList);
+}
+
+export function fetchApplications(token: string) {
+  return authenticatedJson<ApplicationRecordPage>(
+    "/api/v1/applications?skip=0&limit=100",
+    token,
+    {},
+    isApplicationRecordPage,
+    "Application",
+  );
+}
+
+export function fetchApplicationRecord(applicationId: number, token: string) {
+  return authenticatedJson<ApplicationRecord>(
+    `/api/v1/applications/${encodeURIComponent(applicationId)}`,
+    token,
+    {},
+    isApplicationRecord,
+    "Application",
+  );
+}
+
+export function fetchConsistencyChecks(token: string) {
+  return authenticatedJson<ConsistencyCheck[]>(
+    "/consistency/",
+    token,
+    {},
+    isConsistencyCheckList,
+    "Consistency",
+  );
+}
+
+export function createConsistencyCheck(payload: ConsistencyCheckCreate, token: string) {
+  return authenticatedJson<ConsistencyCheck>(
+    "/consistency/",
+    token,
+    { method: "POST", body: JSON.stringify(payload) },
+    isConsistencyCheck,
+    "Consistency",
+  );
+}
+
+export function fetchConsistencyCheck(checkId: number, token: string) {
+  return authenticatedJson<ConsistencyCheck>(
+    `/consistency/${encodeURIComponent(checkId)}`,
+    token,
+    {},
+    isConsistencyCheck,
+    "Consistency",
+  );
+}
+
+export function fetchConsistencyFindings(checkId: number, token: string) {
+  return authenticatedJson<ConsistencyFinding[]>(
+    `/consistency/checks/${encodeURIComponent(checkId)}/findings`,
+    token,
+    {},
+    isConsistencyFindingList,
+    "Consistency",
+  );
+}
+
+export function fetchConsistencyFinding(findingId: number, token: string) {
+  return authenticatedJson<ConsistencyFinding>(
+    `/consistency/findings/${encodeURIComponent(findingId)}`,
+    token,
+    {},
+    isConsistencyFinding,
+    "Consistency finding",
+  );
+}
+
+export function createConsistencyFinding(payload: ConsistencyFindingCreate, token: string) {
+  return authenticatedJson<ConsistencyFinding>(
+    "/consistency/findings",
+    token,
+    { method: "POST", body: JSON.stringify(payload) },
+    isConsistencyFinding,
+    "Consistency",
+  );
+}
+
+export function updateConsistencyFinding(
+  findingId: number,
+  payload: ConsistencyFindingUpdate,
+  token: string,
+) {
+  return authenticatedJson<ConsistencyFinding>(
+    `/consistency/findings/${encodeURIComponent(findingId)}`,
+    token,
+    { method: "PATCH", body: JSON.stringify(payload) },
+    isConsistencyFinding,
+    "Consistency",
+  );
+}
+
+export function fetchGapRequirements(applicationId: number, token: string) {
+  return authenticatedJson<GapRequirement[]>(`/api/v1/applications/${applicationId}/gap-requirements`, token, {}, (v): v is GapRequirement[] => Array.isArray(v));
+}
+export function fetchGapDocuments(applicationId: number, token: string) {
+  return authenticatedJson<{ items: GapDocument[]; total: number }>(`/api/v1/applications/${applicationId}/documents`, token, {}, (v): v is { items: GapDocument[]; total: number } => isRecord(v) && Array.isArray(v.items));
+}
+export function fetchGapExtractedFields(applicationId: number, documentId: number, versionId: number, token: string) {
+  return authenticatedJson<GapExtractedField[]>(`/api/v1/applications/${applicationId}/documents/${documentId}/versions/${versionId}/fields`, token, {}, (v): v is GapExtractedField[] => Array.isArray(v));
+}
+export function fetchGapAnalysis(applicationId: number, token: string) {
+  return authenticatedJson<GapAnalysis>(`/api/v1/applications/${applicationId}/gap-analysis`, token, {}, (v): v is GapAnalysis => isRecord(v) && isRecord(v.metrics) && Array.isArray(v.requirements));
+}
+export function fetchGapMappings(applicationId: number, token: string) {
+  return authenticatedJson<GapMapping[]>(`/api/v1/applications/${applicationId}/requirement-evidence-mappings`, token, {}, (v): v is GapMapping[] => Array.isArray(v));
+}
+export function submitGapMapping(applicationId: number, token: string, payload: { rule_approval_id: number; document_version_id: number; extracted_field_id?: number | null; page_number?: number | null; evidence_excerpt?: string | null; rationale: string }) {
+  return authenticatedJson<GapMapping>(`/api/v1/applications/${applicationId}/requirement-evidence-mappings`, token, { method: "POST", body: JSON.stringify(payload) }, isGapMapping);
+}
+export function reviewGapMapping(applicationId: number, mappingId: number, token: string, status: "confirmed" | "rejected" | "request_information", sufficiency_status: "sufficient" | "insufficient" | null, rationale: string) {
+  return authenticatedJson<GapMapping>(`/api/v1/applications/${applicationId}/requirement-evidence-mappings/${mappingId}`, token, { method: "PATCH", body: JSON.stringify({ status, sufficiency_status, rationale }) }, isGapMapping);
+}
+export function reviewGapAssessment(applicationId: number, runId: number, assessmentId: number, token: string, status: "accepted" | "rejected" | "request_information", rationale: string) {
+  return authenticatedJson<GapAssessment>(`/api/v1/applications/${applicationId}/validation-runs/${runId}/requirement-assessments/${assessmentId}`, token, { method: "PATCH", body: JSON.stringify({ status, rationale }) }, isGapAssessment);
+}
+export function runGapAssessment(applicationId: number, token: string) {
+  return authenticatedJson<Record<string, unknown>>(`/api/v1/applications/${applicationId}/validate`, token, { method: "POST", body: JSON.stringify({}) }, isRecord);
+}
+
+export async function fetchGapDocumentVersion(applicationId: number, documentId: number, versionId: number, token: string): Promise<ApiResult<Blob>> {
+  try {
+    const response = await fetch(apiUrl(`/api/v1/applications/${applicationId}/documents/${documentId}/versions/${versionId}/download`), { headers: { Authorization: `Bearer ${token}` } });
+    if (response.ok) return { ok: true, data: await response.blob() };
+    const body: unknown = await response.json().catch(() => null);
+    const detail = isRecord(body) && typeof body.detail === "string" ? body.detail : `Document request failed (${response.status}).`;
+    return { ok: false, kind: response.status === 401 ? "validation" : "server", status: response.status, errors: { _server: detail }, raw: body };
+  } catch {
+    return { ok: false, kind: "network", status: 0, errors: { _network: "Unable to open the authorized document version." } };
+  }
 }
 
 export function createSavedValidationRun(request: ValidationRequest, token: string) {

@@ -14,13 +14,18 @@ from backend.app.db.models import (
     Document,
     DocumentVersion,
     ExtractedField,
+    Finding,
+    FindingEvidence,
     RequirementAssessment,
     RequirementAssessmentEvidence,
     RequirementEvidenceMapping,
     RuleApprovalRecord,
 )
 from backend.app.schemas.gap_analyzer import (
+    EvidenceReviewHistory,
     EvidenceMappingRead,
+    FindingEvidenceRead,
+    GapFindingRead,
     RequirementAssessmentRead,
     RequirementRead,
 )
@@ -152,12 +157,19 @@ def review_mapping(
     *,
     mapping: RequirementEvidenceMapping,
     status: str,
+    sufficiency_status: str | None,
     rationale: str,
     actor: str,
     institution_id: int,
 ) -> RequirementEvidenceMapping:
     previous_status = mapping.status
+    previous_sufficiency = mapping.sufficiency_status
+    if status != "confirmed" and sufficiency_status is not None:
+        raise ValueError("Evidence sufficiency can only be recorded for confirmed mappings.")
+    if mapping.status == status and mapping.sufficiency_status == sufficiency_status and mapping.review_rationale == rationale:
+        return mapping
     mapping.status = status
+    mapping.sufficiency_status = sufficiency_status if status == "confirmed" else None
     mapping.reviewed_by = actor
     mapping.reviewed_at = _utc_now()
     mapping.review_rationale = rationale
@@ -173,6 +185,8 @@ def review_mapping(
             "document_version_id": mapping.document_version_id,
             "previous_status": previous_status,
             "new_status": status,
+            "previous_sufficiency_status": previous_sufficiency,
+            "sufficiency_status": mapping.sufficiency_status,
             "rationale": rationale,
         }),
     ))
@@ -186,6 +200,24 @@ def serialize_mapping(db: Session, mapping: RequirementEvidenceMapping) -> Evide
     document = db.get(Document, version.document_id) if version else None
     approval = db.get(RuleApprovalRecord, mapping.rule_approval_id)
     field = db.get(ExtractedField, mapping.extracted_field_id) if mapping.extracted_field_id else None
+    history_rows = db.scalars(select(AuditEvent).where(
+        AuditEvent.target_type == "RequirementEvidenceMapping",
+        AuditEvent.target_id == str(mapping.id),
+        AuditEvent.action.like("REQUIREMENT_EVIDENCE_MAPPING_%"),
+    ).order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())).all()
+    review_history: list[EvidenceReviewHistory] = []
+    for event in history_rows:
+        try:
+            details = json.loads(event.details or "{}")
+        except json.JSONDecodeError:
+            details = {}
+        review_history.append(EvidenceReviewHistory(
+            actor=event.actor_id,
+            status=details.get("new_status"),
+            sufficiency_status=details.get("sufficiency_status"),
+            rationale=details.get("rationale", ""),
+            reviewed_at=event.created_at,
+        ))
     return EvidenceMappingRead(
         id=mapping.id,
         application_id=mapping.application_id,
@@ -198,6 +230,7 @@ def serialize_mapping(db: Session, mapping: RequirementEvidenceMapping) -> Evide
         version_number=version.version_number if version else 0,
         file_name=version.file_name if version else None,
         scan_status=version.scan_status if version else None,
+        uploaded_at=version.uploaded_at if version else None,
         processing_status=version.processing_status if version else "unknown",
         sha256=version.sha256 if version else "",
         extracted_field_id=field.id if field else None,
@@ -206,6 +239,7 @@ def serialize_mapping(db: Session, mapping: RequirementEvidenceMapping) -> Evide
         evidence_excerpt=mapping.evidence_excerpt,
         extraction_confidence=field.confidence if field else None,
         status=mapping.status,
+        sufficiency_status=mapping.sufficiency_status,
         source=mapping.source,
         rationale=mapping.rationale,
         created_by=mapping.created_by,
@@ -213,6 +247,7 @@ def serialize_mapping(db: Session, mapping: RequirementEvidenceMapping) -> Evide
         reviewed_at=mapping.reviewed_at,
         review_rationale=mapping.review_rationale,
         created_at=mapping.created_at,
+        review_history=review_history,
     )
 
 
@@ -229,6 +264,41 @@ def assessment_to_read(db: Session, item: RequirementAssessment) -> RequirementA
         raise ValueError("Approved requirement version is unavailable.")
     draft_data = json.loads(record.rule_definition_json)
     evidence_snapshot = json.loads(item.evidence_snapshot or "[]")
+    finding_rows = db.scalars(select(Finding).where(
+        Finding.requirement_assessment_id == item.id
+    ).order_by(Finding.id.asc())).all()
+    findings: list[GapFindingRead] = []
+    for finding in finding_rows:
+        evidence_items = db.scalars(select(FindingEvidence).where(
+            FindingEvidence.finding_id == finding.id
+        ).order_by(FindingEvidence.id.asc())).all()
+        evidence_reads = []
+        for row in evidence_items:
+            version = db.get(DocumentVersion, row.document_version_id)
+            document = db.get(Document, version.document_id) if version else None
+            evidence_reads.append(FindingEvidenceRead(
+                id=row.id,
+                document_id=document.id if document else None,
+                document_type=document.document_type if document else None,
+                file_name=version.file_name if version else None,
+                sha256=version.sha256 if version else None,
+                uploaded_at=version.uploaded_at if version else None,
+                document_version_id=row.document_version_id,
+                extracted_field_id=row.extracted_field_id,
+                page_number=row.page_number,
+                evidence_excerpt=row.evidence_excerpt,
+                evidence_role=row.evidence_role,
+                confidence=row.confidence,
+            ))
+        findings.append(GapFindingRead(
+            id=finding.id,
+            code=finding.code,
+            summary=finding.summary,
+            severity=finding.severity,
+            status=finding.status,
+            document_version_id=finding.document_version_id,
+            evidence=evidence_reads,
+        ))
     return RequirementAssessmentRead(
         id=item.id,
         application_id=item.application_id,
@@ -256,6 +326,7 @@ def assessment_to_read(db: Session, item: RequirementAssessment) -> RequirementA
         reviewed_at=item.reviewed_at,
         review_rationale=item.review_rationale,
         created_at=item.created_at,
+        findings=findings,
     )
 
 

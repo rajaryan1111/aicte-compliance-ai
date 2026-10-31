@@ -907,6 +907,7 @@ class RequirementEvidenceMapping(Base):
         ForeignKey("extracted_fields.id", ondelete="SET NULL"), nullable=True, index=True
     )
     status: Mapped[str] = mapped_column(String(32), default="suggested", nullable=False, index=True)
+    sufficiency_status: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     source: Mapped[str] = mapped_column(String(32), default="user", nullable=False)
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     evidence_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)

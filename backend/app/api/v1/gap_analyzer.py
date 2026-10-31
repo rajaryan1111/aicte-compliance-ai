@@ -60,7 +60,11 @@ def review_mapping(application_id: int, mapping_id: int, payload: EvidenceMappin
     mapping = db.get(RequirementEvidenceMapping, mapping_id)
     if mapping is None or mapping.application_id != app.id:
         raise HTTPException(404, "Evidence mapping not found")
-    result = svc.review_mapping(db, mapping=mapping, status=payload.status, rationale=payload.rationale, actor=user.username, institution_id=app.institution_id)
+    try:
+        result = svc.review_mapping(db, mapping=mapping, status=payload.status, sufficiency_status=payload.sufficiency_status, rationale=payload.rationale, actor=user.username, institution_id=app.institution_id)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(422, str(exc)) from exc
     return svc.serialize_mapping(db, result)
 
 

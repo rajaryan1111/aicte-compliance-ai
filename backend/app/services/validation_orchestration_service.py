@@ -877,7 +877,8 @@ class ValidationOrchestrationService:
                     continue
                 field = next((item for item in version.extracted_fields if item.id == mapping.extracted_field_id), None) if mapping.extracted_field_id else None
                 sufficient_state = (
-                    "sufficient" if result and result.status == "passed" and mapping.status == "confirmed"
+                    mapping.sufficiency_status if mapping.status == "confirmed" and mapping.sufficiency_status
+                    else "sufficient" if result and result.status == "passed" and mapping.status == "confirmed"
                     else "insufficient" if result and result.status == "failed" and mapping.status == "confirmed"
                     else "requires_manual_verification" if mapping.status != "rejected"
                     else "rejected"
@@ -936,9 +937,13 @@ class ValidationOrchestrationService:
                         evidence_sufficiency = "requires_manual_verification"
                         applicability_status = "requires_manual_verification"
                         applicability_reason = "Requirement scope matches, but evidence mapping has not been confirmed by an authorized reviewer."
-                elif result and result.status == "passed":
+                elif result and result.status == "passed" and not any(m.status == "confirmed" and m.sufficiency_status == "insufficient" for m in mappings):
                     outcome_status = "compliant"
                     evidence_sufficiency = "sufficient"
+                elif result and result.status == "passed":
+                    outcome_status = "potential_gap"
+                    evidence_sufficiency = "insufficient"
+                    message = "The deterministic check passed, but a reviewer marked the mapped evidence insufficient; obtain or verify additional evidence."
                 elif result and result.status == "failed":
                     outcome_status = "potential_gap"
                     evidence_sufficiency = "insufficient" if evidence_rows else "missing"

@@ -24,6 +24,7 @@ def upgrade() -> None:
         sa.Column("document_version_id", sa.Integer(), nullable=False),
         sa.Column("extracted_field_id", sa.Integer(), nullable=True),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="suggested"),
+        sa.Column("sufficiency_status", sa.String(length=32), nullable=True),
         sa.Column("source", sa.String(length=32), nullable=False, server_default="user"),
         sa.Column("page_number", sa.Integer(), nullable=True),
         sa.Column("evidence_excerpt", sa.Text(), nullable=True),
@@ -39,7 +40,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["document_version_id"], ["document_versions.id"], ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(["extracted_field_id"], ["extracted_fields.id"], ondelete="SET NULL"),
     )
-    for column in ("application_id", "rule_approval_id", "document_version_id", "extracted_field_id", "status"):
+    for column in ("application_id", "rule_approval_id", "document_version_id", "extracted_field_id", "status", "sufficiency_status"):
         op.create_index(f"ix_requirement_evidence_mappings_{column}", "requirement_evidence_mappings", [column])
 
     op.create_table(
@@ -140,6 +141,6 @@ def downgrade() -> None:
     for column in ("application_id", "validation_run_id", "rule_approval_id", "applicability_status", "outcome_status", "evidence_sufficiency", "review_status"):
         op.drop_index(f"ix_requirement_assessments_{column}", table_name="requirement_assessments")
     op.drop_table("requirement_assessments")
-    for column in ("application_id", "rule_approval_id", "document_version_id", "extracted_field_id", "status"):
+    for column in ("application_id", "rule_approval_id", "document_version_id", "extracted_field_id", "status", "sufficiency_status"):
         op.drop_index(f"ix_requirement_evidence_mappings_{column}", table_name="requirement_evidence_mappings")
     op.drop_table("requirement_evidence_mappings")
