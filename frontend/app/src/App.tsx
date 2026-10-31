@@ -1,3 +1,4 @@
+// App.tsx
 import { Suspense, lazy } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "./components/Layout";
@@ -70,7 +71,6 @@ import {
   ChevronRight,
   Shield,
   X,
-  GraduationCap,
   GitCompareArrows,
 } from "lucide-react";
 import { Button } from "./Button";
@@ -89,6 +89,11 @@ export function Sidebar({
   onToggle,
   open,
   onClose,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+  open: boolean;
+  onClose: () => void;
 }) {
   const location = useLocation();
   const items = navItems;
