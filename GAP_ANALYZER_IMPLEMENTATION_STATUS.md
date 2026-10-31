@@ -34,7 +34,7 @@ Audit basis: repository source at `93b7850d3bf5af4a54d504f412986f61bc6ad723`, fe
 | Requirement/evidence-linked findings | Partial | Existing findings can link to assessment and evidence snapshots. Finding navigation/detail UX is incomplete. |
 | AI/RAG assistance | Missing | No provider, embeddings, vector store or AI key/config found in manifests/environment examples/source. Build deterministic retrieval and an optional provider boundary only if privacy/provider configuration is explicitly supplied; no external transfer is verified/authorized by this repository. |
 | Requirement/evidence review UX | Partial | Authenticated `/gap-analyzer` page, approved requirement list, saved metrics, vault version mapping, and mapping confirmation/rejection. Detailed excerpts, extracted-field picker, filtering, pagination and navigation remain incomplete. |
-| Runtime/deployment readiness | Blocked | Local migration passes. Frontend build and test commands are blocked by pre-existing TypeScript/syntax errors in the consistency feature. Production deployment was not attempted. |
+| Runtime/deployment readiness | Blocked | Local migration passes. Frontend build and test commands are blocked by pre-existing TypeScript/syntax errors in the consistency feature. Read-only production probes: reported frontend URL returned HTTP 200; reported Render health endpoint timed out. Vercel project inspection shows latest production deployment on `main` is `ERROR`. No production migration/deploy was attempted. |
 
 ## Implementation and limitations
 
@@ -57,4 +57,5 @@ The earlier `docs/canonical/truthful-baseline-audit.md` predates current `main` 
 | Frontend production build | Blocked by existing TypeScript errors in consistency modules/pages; no errors from the new Gap Analyzer files after fixes |
 | Frontend tests | 7 passed; existing `consistency-api.test.mts` fails to parse |
 | AI/RAG | Not implemented; no approved provider, vector store or data transfer configuration exists. No AI output is fabricated. |
-| GitHub push/PR/production | Not yet attempted |
+| GitHub branch/push/PR | Verified: pushed branch `feat/complete-intelligent-compliance-gap-analyzer`; draft PR #20 opened |
+| Production | Not deployed: frontend build/tests fail in pre-existing consistency code; Render health probe timed out; production migration not attempted |
