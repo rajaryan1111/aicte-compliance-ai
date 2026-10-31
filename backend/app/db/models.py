@@ -14,9 +14,10 @@ Implements the 9 canonical entities:
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Date,
     DateTime,
@@ -33,7 +34,7 @@ from backend.app.db.base import Base
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Institution(Base):
@@ -108,6 +109,9 @@ class Application(Base):
         back_populates="application", cascade="all, delete-orphan"
     )
     infrastructure_evidence: Mapped[list[InfrastructureEvidence]] = relationship(
+        back_populates="application", cascade="all, delete-orphan"
+    )
+    consistency_checks: Mapped[list[ConsistencyCheck]] = relationship(
         back_populates="application", cascade="all, delete-orphan"
     )
 
@@ -494,6 +498,67 @@ class AuditEvent(Base):
             f"<AuditEvent(id={self.id}, action={self.action!r}, "
             f"target={self.target_type}:{self.target_id})>"
         )
+
+
+class ConsistencyCheck(Base):
+    """Institution-scoped consistency review attached to an application."""
+
+    __tablename__ = "consistency_checks"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    application_id: Mapped[int] = mapped_column(
+        ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    check_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    related_field: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(40), default="pending", nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
+    )
+
+    application: Mapped[Application] = relationship(back_populates="consistency_checks")
+    findings: Mapped[list[ConsistencyFinding]] = relationship(
+        back_populates="consistency_check", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<ConsistencyCheck(id={self.id}, application_id={self.application_id}, status={self.status!r})>"
+
+
+class ConsistencyFinding(Base):
+    """Persisted discrepancy observation for a consistency check."""
+
+    __tablename__ = "consistency_findings"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    consistency_check_id: Mapped[int] = mapped_column(
+        ForeignKey("consistency_checks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    field_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    value_1: Mapped[str] = mapped_column(Text, nullable=False)
+    value_2: Mapped[str] = mapped_column(Text, nullable=False)
+    severity: Mapped[str] = mapped_column(String(30), nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
+    )
+
+    consistency_check: Mapped[ConsistencyCheck] = relationship(back_populates="findings")
+
+    def __repr__(self) -> str:
+        return f"<ConsistencyFinding(id={self.id}, check_id={self.consistency_check_id}, field={self.field_name!r})>"
 
 
 class User(Base):
