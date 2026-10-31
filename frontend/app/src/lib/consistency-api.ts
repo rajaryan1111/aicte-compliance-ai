@@ -5,14 +5,15 @@
 // validated against the backend's ConsistencyCheckRead / ConsistencyFindingRead
 // / ApplicationRead schemas before being handed to the UI.
 //
-// The transport is injectable (fetchJson/baseUrl) so the response guards and
-// request builders can be regression-tested without a live backend.
-
-// Transport details (base-URL bootstrap, JSON fetch, error mapping and the
+// The transport is injectable (fetchJson/baseUrl) so the schema
+// guards and request builders can be regression-tested without a live backend.
+//
+// The transport details (base-URL bootstrap, JSON fetch, error mapping and the
 // shared request pipeline) live in ./consistency-transport so the schema
 // guards stay independently testable and the modules stay small. Only
 // type-level contracts are imported from the shared api.ts; those imports
 // are erased at runtime.
+
 import type { ApiResult } from "./api";
 import { consistencyRequest, type ConsistencyRequestOptions } from "./consistency-transport.ts";
 
@@ -104,7 +105,7 @@ export function isConsistencyCheck(value: unknown): value is ConsistencyCheck {
     value.application_id > 0 &&
     typeof value.check_name === "string" &&
     (value.description === null || typeof value.description === "string") &&
-    (value.related_field === null || typeof value.related_field === "string") &&                
+    (value.related_field === null || typeof value.related_field === "string") &&              
     typeof value.status === "string" &&
     CONSISTENCY_STATUSES.includes(value.status) &&
     typeof value.created_at === "string" &&
@@ -157,142 +158,3 @@ export function isApplicationPage(value: unknown): value is ApplicationPage {
 export interface ConsistencyListFilters {
   applicationId?: number;
   statusFilter?: ConsistencyStatus;
-}
-
-export interface ConsistencyFindingListFilters {
-  severityFilter?: string;
-  resolved?: boolean;
-}
-
-function buildQuery(params: Record<string, string | number | boolean | undefined>): string {
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) query.set(key, String(value));
-  }
-  const encoded = query.toString();
-  return encoded ? `?${encoded}` : "";
-}
-
-// ── Applications (tenant-scoped selector source) ────────────────
-
-const APPLICATIONS_INVALID_MESSAGE =
-  "Application list returned an invalid response.";
-
-export function fetchApplications(
-  token: string,
-  options?: ConsistencyRequestOptions & { limit?: number; skip?: number },
-): Promise<ApiResult<ApplicationPage>> {
-  const query = buildQuery({ skip: options?.skip, limit: options?.limit });
-  return consistencyRequest<ApplicationPage>(
-    `/api/v1/applications${query}`,
-    token,
-    {},
-    isApplicationPage,
-    APPLICATIONS_INVALID_MESSAGE,
-    options,
-  );
-}
-
-// ── Consistency checks ──────────────────────────────────────────
-
-export function createConsistencyCheck(
-  payload: ConsistencyCheckCreate,
-  token: string,
-  options?: ConsistencyRequestOptions,
-): Promise<ApiResult<ConsistencyCheck>> {
-  return consistencyRequest<ConsistencyCheck>(
-    "/api/v1/consistency/",
-    token,
-    { method: "POST", body: JSON.stringify(payload) },
-    isConsistencyCheck,
-    "Consistency check service returned an invalid response.",
-    options,
-  );
-}
-
-export function listConsistencyChecks(
-  token: string,
-  filters?: ConsistencyListFilters,
-  options?: ConsistencyRequestOptions,
-): Promise<ApiResult<ConsistencyCheck[]>> {
-  const query = buildQuery({
-    application_id: filters?.applicationId,
-    status_filter: filters?.statusFilter,
-  });
-  return consistencyRequest<ConsistencyCheck[]>(
-    `/api/v1/consistency/${query}`,
-    token,
-    {},
-    isConsistencyCheckList,
-    "Saved consistency checks returned an invalid response.",
-    options,
-  );
-}
-
-export function getConsistencyCheck(
-  checkId: number,
-  token: string,
-  options?: ConsistencyRequestOptions,
-): Promise<ApiResult<ConsistencyCheck>> {
-  return consistencyRequest<ConsistencyCheck>(
-    `/api/v1/consistency/${checkId}`,
-    token,
-    {},
-    isConsistencyCheck,
-    "Consistency check service returned an invalid response.",
-    options,
-  );
-}
-
-// ── Consistency findings ────────────────────────────────────────
-
-export function listConsistencyFindings(
-  checkId: number,
-  token: string,
-  filters?: ConsistencyFindingListFilters,
-  options?: ConsistencyRequestOptions,
-): Promise<ApiResult<ConsistencyFinding[]>> {
-  const query = buildQuery({
-    severity_filter: filters?.severityFilter,
-    resolved: filters?.resolved,
-  });
-  return consistencyRequest<ConsistencyFinding[]>(
-    `/api/v1/consistency/checks/${checkId}/findings${query}`,
-    token,
-    {},
-    isConsistencyFindingList,
-    "Findings service returned an invalid response.",
-    options,
-  );
-}
-
-export function createConsistencyFinding(
-  payload: ConsistencyFindingCreate,
-  token: string,
-  options?: ConsistencyRequestOptions,
-): Promise<ApiResult<ConsistencyFinding>> {
-  return consistencyRequest<ConsistencyFinding>(
-    "/api/v1/consistency/findings",
-    token,
-    { method: "POST", body: JSON.stringify(payload) },
-    isConsistencyFinding,
-    "Findings service returned an invalid response.",
-    options,
-  );
-}
-
-export function updateConsistencyFinding(
-  findingId: number,
-  payload: ConsistencyFindingUpdate,
-  token: string,
-  options?: ConsistencyRequestOptions,
-): Promise<ApiResult<ConsistencyFinding>> {
-  return consistencyRequest<ConsistencyFinding>(
-    `/api/v1/consistency/findings/${findingId}`,
-    token,
-    { method: "PATCH", body: JSON.stringify(payload) },
-    isConsistencyFinding,
-    "Findings service returned an invalid response.",
-    options,
-  );
-}
