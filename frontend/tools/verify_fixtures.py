@@ -1,4 +1,4 @@
-""""Verify that the frontend fixtures still describe the real API.
+"""Verify that the frontend fixtures still describe the real API.
 
 Run this before building UI against a fixture, and in CI so a backend change that
 alters the response cannot silently invalidate the frontend.
@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import re
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -52,8 +52,14 @@ FORBIDDEN_KEYS = {
     "compliant", "compliance", "approved", "approval", "verdict",
     "eligible", "eligibility", "certified", "accuracy", "confidence_score",
 }
-DATE_PATTERN = re.compile(r"^\\d{4}-\\d{2}-\\d{2}$")
-EVALUATION_MESSAGE_DATE = re.compile(r"(evaluation date )\\d{4}-\\d{2}-\\d{2}(\\.)")
+DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+EVALUATION_MESSAGE_DATE = re.compile(
+    r"evaluation date (?P<date>[^.\s]+)(?P<period>\.)"
+)
+FINDING_EVALUATION_DATE_PATH = re.compile(
+    r"^.+\.findings\[\d+\]\.evidence\.evaluation_date$"
+)
+FINDING_MESSAGE_PATH = re.compile(r"^.+\.findings\[\d+\]\.message$")
 
 
 def _walk_keys(payload: Any) -> set[str]:
@@ -74,6 +80,34 @@ def _is_utc_timestamp(value: str) -> bool:
     except ValueError:
         return False
     return parsed.tzinfo is not None and parsed.utcoffset() is not None
+
+
+def _is_iso_date(value: Any) -> bool:
+    if not isinstance(value, str) or DATE_PATTERN.fullmatch(value) is None:
+        return False
+    try:
+        return date.fromisoformat(value).isoformat() == value
+    except ValueError:
+        return False
+
+
+def _normalize_finding_message(value: str) -> tuple[str, bool]:
+    """Replace only one valid server-generated evaluation date in a finding message."""
+    if "evaluation date" not in value:
+        return value, True
+
+    matches = list(EVALUATION_MESSAGE_DATE.finditer(value))
+    if value.count("evaluation date") != 1 or len(matches) != 1:
+        return value, False
+    match = matches[0]
+    if not _is_iso_date(match.group("date")):
+        return value, False
+    normalized = EVALUATION_MESSAGE_DATE.sub(
+        lambda found: f"evaluation date <EVALUATION_DATE>{found.group('period')}",
+        value,
+        count=1,
+    )
+    return normalized, True
 
 
 def _compare(actual: Any, expected: Any, path: str, problems: list[str]) -> None:
@@ -100,16 +134,20 @@ def _compare(actual: Any, expected: Any, path: str, problems: list[str]) -> None
         for index, (actual_item, expected_item) in enumerate(zip(actual, expected, strict=False)):
             _compare(actual_item, expected_item, f"{path}[{index}]", problems)
         return
-    if actual == expected:
+    if FINDING_EVALUATION_DATE_PATH.fullmatch(path):
+        if not _is_iso_date(actual) or not _is_iso_date(expected):
+            problems.append(f"{path}: expected valid ISO dates, got live {actual!r} and fixture {expected!r}")
         return
-    if path.endswith(".evidence.evaluation_date"):
-        if isinstance(actual, str) and isinstance(expected, str) and DATE_PATTERN.fullmatch(actual) and DATE_PATTERN.fullmatch(expected):
+    if FINDING_MESSAGE_PATH.fullmatch(path) and isinstance(actual, str) and isinstance(expected, str):
+        normalized_actual, actual_valid = _normalize_finding_message(actual)
+        normalized_expected, expected_valid = _normalize_finding_message(expected)
+        if not actual_valid or not expected_valid:
+            problems.append(f"{path}: malformed or ambiguous evaluation date in finding message")
             return
-    if path.endswith(".message") and isinstance(actual, str) and isinstance(expected, str):
-        normalized_actual = EVALUATION_MESSAGE_DATE.sub(r"\\1<EVALUATION_DATE>\\2", actual)
-        normalized_expected = EVALUATION_MESSAGE_DATE.sub(r"\\1<EVALUATION_DATE>\\2", expected)
         if normalized_actual == normalized_expected:
             return
+    if actual == expected:
+        return
     problems.append(f"{path}: live {actual!r} != fixture {expected!r}")
 
 
