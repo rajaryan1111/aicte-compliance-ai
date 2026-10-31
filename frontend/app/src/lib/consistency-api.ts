@@ -158,3 +158,68 @@ export function isApplicationPage(value: unknown): value is ApplicationPage {
 export interface ConsistencyListFilters {
   applicationId?: number;
   statusFilter?: ConsistencyStatus;
+}
+
+// ── Request builders ───────────────────────────────────────────
+
+export function fetchApplications(token: string, options: { skip?: number; limit?: number }) {
+  return consistencyRequest<ApplicationPage>(
+    "/api/v1/applications",
+    { skip: options.skip ?? 0, limit: options.limit ?? 50 },
+    token
+  );
+}
+
+export function createConsistencyCheck(check: ConsistencyCheckCreate, token: string) {
+  return consistencyRequest<ConsistencyCheck>(
+    "/api/v1/consistency/",
+    { method: "POST" },
+    check,
+    token
+  );
+}
+
+export function listConsistencyChecks(token: string, filters: ConsistencyListFilters, options: { skip?: number; limit?: number }) {
+  return consistencyRequest<ConsistencyCheck[]>(
+    "/api/v1/consistency/",
+    { method: "GET", query: { applicationId: filters.applicationId, statusFilter: filters.statusFilter, skip: options.skip ?? 0, limit: options.limit ?? 50 } },
+    token
+  );
+}
+
+export function getConsistencyCheck(token: string, checkId: number) {
+  return consistencyRequest<ConsistencyCheck>(
+    "/api/v1/consistency/" + checkId,
+    { method: "GET" },
+    token
+  );
+}
+
+export function listConsistencyFindings(token: string, checkId: number, options: { skip?: number; limit?: number }) {
+  return consistencyRequest<ConsistencyFinding[]>(
+    "/api/v1/consistency/checks/" + checkId + "/findings",
+    { method: "GET", query: { skip: options.skip ?? 0, limit: options.limit ?? 50 } },
+    token
+  );
+}
+
+export function createConsistencyFinding(finding: ConsistencyFindingCreate, token: string) {
+  return consistencyRequest<ConsistencyFinding>(
+    "/api/v1/consistency/findings",
+    { method: "POST" },
+    finding,
+    token
+  );
+}
+
+export function updateConsistencyFinding(id: number, update: ConsistencyFindingUpdate, token: string) {
+  return consistencyRequest<ConsistencyFinding>(
+    "/api/v1/consistency/findings/" + id,
+    { method: "PATCH" },
+    update,
+    token
+  );
+}
+
+// ── Type exports ───────────────────────────────────────────────
+export type { ConsistencyStatus };
