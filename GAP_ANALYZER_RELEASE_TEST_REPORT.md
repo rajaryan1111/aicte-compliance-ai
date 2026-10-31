@@ -12,7 +12,7 @@ Branch: `feat/complete-intelligent-compliance-gap-analyzer`
 | `cd frontend/app && npm run build` | Passed; non-fatal chunk-size advisory (>500 kB) |
 | `cd frontend/app && npm run lint` | Exit 0; six warning-level diagnostics in unrelated existing files |
 | `cd frontend/app && npm test` | 15 passed, 0 failed |
-| `git diff --check` | Run on final staged/unstaged diff before commit; see final git verification |
+| `git diff --check` | Passed before commit |
 
 ## Added workflow coverage
 

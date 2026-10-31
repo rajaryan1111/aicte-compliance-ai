@@ -3,7 +3,7 @@
 Date: 2026-10-31
 Repository: `https://github.com/rajaryan1111/aicte-compliance-ai`
 Branch: `feat/complete-intelligent-compliance-gap-analyzer`
-Required commit: update to the final commit reported by the accompanying release report after this handoff is committed.
+Required feature commit: `652fa06727506e3b20bb2845377216376b93293b` (contains the verified code and handoff; deploy this commit or a later branch commit after confirming it contains the same tree).
 PR: #20, draft; do not merge as part of this handoff.
 
 ## Confirmed service and deployment state
