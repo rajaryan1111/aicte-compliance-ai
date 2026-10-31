@@ -1,33 +1,13 @@
-// Typed client for the authenticated, tenant-scoped consistency API.
-//
-// Contracts follow docs/development/API_CONTRACT.md (/api/v1/consistency/*):
-// every request carries the session's Bearer token, and every response is
-// validated against the backend's ConsistencyCheckRead / ConsistencyFindingRead
-// / ApplicationRead schemas before being handed to the UI.
-//
-// The transport is injectable (fetchJson/baseUrl) so the schema
-// guards and request builders can be regression-tested without a live backend.
-//
-// The transport details (base-URL bootstrap, JSON fetch, error mapping and the
-// shared request pipeline) live in ./consistency-transport so the schema
-// guards stay independently testable and the modules stay small. Only
-// type-level contracts are imported from the shared api.ts; those imports
-// are erased at runtime.
-
 import type { ApiResult } from "./api";
 import { consistencyRequest, type ConsistencyRequestOptions } from "./consistency-transport.ts";
 
-// ── Types (mirrors backend/app/schemas/consistency.py) ─────────
-
 export type ConsistencyStatus = "pending" | "discrepancy_detected" | "resolved";
-
 export interface ConsistencyCheckCreate {
   application_id: number;
   check_name: string;
   description?: string | null;
   related_field?: string | null;
 }
-
 export interface ConsistencyCheck {
   id: number;
   application_id: number;
@@ -38,7 +18,6 @@ export interface ConsistencyCheck {
   created_at: string;
   updated_at: string;
 }
-
 export interface ConsistencyFindingCreate {
   consistency_check_id: number;
   field_name: string;
@@ -49,15 +28,12 @@ export interface ConsistencyFindingCreate {
   description: string;
   evidence?: Record<string, unknown> | null;
 }
-
-/** Only the supplied keys are sent: the backend forbids unknown/partial bodies. */
 export interface ConsistencyFindingUpdate {
   severity?: string;
   description?: string;
   evidence?: Record<string, unknown>;
   resolved?: boolean;
 }
-
 export interface ConsistencyFinding {
   id: number;
   consistency_check_id: number;
@@ -72,7 +48,6 @@ export interface ConsistencyFinding {
   created_at: string;
   updated_at: string;
 }
-
 export interface ApplicationSummary {
   id: number;
   institution_id: number;
@@ -80,22 +55,16 @@ export interface ApplicationSummary {
   academic_year: string;
   status: string;
 }
-
 export interface ApplicationPage {
   items: ApplicationSummary[];
   total: number;
   skip: number;
   limit: number;
 }
-
-// ── Response guards ────────────────────────────────────────────
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
-
 const CONSISTENCY_STATUSES: readonly string[] = ["pending", "discrepancy_detected", "resolved"];
-
 export function isConsistencyCheck(value: unknown): value is ConsistencyCheck {
   if (!isRecord(value)) return false;
   return (
@@ -105,18 +74,16 @@ export function isConsistencyCheck(value: unknown): value is ConsistencyCheck {
     value.application_id > 0 &&
     typeof value.check_name === "string" &&
     (value.description === null || typeof value.description === "string") &&
-    (value.related_field === null || typeof value.related_field === "string") &&              
+    (value.related_field === null || typeof value.related_field === "string") &&
     typeof value.status === "string" &&
     CONSISTENCY_STATUSES.includes(value.status) &&
     typeof value.created_at === "string" &&
     typeof value.updated_at === "string"
   );
 }
-
 export function isConsistencyCheckList(value: unknown): value is ConsistencyCheck[] {
   return Array.isArray(value) && value.every(isConsistencyCheck);
 }
-
 export function isConsistencyFinding(value: unknown): value is ConsistencyFinding {
   if (!isRecord(value)) return false;
   return (
@@ -136,11 +103,9 @@ export function isConsistencyFinding(value: unknown): value is ConsistencyFindin
     typeof value.updated_at === "string"
   );
 }
-
 export function isConsistencyFindingList(value: unknown): value is ConsistencyFinding[] {
   return Array.isArray(value) && value.every(isConsistencyFinding);
 }
-
 export function isApplicationPage(value: unknown): value is ApplicationPage {
   if (!isRecord(value)) return false;
   if (!Array.isArray(value.items) || typeof value.total !== "number") return false;
@@ -152,16 +117,10 @@ export function isApplicationPage(value: unknown): value is ApplicationPage {
       typeof item.academic_year === "string" &&
       typeof item.status === "string");
 }
-
-// ── Transport (moved to ./consistency-transport) ───────────────
-
 export interface ConsistencyListFilters {
   applicationId?: number;
   statusFilter?: ConsistencyStatus;
 }
-
-// ── Request builders ───────────────────────────────────────────
-
 export function fetchApplications(token: string, options: { skip?: number; limit?: number }) {
   return consistencyRequest<ApplicationPage>(
     "/api/v1/applications",
@@ -169,7 +128,6 @@ export function fetchApplications(token: string, options: { skip?: number; limit
     token
   );
 }
-
 export function createConsistencyCheck(check: ConsistencyCheckCreate, token: string) {
   return consistencyRequest<ConsistencyCheck>(
     "/api/v1/consistency/",
@@ -178,7 +136,6 @@ export function createConsistencyCheck(check: ConsistencyCheckCreate, token: str
     token
   );
 }
-
 export function listConsistencyChecks(token: string, filters: ConsistencyListFilters, options: { skip?: number; limit?: number }) {
   return consistencyRequest<ConsistencyCheck[]>(
     "/api/v1/consistency/",
@@ -186,7 +143,6 @@ export function listConsistencyChecks(token: string, filters: ConsistencyListFil
     token
   );
 }
-
 export function getConsistencyCheck(token: string, checkId: number) {
   return consistencyRequest<ConsistencyCheck>(
     "/api/v1/consistency/" + checkId,
@@ -194,7 +150,6 @@ export function getConsistencyCheck(token: string, checkId: number) {
     token
   );
 }
-
 export function listConsistencyFindings(token: string, checkId: number, options: { skip?: number; limit?: number }) {
   return consistencyRequest<ConsistencyFinding[]>(
     "/api/v1/consistency/checks/" + checkId + "/findings",
@@ -202,7 +157,6 @@ export function listConsistencyFindings(token: string, checkId: number, options:
     token
   );
 }
-
 export function createConsistencyFinding(finding: ConsistencyFindingCreate, token: string) {
   return consistencyRequest<ConsistencyFinding>(
     "/api/v1/consistency/findings",
@@ -211,7 +165,6 @@ export function createConsistencyFinding(finding: ConsistencyFindingCreate, toke
     token
   );
 }
-
 export function updateConsistencyFinding(id: number, update: ConsistencyFindingUpdate, token: string) {
   return consistencyRequest<ConsistencyFinding>(
     "/api/v1/consistency/findings/" + id,
@@ -220,6 +173,4 @@ export function updateConsistencyFinding(id: number, update: ConsistencyFindingU
     token
   );
 }
-
-// ── Type exports ───────────────────────────────────────────────
 export type { ConsistencyStatus };
