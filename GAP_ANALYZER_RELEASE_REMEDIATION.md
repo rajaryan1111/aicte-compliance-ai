@@ -49,3 +49,7 @@
 - Render health timed out and the Vercel production deployment is `ERROR`.
 - AI/RAG remains deferred pending an approved provider and privacy/data-transfer boundary.
 - Production migration/deploy is not safe until local gates pass and infrastructure health is confirmed.
+
+## Completion update — 2026-10-31
+
+The previously planned local code remediation is now present on the feature branch: authenticated Gap Analyzer history and selected-run UI, evidence field mapping and source download, persisted review details/actions, source-backed finding rendering, a real FastAPI/SQLite workflow integration test, and frontend API tests. Full backend suite: 497 passed, 21 skipped. Frontend TypeScript/build passed, lint exited 0 with existing warnings, and 15 tests passed. Remaining gates are external/live: stale Render service, PostgreSQL RLS inspection blocked by allowlist, deployed authenticated workflow, and production release. See `GAP_ANALYZER_REDEPLOYMENT_HANDOFF.md` for the operator procedure and checked-in Blueprint mismatch.

@@ -7,32 +7,25 @@ Branch: `feat/complete-intelligent-compliance-gap-analyzer`
 
 | Command | Result |
 |---|---|
-| `python3 -m compileall -q backend/app backend/alembic` | Passed |
-| `python3 -m pytest backend/tests -q` | 496 passed, 21 skipped (including the added extracted-field endpoint regression test) |
+| `python3 -m pytest backend/tests -q` | 497 passed, 21 skipped, 8 dependency deprecation warnings |
 | `cd frontend/app && npx tsc -b` | Passed |
-| `cd frontend/app && npm run build` | Passed; Vite reports a non-fatal large-chunk advisory |
-| `cd frontend/app && npm run lint` | Exit 0; existing warning-level diagnostics remain |
-| `cd frontend/app && npm test` | 12 passed, 0 failed |
-| `git diff --check` | Passed |
+| `cd frontend/app && npm run build` | Passed; non-fatal chunk-size advisory (>500 kB) |
+| `cd frontend/app && npm run lint` | Exit 0; six warning-level diagnostics in unrelated existing files |
+| `cd frontend/app && npm test` | 15 passed, 0 failed |
+| `git diff --check` | Run on final staged/unstaged diff before commit; see final git verification |
 
-## Coverage and limits
+## Added workflow coverage
 
-- Existing migration lifecycle coverage is included in the backend suite; no production database was touched.
-- Added API regression coverage for authenticated extracted-field access, missing versions, and unauthenticated access.
-- Frontend tests exercise the existing Node API/helper suite; no browser E2E or end-to-end live backend workflow was run.
-- Production RLS policies and Supabase behavior were not independently verified in a live project.
+`backend/tests/test_gap_analyzer_workflow.py` uses FastAPI TestClient and a real in-memory SQLAlchemy SQLite database, seeded with two institutions, memberships, an approved source-verified rule, an application-owned Document Vault version, and an extracted field. It calls real application routes/services to retrieve requirements, reject cross-tenant requirements, create and review evidence mapping, execute deterministic validation, read the saved gap snapshot/findings, verify review persistence after retrieval, reassess into a distinct run, list saved runs, reject cross-tenant run access, and reject unauthenticated analysis. The test does not call external OCR, object storage, Render, or PostgreSQL. Existing middleware/session state isolation is fixture-local.
 
+`frontend/tests/gap-analyzer-api.test.mts` adds three Node tests for authenticated run history, saved-run selection, and persistent review API payload/auth. These are API-client tests, not browser automation.
 
-## Preview deployment probe
+## Migration and security scope
 
-- Vercel preview for commit `fce00040a739162e1f4f4370def071344d592e32`: READY.
-- Authenticated Vercel fetch of `/gap-analyzer`: HTTP 200 and SPA HTML returned.
-- This confirms deployment and SPA route fallback only; authenticated API calls and end-to-end assessment remain unverified because Render service inspection is pending.
+The backend suite includes local SQLite Alembic migration lifecycle coverage. No live database migration was run. Local tenant isolation is application-level; live PostgreSQL RLS policy inspection was blocked by the database external IP allowlist. SQL checks and redeployment steps are in `GAP_ANALYZER_REDEPLOYMENT_HANDOFF.md`.
 
+## Deployment probes (prior read-only observations)
 
-## Render infrastructure probes
-
-- Confirmed workspace exposes `aicte-compliance-api-preview` on Free plan, branch `arena/5614862e-aicte-compliance-ai`, commit `1229e3227c20a9f4dfdad1d9306588a4a437ef9f`; `healthCheckPath` is unset.
-- First cold health probe timed out after 35 seconds during a newly started process; Render logs show Uvicorn startup followed by Alembic PostgreSQL initialization. A subsequent warm `/health` returned 200 and `/health/ready` returned `ready`, PostgreSQL reachable, migration revision `g7b8c9d0e1f2`.
-- The live service OpenAPI has no Gap Analyzer routes. The historical backend hostname also returned health 200 but its OpenAPI had no matching Gap Analyzer/Consistency routes.
-- A read-only Postgres metadata query was denied because the database external IP allowlist excludes the connector. No allowlist or database settings were changed.
+- Render `aicte-compliance-api-preview` was observed on stale branch `arena/5614862e-aicte-compliance-ai`, commit `1229e3227c20a9f4dfdad1d9306588a4a437ef9f`, health path unset. Warm `/health` and `/health/ready` returned ready; deployed OpenAPI lacked Gap Analyzer paths.
+- Vercel feature preview commit `fce00040a739162e1f4f4370def071344d592e32` was READY and `/gap-analyzer` returned SPA HTTP 200. This does not test authenticated backend behavior.
+- No infrastructure or production settings were changed.

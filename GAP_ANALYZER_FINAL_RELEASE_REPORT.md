@@ -2,78 +2,87 @@
 
 Date: 2026-10-31
 Branch: `feat/complete-intelligent-compliance-gap-analyzer`
+Starting HEAD: `2ce4bb31a338d698fc58f1e2094caa4c14248c25` (short `2ce4bb3`); final commit is the commit containing this report.
 
-## Executive summary
+## A. Repository and branch state
 
-The deterministic Gap Analyzer implementation was continued without rebuilding its requirement registry, validation integration, persisted evidence mapping, or assessment model. The reported Consistency TypeScript failures and malformed test were repaired while preserving authenticated Consistency routes. Frontend type checking, production build, lint command, and frontend tests pass locally. Backend verification passed at 496 tests passed and 21 skipped, including the newly added document-field endpoint test.
+Continued the existing feature branch and draft PR #20. Existing migrations, auth/membership model, Document Vault, extracted fields, rule approval registry, deterministic validation, findings and review audit are reused. No production deployment, production database operation, Render setting change, Vercel promotion, or allowlist change was performed.
 
-This branch is **not production release-ready**. A warm Render preview health probe and DB readiness pass, but the configured Render API service is pinned to an old arena branch without Gap Analyzer endpoints. Live RLS policy inspection was blocked by the database IP allowlist. Production migration application, preview API integration, and real assessment have not been verified. Vercel’s latest deployment is currently ERROR. No production deployment or production database operation has been performed.
+## B. Original incomplete items
 
-## Existing implementation reused
+Stale implementation reports described the frontend as blocked, no full workflow API integration test, and mapping UI without saved run selection or persisted evidence-detail workflow. The deployed Render API remained on an old `arena/...` branch. Live PostgreSQL RLS inspection was not possible from the available connector due to its IP allowlist.
 
-Reused the persisted requirement/evidence/assessment schema, active source-verified approved rule registry, deterministic validation engine, Document Vault, authenticated membership checks, audit event model, and application-scoped findings. Missing evidence continues to be represented as uncertainty/gap review rather than proof of statutory breach. Prior assessment runs remain separate historical snapshots.
+## C. Changes implemented
 
-## Remediation delivered
+- Added realistic authenticated API integration test that seeds two institutions and exercises requirements, Document Vault version/extracted field, mapping, persisted reviewer decision, deterministic assessment, finding/evidence snapshot, run history, reassessment, refresh-like retrieval, unauthenticated rejection, and cross-institution denial.
+- Added frontend API tests for scoped assessment history, run-specific analysis selection and persisted evidence review.
+- Gap Analyzer now loads/reloads app requirements, authorized documents, mappings and run history; selects saved runs; maps extracted fields with excerpt/page; shows findings, source clauses, review history and confidence; submits persisted review decisions; and downloads source versions through the authenticated existing Vault API.
+- Updated API contract, canonical documentation, implementation/status and release reports; added operator redeployment handoff.
 
-- Restored functional Consistency workflow and detail page, API facade, navigation, dashboard entry points, and fixed malformed Consistency API tests.
-- Added persisted evidence sufficiency status to mappings and migration.
-- Review decisions record sufficient/insufficient state, rationale, actor/time through audit history, and identical repeat submissions do not duplicate decisions.
-- Added authorized extracted-field listing for a specific application/document/version and a backend regression test.
-- Expanded requirement assessment serialization to include related findings and source document/version metadata.
-- Added source-version authenticated download support in the API client and Gap Analyzer UI.
-- Gap Analyzer UI now supports extracted-field selection, evidence rationale, mapping details, review history, review decisions, and finding/evidence visibility.
+## D. Backend completion
 
-## AI/RAG
+Gap Analyzer routes are registered and exercised through FastAPI using application auth, existing membership/permission dependencies, approved rule versions, validation orchestration, and persisted SQLAlchemy records. Run history and run-specific snapshots are available. The integration test runs real application API/service logic against an isolated SQLite test database. This verifies application-level flow, not PostgreSQL/RLS semantics.
 
-Deferred. Canonical architecture and product requirements state that no LLM, RAG, vector store, or provider integration currently exists; AI/RAG is optional pending model/provider and privacy approval. No institutional document content is sent to an external provider. Deterministic rules remain authoritative.
+## E. Frontend completion
 
-## Security and tenant isolation
+The authenticated page supports application-scoped loading, saved assessment selection, source-cited requirements/findings, evidence mapping from successfully processed clean Vault versions, extracted field metadata, history, reviewer actions, and authorized original-version download. Review comments are required client-side and are persisted through the backend. This remains a page-level workflow; no browser automation or deployed authenticated workflow was run. Rich in-app page-anchor navigation, reviewer identity presentation beyond available history, and robust multi-document aggregation in the deterministic evaluator remain limitations.
 
-Changed APIs use authenticated membership and permission checks; the extracted-fields endpoint checks that the document belongs to the application and version belongs to the document, returning 404 for mismatches. Existing backend tenant-negative tests run in the backend suite. Live production RLS/Supabase policies have not been verified, so production tenant isolation remains an open release gate.
+## F. Database and migrations
 
-## Test status
+Existing mapping, assessment, review and validation models/migrations are reused. The full suite includes SQLite Alembic migration lifecycle tests. No destructive or production migration was run. SQLite results do not establish PostgreSQL compatibility. The live database revision/RLS policies remain unverified because the external IP allowlist blocked read-only inspection.
 
-See [GAP_ANALYZER_RELEASE_TEST_REPORT.md](./GAP_ANALYZER_RELEASE_TEST_REPORT.md) for exact commands. Latest confirmed frontend results: type check passed; build passed; lint exited 0 with warnings; 12 frontend tests passed. Backend final run: 496 passed, 21 skipped, including the new API regression.
+## G. Security and tenant isolation
 
-## Infrastructure and deployment
+New integration coverage proves unauthenticated rejection and application-level cross-institution application/run denial using separate test memberships. API routes are authenticated and scope resources through institution/application membership; document/version relationships are validated by existing APIs. Existing backend suite includes auth/RBAC and tenant-negative coverage. Production RLS is not verified. Local tests do not demonstrate production database policy correctness.
 
-- Vercel project `aicte-compliance-frontend` is connected to `rajaryan1111/aicte-compliance-ai`. Latest deployment observed: ERROR, feature branch commit `6af070e446a0aea742004c4234685de8ed083fce`, error code `missing_export`. A preview for commit `fce00040a739162e1f4f4370def071344d592e32` is READY and `/gap-analyzer` returned HTTP 200. Production remains on its prior ERROR deployment; no production deployment has been triggered.
-- Render inspection found only `aicte-compliance-api-preview`, configured on stale branch `arena/5614862e-aicte-compliance-ai` at `1229e3227c20a9f4dfdad1d9306588a4a437ef9f`; it is a Free plan service with no health-check path. The preview `/health` returned 200 after startup, and `/health/ready` reported PostgreSQL reachable at migration revision `g7b8c9d0e1f2`. Deployed OpenAPI has no Gap Analyzer/Consistency routes. The external DB metadata query was blocked because its IP is not on the database allowlist; no allowlist change was made.
-- Historical frontend URL: https://aicte-compliance-ai.vercel.app/ (HTTP 200 was previously observed; this alone does not prove application functionality).
-- Backend health URLs: `https://aicte-compliance-api-preview.onrender.com/health` returned 200 after cold start; `/health/ready` reported ready. The historical `https://aicte-compliance-backend.onrender.com/health` also returned 200, but its OpenAPI schema has no Gap Analyzer routes. That hostname was not among services in the confirmed Render workspace.
-- The preview route is available, but no authenticated Gap Analyzer workflow or production deployment has been completed.
+## H. Evidence and finding workflows
 
-## GitHub
+Evidence mappings retain requirement approval/version, document/version, optional extracted field, excerpt, page and confidence where present, mapping decision, sufficiency, rationale, reviewer/time, and review history. The end-to-end API test reads the persisted mapping and findings after assessment and creates a distinct historical run on reassessment. Existing generic expiry findings can coexist with requirement-linked regulatory findings. Missing evidence is not labelled proof of statutory non-compliance. Source document retrieval uses the authorized version endpoint; unavailable/unauthorized access is reported as an API error.
 
-PR #20 remains a draft. Changes are committed and pushed through `4bd2563` (`docs: record Render service and database verification`). PR #20 is open and remains draft; its description now records the test and preview results. No merge was performed.
+## I. AI/RAG status
 
-## Final status
+Deferred pending approved provider and privacy/data-processing boundary. No institutional documents are sent to external models; deterministic rule evaluation remains authoritative. No provider-dependent functionality is represented as implemented.
 
-| Area | Status |
-|---|---|
-| Requirement registry | Existing deterministic registry reused; source-verified active approvals enforced by existing service |
-| Applicability | Existing service behavior retained; backend suite passed |
-| Evidence mapping | Persisted mapping and versioned evidence retained; review sufficiency added |
-| Evidence detail | Mapping metadata, selected extracted field, excerpt/page/confidence, history and source download wired |
-| Evidence review | Decision/rationale/sufficiency and audit history wired; API persistence implemented |
-| Findings | Persisted findings serialized with source evidence metadata |
-| Finding navigation | In-page requirement/finding/evidence display; full browser E2E unverified |
-| AI/RAG | Deferred pending approved provider and privacy boundary; no external data transfer |
-| Backend tests | 496 passed, 21 skipped; final run complete |
-| Frontend tests | 12 passed, 0 failed |
-| TypeScript | `npx tsc -b` passed |
-| Production build | Passed; non-fatal chunk-size advisory |
-| Security | API-level auth/ownership checks and suite tenant-negative coverage; production RLS unverified |
-| GitHub push | Pushed through `f524069`; PR #20 updated and remains draft |
-| Render deployment | Existing preview service healthy when warm but stale `arena/...` branch, no Gap Analyzer routes, health check unset; deployment of this feature not performed |
-| Vercel deployment | Feature branch preview READY (HTTP 200 for `/gap-analyzer`); production still ERROR, no production promotion |
-| Production workflow | Not run |
+## J. Backend test results
 
-## Remaining release gates
+`python3 -m pytest backend/tests -q` → **497 passed, 21 skipped, 8 warnings**. Warnings are deprecations from FastAPI/Alembic dependencies. The skip set is existing optional/integration coverage; no tests were deleted or newly skipped for this feature.
 
-1. Complete final backend test rerun.
-2. Reconfigure the Render API service to deploy the approved feature branch, configure a health check, and validate the safe migration path; this workspace currently points to stale `arena/...`.
-3. Obtain a safe approved path for live DB metadata/RLS inspection; current Render Postgres IP allowlist blocks the read-only connector.
-4. Continue keeping draft PR #20 updated with verified preview results.
-5. Obtain green preview deployment and test authenticated assessment, evidence review, finding navigation, and refresh persistence.
-6. Only then use the established safe production migration/deployment process and verify the live workflow.
+## K. Frontend test results
+
+`cd frontend/app && npm test` → **15 passed, 0 failed, 0 skipped**. The 3 new tests cover authenticated run history, selecting a saved run, and persistent review request behavior. Node API tests are not browser E2E tests.
+
+## L. TypeScript, lint and build results
+
+- `cd frontend/app && npx tsc -b` — passed.
+- `cd frontend/app && npm run build` — passed; Vite emits a non-fatal >500 kB chunk advisory.
+- `cd frontend/app && npm run lint` — exit 0; 6 existing warning-level diagnostics occur in unrelated files (Date purity and setState in effect). No new Gap Analyzer-specific lint diagnostic was emitted.
+- `git diff --check` — run before commit; final result recorded in Git section/update below.
+
+## M. End-to-end verification
+
+`backend/tests/test_gap_analyzer_workflow.py` exercises real FastAPI routes, auth dependencies, services, database persistence and retrieval using a per-test in-memory SQLite DB. It covers institution A/B, requirement listing, mapping, reviewer decision, assessment, finding/evidence serialization, saved history, reassessment, unauthenticated rejection, and cross-tenant denial. The local fixture seeds a source-verified approved rule and a clean processed Document Vault version with an extracted field; external OCR/storage are not invoked. Frontend node tests verify request composition. Actual browser, Render, PostgreSQL and OCR-worker E2E are not verified.
+
+## N. Documentation updated
+
+Updated all ten `docs/canonical` documents, `docs/development/API_CONTRACT.md`, implementation status, release remediation/test reports, this report, and `GAP_ANALYZER_REDEPLOYMENT_HANDOFF.md`. Canonical additions explicitly supersede stale “not implemented”/blocked-local descriptions while preserving separate external release gates.
+
+## O. Git commits and PR status
+
+Feature branch remains `feat/complete-intelligent-compliance-gap-analyzer`; PR #20 remains open and draft. No merge or force-push. Final commit SHA and push confirmation are recorded in the completion message and checked against `origin`.
+
+## P. Remaining external blockers and limitations
+
+- Render preview `aicte-compliance-api-preview` is still on old `arena/5614862e-aicte-compliance-ai` commit `1229e3227c20a9f4dfdad1d9306588a4a437ef9f`; deployed OpenAPI has no Gap Analyzer routes.
+- Existing inspected DB does not match the checked-in `render.yaml` resource names/region. The handoff calls out this mismatch; do not apply the Blueprint blindly.
+- Live RLS inspection was blocked by database IP allowlisting; DBA verification is still required.
+- No authenticated deployed backend workflow, PostgreSQL migration, production deployment or browser end-to-end test was run.
+- Multi-document evidence snapshots are retained, but the existing deterministic rule evaluator accepts a single selected DocumentVersion per rule; aggregation behavior across multiple mapped versions needs further product/engine work.
+- UI uses authorized download rather than a Document Vault viewer page anchor; app page routing and direct finding URLs are not a full multi-page navigation chain.
+
+## Q. Render redeployment instructions
+
+Follow `GAP_ANALYZER_REDEPLOYMENT_HANDOFF.md`. In summary: verify branch/final commit, confirm the intended existing preview service and database with the owner, reconcile the checked-in Blueprint mismatch, back up and inspect current migration state, apply only reviewed forward migration, deploy the backend to preview, verify `/health/ready` and feature paths in `/openapi.json`, configure frontend preview API/origin, then run authenticated two-tenant workflow tests. Do not modify production infrastructure as part of this code task.
+
+## R. Final verdict
+
+**IMPLEMENTATION PARTIALLY COMPLETE — BLOCKERS REMAIN.** Local implementation and tests are materially complete for the deterministic application-level flow, but production/RLS/deployment verification, browser E2E, and some full navigation/multi-document UX gates remain unverified or incomplete. Do not label production ready.

@@ -46,3 +46,9 @@ Every listed protected action authenticates the user and verifies active members
 ## External/regulatory state vocabulary
 
 Reuse honest states `not_attempted`, `simulated`, `unavailable`, `inconclusive`, and `externally_verified` only for their existing source verification meaning. Regulatory source verification must be distinguished from a clause interpretation approval, a detected change, an impact approval and an institution compliance decision. Proposed action states and transitions are in `prd.md`.
+
+## Feature 1 implementation status (2026-10-31)
+
+This addendum supersedes earlier phase/audit statements in this document where they describe Feature 1 as unimplemented or blocked locally. The branch now contains an authenticated application-scoped Gap Analyzer using approved rule versions, the existing validation engine, Document Vault versions and extracted fields, persisted evidence mappings/review history, requirement assessments, findings and saved run history. The page supports loading and selecting saved runs, requirement findings and source citations, mapping extracted evidence, reviewer decisions, and authorized original-version download. Missing evidence is not presented as proof of statutory non-compliance.
+
+Local verification: `python3 -m pytest backend/tests -q` → 497 passed, 21 skipped; frontend TypeScript/build passed; frontend tests 15 passed; lint exited 0 with existing warnings. Feature 1 still is not production-ready: Render is pinned to a stale branch without these routes, live PostgreSQL RLS inspection was blocked by IP allowlisting, and authenticated deployed workflow testing has not occurred. AI/RAG remains deferred pending provider/privacy approval; no institutional documents are sent to an external model. See `GAP_ANALYZER_FINAL_RELEASE_REPORT.md` and `GAP_ANALYZER_REDEPLOYMENT_HANDOFF.md`.

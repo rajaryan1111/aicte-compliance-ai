@@ -85,10 +85,12 @@ export interface SavedValidationRunPage {
   has_more: boolean;
 }
 
-export interface GapRequirement { id: number; rule_id: string; version: number; title: string; description: string; source_title: string; source_clause: string; source_page: string; applicable: boolean; applicability_reason: string; required_evidence_type?: string | null }
+export interface GapRequirement { id: number; rule_id: string; version: number; title: string; description: string; source_title: string; source_url?: string; source_clause: string; source_page: string; applicable: boolean; applicability_reason: string; required_evidence_type?: string | null }
 export interface GapFindingEvidence { id: number; document_id: number | null; document_type: string | null; file_name: string | null; sha256: string | null; uploaded_at: string | null; document_version_id: number; extracted_field_id: number | null; page_number: number | null; evidence_excerpt: string | null; evidence_role: string; confidence: number | null }
 export interface GapFinding { id: number; code: string; summary: string; severity: string; status: string; document_version_id: number | null; evidence: GapFindingEvidence[] }
 export interface GapAssessment { id: number; rule_id: string; rule_version: number; title: string; applicability_status: string; applicability_reason: string; outcome_status: string; evidence_sufficiency: string; result_message: string; evidence: Array<Record<string, unknown>>; review_status: string; review_rationale: string | null; findings: GapFinding[] }
+export interface GapValidationRun { id: number; application_id: number; status: string; outcome: string | null; evaluation_date: string; ruleset_version: string; started_at: string; completed_at: string | null; triggered_by: string | null }
+export interface GapValidationRunPage { items: GapValidationRun[]; total: number; skip: number; limit: number }
 export interface GapAnalysis { metrics: { validation_run_id: number; total_requirements: number; applicable_requirements: number; compliant: number; partially_compliant: number; potential_gaps: number; missing_evidence: number; manual_verification_required: number; not_applicable: number; pending_review: number; coverage_percent: number | null; overall_status: string }; requirements: GapAssessment[] }
 export interface GapReviewHistory { actor: string | null; status: string | null; sufficiency_status: string | null; rationale: string; reviewed_at: string }
 export interface GapMapping { id: number; application_id: number; rule_approval_id: number; rule_id: string; rule_version: number; document_id: number; document_type: string; document_version_id: number; version_number: number; file_name: string | null; scan_status: string | null; uploaded_at: string | null; processing_status: string; sha256: string; extracted_field_id: number | null; field_name: string | null; page_number: number | null; evidence_excerpt: string | null; extraction_confidence: number | null; status: string; sufficiency_status: string | null; source: string; rationale: string; created_by: string; reviewed_by: string | null; reviewed_at: string | null; review_rationale: string | null; created_at: string; review_history: GapReviewHistory[] }
@@ -643,8 +645,12 @@ export function fetchGapDocuments(applicationId: number, token: string) {
 export function fetchGapExtractedFields(applicationId: number, documentId: number, versionId: number, token: string) {
   return authenticatedJson<GapExtractedField[]>(`/api/v1/applications/${applicationId}/documents/${documentId}/versions/${versionId}/fields`, token, {}, (v): v is GapExtractedField[] => Array.isArray(v));
 }
-export function fetchGapAnalysis(applicationId: number, token: string) {
-  return authenticatedJson<GapAnalysis>(`/api/v1/applications/${applicationId}/gap-analysis`, token, {}, (v): v is GapAnalysis => isRecord(v) && isRecord(v.metrics) && Array.isArray(v.requirements));
+export function fetchGapValidationRuns(applicationId: number, token: string) {
+  return authenticatedJson<GapValidationRunPage>(`/api/v1/applications/${applicationId}/validation-runs?skip=0&limit=100`, token, {}, (v): v is GapValidationRunPage => isRecord(v) && Array.isArray(v.items) && v.items.every((item) => isRecord(item) && typeof item.id === "number"));
+}
+export function fetchGapAnalysis(applicationId: number, token: string, runId?: number) {
+  const query = runId == null ? "" : `?run_id=${encodeURIComponent(String(runId))}`;
+  return authenticatedJson<GapAnalysis>(`/api/v1/applications/${applicationId}/gap-analysis${query}`, token, {}, (v): v is GapAnalysis => isRecord(v) && isRecord(v.metrics) && Array.isArray(v.requirements));
 }
 export function fetchGapMappings(applicationId: number, token: string) {
   return authenticatedJson<GapMapping[]>(`/api/v1/applications/${applicationId}/requirement-evidence-mappings`, token, {}, (v): v is GapMapping[] => Array.isArray(v));
