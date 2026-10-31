@@ -3,13 +3,10 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/Button";
 import { useLocation, useNavigate } from "react-router-dom";
-import { cn } from "@/lib/utils";
-import { useParams } from "react-router-dom";
 import { DataGrid } from "@/components/DataGrid";
-import { formatTimestamp } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
 import { StabilityRating, StatusBadge } from "@/components/StatusBadge";
 import { EvidenceTable } from "@/components/EvidenceTable";
-import { formatDate } from "@/lib/utils";
 import { updateConsistencyFinding } from "@/lib/consistency-api";
 
 interface Finding {
@@ -83,4 +80,4 @@ export function ConsistencyDetailView({ token, baseUrl }: ConsistenceDetailViewP
   );
 }
 
-ConsistencyDetailView.tsx exports StatusBadge and ConsistencyDetailView; self-fetches check+findings with cancelled guard; resolve/reopen via updateConsistencyFinding; add-finding form; EvidenceTable. Uses formatTimestamp/formatDate from @/lib/utils.
+// ConsistencyDetailView.tsx self-fetches check+findings with cancelled guard; resolve/reopen via updateConsistencyFinding; add-finding form; EvidenceTable. Uses formatTimestamp/formatDate from @/lib/utils.
