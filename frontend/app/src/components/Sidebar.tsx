@@ -28,6 +28,11 @@ export function Sidebar({
   onToggle,
   open,
   onClose,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+  open: boolean;
+  onClose: () => void;
 }) {
   const location = useLocation();
   const items = navItems;
