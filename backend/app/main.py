@@ -224,6 +224,8 @@ app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(applications_router, prefix="/api/v1/applications", tags=["applications"])
 app.include_router(documents_router, prefix="/api/v1/applications", tags=["documents"])
 app.include_router(validation_router, prefix="/api/v1/applications", tags=["validation"])
+from backend.app.api.v1.gap_analyzer import router as gap_analyzer_router
+app.include_router(gap_analyzer_router, prefix="/api/v1/applications", tags=["gap-analyzer"])
 app.include_router(reviews_router, prefix="/api/v1", tags=["reviews"])
 app.include_router(audit_packages_router, prefix="/api/v1", tags=["audit-packages"])
 

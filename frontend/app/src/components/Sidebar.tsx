@@ -11,12 +11,17 @@ import {
   X,
   GraduationCap,
   GitCompareArrows,
+  ScanSearch,
+  ListChecks,
 } from "lucide-react";
 import { Button } from "./Button";
+import { useAuth } from "./useAuth";
 
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
   { path: "/validate", label: "Validate", icon: ClipboardCheck },
+  { path: "/gap-analyzer", label: "Gap Analyzer", icon: ScanSearch },
+  { path: "/consistency", label: "Consistency Checks", icon: ListChecks },
   { path: "/consistency", label: "Consistency Checks", icon: GitCompareArrows },
   { path: "/cadre-calculator", label: "Cadre & FSR Norms", icon: GraduationCap },
   { path: "/history", label: "Audit History", icon: Clock3 },
@@ -35,7 +40,8 @@ export function Sidebar({
   onClose: () => void;
 }) {
   const location = useLocation();
-  const items = navItems;
+  const { session } = useAuth();
+  const items = session ? navItems : navItems.filter((item) => item.path !== "/consistency");
 
   return (
     <aside
@@ -75,7 +81,9 @@ export function Sidebar({
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto" aria-label="Navigation">
         {items.map((item) => {
           const Icon = item.icon;
-          const isActive = location.pathname === item.path;
+          const isActive = item.path === "/"
+            ? location.pathname === "/"
+            : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
 
           return (
             <NavLink

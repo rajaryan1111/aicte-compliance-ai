@@ -361,6 +361,12 @@ class Finding(Base):
         nullable=True,
         index=True,
     )
+    requirement_assessment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("requirement_assessments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     code: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(50), default="open", nullable=False)
     severity: Mapped[str] = mapped_column(String(50), default="warning", nullable=False)
@@ -880,3 +886,121 @@ class RetentionRunRecord(Base):
             f"<RetentionRunRecord(id={self.id}, ref={self.run_reference!r}, "
             f"type={self.execution_type!r}, status={self.status!r})>"
         )
+
+
+class RequirementEvidenceMapping(Base):
+    """Application-scoped link from an approved rule version to exact evidence."""
+
+    __tablename__ = "requirement_evidence_mappings"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    application_id: Mapped[int] = mapped_column(
+        ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    rule_approval_id: Mapped[int] = mapped_column(
+        ForeignKey("rule_approvals.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    document_version_id: Mapped[int] = mapped_column(
+        ForeignKey("document_versions.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    extracted_field_id: Mapped[int | None] = mapped_column(
+        ForeignKey("extracted_fields.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(32), default="suggested", nullable=False, index=True)
+    sufficiency_status: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    source: Mapped[str] = mapped_column(String(32), default="user", nullable=False)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    evidence_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    reviewed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False)
+
+
+class RequirementAssessment(Base):
+    """Immutable per-run outcome for one approved, versioned requirement."""
+
+    __tablename__ = "requirement_assessments"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    application_id: Mapped[int] = mapped_column(
+        ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    validation_run_id: Mapped[int] = mapped_column(
+        ForeignKey("validation_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    rule_approval_id: Mapped[int] = mapped_column(
+        ForeignKey("rule_approvals.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    applicability_status: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    applicability_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    evaluation_status: Mapped[str] = mapped_column(String(40), nullable=False)
+    outcome_status: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    evidence_sufficiency: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    result_message: Mapped[str] = mapped_column(Text, nullable=False)
+    source_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    review_status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("validation_run_id", "rule_approval_id", name="uq_requirement_assessment_run_rule"),
+    )
+
+
+class RequirementAssessmentEvidence(Base):
+    """Run-time snapshot of a mapped evidence version used or considered."""
+
+    __tablename__ = "requirement_assessment_evidence"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    requirement_assessment_id: Mapped[int] = mapped_column(
+        ForeignKey("requirement_assessments.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    mapping_id: Mapped[int | None] = mapped_column(
+        ForeignKey("requirement_evidence_mappings.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    document_version_id: Mapped[int] = mapped_column(
+        ForeignKey("document_versions.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    extracted_field_id: Mapped[int | None] = mapped_column(
+        ForeignKey("extracted_fields.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    mapping_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    evidence_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extraction_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evidence_sufficiency: Mapped[str] = mapped_column(String(40), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class FindingEvidence(Base):
+    """Evidence citations attached to an existing compliance finding."""
+
+    __tablename__ = "finding_evidence"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    finding_id: Mapped[int] = mapped_column(
+        ForeignKey("findings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    assessment_evidence_id: Mapped[int | None] = mapped_column(
+        ForeignKey("requirement_assessment_evidence.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    document_version_id: Mapped[int] = mapped_column(
+        ForeignKey("document_versions.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    extracted_field_id: Mapped[int | None] = mapped_column(
+        ForeignKey("extracted_fields.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    evidence_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_role: Mapped[str] = mapped_column(String(32), nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)

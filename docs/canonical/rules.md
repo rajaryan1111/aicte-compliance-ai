@@ -1,93 +1,49 @@
-# Compliance Rules — Source-Governed Catalogue
+# Product, Engineering and AI Rules
 
-**Status:** provisional policy; EOA checklist is not frozen.
+**Status:** Normative guardrails for existing and proposed features. A rule written here is not itself an activated AICTE requirement.
 
-## Rule admission gate
-A rule may be activated only when the record includes:
-- Stable rule ID (never reuse retired IDs).
-- Title and plain-language explanation.
-- Source document, issuer, version, URL, clause and page.
-- Publication date, effective dates and supersession relationship.
-- Application type, academic year and applicability conditions.
-- Required inputs and their provenance.
-- Deterministic logic and documented interpretation.
-- Evidence requirements and limitations.
-- Output status, severity and reviewer action.
-- Positive, negative, boundary and exception tests.
-- Reviewer/approver and review timestamp.
+## Source and interpretation rules
 
-Rules without verified regulatory support must be labelled reasonable consistency checks, not statutory requirements.
+- Use official AICTE publications, amendments, corrigenda and relevant official government publications as authoritative sources. Preserve source URL, issuer, title, retrieved original, checksum, publication/effective dates, version and verification record. Mark third-party material unverified.
+- The repository research register reports unresolved current-source/applicability questions (`docs/research/official-source-verification-report.md`, `source-register.md`, `reconciliation.md`). Close relevant questions against official source before activating or changing regulatory interpretation. Do not invent requirements or describe provisional handbook extraction as universally applicable.
+- Preserve exact clause/page/version and interpretation rationale. Keep rule severity and model confidence separate. A wording diff is not automatically a substantive change.
+- Existing governance at `backend/app/rule_catalog.py`, `services/rule_engine.py` and `/api/v1/compliance/rules...` is a base to extend. Code-defined rules, source verification records, and source publication versions are distinct concepts; do not conflate them.
 
-**Implementation status (2026-10-22 audit):** `backend/app/rule_catalog.py` enforces the
-provenance and approval parts of this gate. An activation requires a verified source
-(document version, retrieval date, named reviewer and verification date), an
-attributable approval record, an effective date and positive/negative/boundary/exception
-tests. `RuleRegistry.activate` is the only transition to `ACTIVE` and refuses
-caller-declared `ACTIVE`, unverified or unapproved rules. No AICTE rule is defined or
-active, and no rule evaluator exists; the remaining admission-gate items above are still
-policy, not code.
+## Evidence and assessment rules
 
-## Provisional status vocabulary
-| Status | Meaning |
-|---|---|
-| passed | Deterministic local check passed for available inputs; not proof of authenticity. |
-| mandatory_missing | A source-backed unconditional requirement is missing. |
-| conditional_missing | A verified condition applies and its required document is missing. |
-| trigger_unevaluable | Applicability cannot be determined from reliable inputs. |
-| present_unreadable | File exists but extraction failed or was insufficient. |
-| expired | Parsed validity date fails the approved validity rule. |
-| inconsistent_fields | Extracted or normalized fields conflict. |
-| authenticity_concern | Preliminary indicator fired; not proof of forgery. |
-| verification_not_attempted | No external check was performed. |
-| verification_unavailable | Authorized source was attempted but could not be reached. |
-| verification_inconclusive | Source responded but did not resolve the question. |
-| externally_verified | Authorized authoritative source returned a result supporting the exact recorded claim. |
-| human_review_required | A human must resolve ambiguity or inspect evidence. |
-| not_applicable | Verified rule does not apply to this application. |
-| simulated | Demo-only result; never represent as a live external check. |
+- `DocumentVersion` is immutable evidence. Replacements create a version; past runs keep their consumed version snapshot.
+- OCR/extraction results are observations, not truth. Keep raw and normalized value, engine/version, confidence and available page/location provenance. Unreadable/ambiguous is not a pass.
+- Evidence acceptance does not mean requirement satisfaction. A new assessment is required; preserve prior assessment/finding history.
+- Every proposed finding states what evidence was observed or missing, why the rule applies, exact source and limitations. A missing record is not by itself proof of statutory non-compliance.
+- Never mark a requirement compliant solely from an LLM result. Use deterministic logic for machine-verifiable conditions. Flag ambiguity, low confidence, unsupported/contradictory source and high-impact interpretation for authorized human review.
+- Severity is based on approved rules/criteria and may be reviewed by an authorized human. Model confidence and regulatory change impact are separate fields. The model cannot select arbitrary severity.
 
-## Safety and interpretation
-- A missing required document is a completeness finding, not a fraud finding.
-- OCR text and confidence are observations, not proof the text is true.
-- A hash identifies bytes; it does not prove authenticity.
-- Metadata or visual anomalies are indicators only.
-- A signature check reports cryptographic integrity/trust-chain facts, not substantive truth.
-- A QR code resolving to a URL does not prove the destination is authoritative.
-- Fuzzy name matching alone must not establish identity.
-- An unreadable date must not be treated as a pass.
-- An unevaluable condition must not silently become not applicable.
-- No automated finding may make the final AICTE approval/rejection decision.
+## Security and privacy rules
 
-## Date policy
-The expiry boundary and authoritative evaluation timezone remain unresolved in the research dossiers. Before activation, settle them from authoritative instructions or approve a clearly labelled product policy. Test the day before, exact boundary, day after, invalid date, missing date and ambiguous OCR date.
+- Authenticate all protected APIs and authorize each operation server-side using current user's active institution membership, role/permission, and, if approved, department scope. Never trust a frontend guard or client institution ID by itself.
+- Return the established concealed 404 for inaccessible institution-scoped objects where current API patterns do so. Apply the same boundary to file downloads, search, task/impact views and background jobs.
+- Send AI services only data the initiating user is authorized to access. Minimize prompt content; do not log document text, credentials, tokens or unnecessary personal data. Approve provider retention/region/training terms before production use.
+- Reuse upload streaming limits, content validation, private storage, malware scanning and retention controls. Do not expose storage keys or raw paths.
+- Audit every source/rule approval, finding decision, task assignment/state/evidence decision, impact decision and revalidation, with authenticated actor, timestamp, target and rationale where needed. Keep audit history append-only at application level; do not claim cryptographic immutability without external anchoring.
+- Existing legacy public routes must be reviewed before real user data is enabled (`/api/v1/documents/analyze`, `/api/v1/institutions` in `backend/app/main.py`).
 
-## Versioning and reproducibility
-Each validation run records exact rule-version IDs and source versions. Rule edits create a new version; they never rewrite past runs. Re-uploading a file creates a new document version and validation run, preserving earlier evidence and findings.
+## State and integration rules
 
-## Research leads — not an activated checklist
-The dossiers discuss Affidavit 2, TER payment receipt, building approval alternatives, structural stability, fire safety, satellite location maps, audited accounts, accreditation and other category-dependent documents. Because retrieval claims conflict and the 1 April 2024 scrutiny circular remains unread, these are research leads until the source register is closed. Do not encode them as universally mandatory from this list.
+- Keep separate state machines for document processing, validation run, finding review, action task, source verification, regulatory change review and compliance outcome. Do not reuse `resolved` to mean all of them.
+- Status updates follow explicit server-validated transitions. Reopen/cancel/waive/reject decisions require the relevant permission and recorded reason.
+- Regulatory source/version and published requirement versions are immutable. Corrections publish a new version and preserve supersession links.
+- Discovery of a regulatory change may queue a proposed impact assessment; it must not silently invalidate evidence, alter institution compliance, or make tasks appear resolved.
+- Background work is idempotent, bounded-retry, tenant-rechecked and auditable. Failure is visible and cannot create a misleading completed assessment.
 
-## Source verification update — 2026-10-23
-The detailed evidence and gaps are tracked in [the official-source verification report](../research/official-source-verification-report.md), [source register](../research/source-register.md) and [reconciliation memo](../research/reconciliation.md).
+## Existing, proposed and API contract discipline
 
-**No EOA checklist is approved by this update.** The AICTE Approval Process Handbook 2024–25 to 2026–27 is identified as the base source, but the 1 April 2024 revised-scrutiny document has not been retrieved/read in this research, the official status and effective date of the circulating 2026–27 addendum remain unverified, and the Annexure-2 §2.1 / Clause 7.17 cross-reference needs direct official-PDF review. The base handbook's NBA validity date ending 30 April 2025 also requires current applicability review. The extracted Affidavit 2, TER receipt, building approval, structural stability, fire safety, satellite map and audited-account items are research leads only; do not encode them as a universally mandatory active checklist.
+- Existing functionality claims must cite current source and tests; a page, table, mock or README claim alone is insufficient. Use capability labels in `prd.md`.
+- Proposed contracts must be labeled proposed and added to `docs/development/API_CONTRACT.md` before implementation. Do not break current response shapes/status meanings silently.
+- Keep the user's source changes isolated; documentation work does not justify editing application code, schema or dependencies.
+- All displayed dashboard metrics must derive from authorized persisted data. Label demo/synthetic values and states.
 
-SIH26261 title, theme, team constraints and reported 28 October 2026 deadline were not verified directly from the official SIH portal in the research pass. The deadline is unconfirmed. No public AICTE API was established; API availability is **not researched/confirmed**, not a verified negative.
+## Feature 1 implementation status (2026-10-31)
 
-## Gate hardening — 2026-10-23 audit
+This addendum supersedes earlier phase/audit statements in this document where they describe Feature 1 as unimplemented or blocked locally. The branch now contains an authenticated application-scoped Gap Analyzer using approved rule versions, the existing validation engine, Document Vault versions and extracted fields, persisted evidence mappings/review history, requirement assessments, findings and saved run history. The page supports loading and selecting saved runs, requirement findings and source citations, mapping extracted evidence, reviewer decisions, and authorized original-version download. Missing evidence is not presented as proof of statutory non-compliance.
 
-`backend/app/rule_catalog.py` was re-verified and hardened after the 2026-10-22 pass:
-
-- tampered or partially constructed rule objects (for example via Pydantic
-  `model_construct`) now fail with `RuleActivationError` and a blocker message instead of
-  `AttributeError`/`TypeError`;
-- `RuleRegistry` stores and returns deep copies, so mutating a returned active object
-  cannot change registry state;
-- an `effective_from` date earlier than the rule's `publication_date` is refused in the
-  `ACTIVE` state and at the gate;
-- the gate's "supersede it" wording was corrected: supersession and retirement are
-  **not implemented** in this prototype.
-
-The gate is still prototype-only: process-local memory, no durable audit, no
-authenticated approver identity, no concurrency handling, no evaluator. No AICTE rule is
-defined or active.
+Local verification: `python3 -m pytest backend/tests -q` → 497 passed, 21 skipped; frontend TypeScript/build passed; frontend tests 15 passed; lint exited 0 with existing warnings. Feature 1 still is not production-ready: Render is pinned to a stale branch without these routes, live PostgreSQL RLS inspection was blocked by IP allowlisting, and authenticated deployed workflow testing has not occurred. AI/RAG remains deferred pending provider/privacy approval; no institutional documents are sent to an external model. See `GAP_ANALYZER_FINAL_RELEASE_REPORT.md` and `GAP_ANALYZER_REDEPLOYMENT_HANDOFF.md`.

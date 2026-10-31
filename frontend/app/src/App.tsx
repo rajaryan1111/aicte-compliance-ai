@@ -10,10 +10,11 @@ import { HistoryPage } from "./pages/HistoryPage";
 import { CadreCalculatorPage } from "./pages/CadreCalculatorPage";
 import { SignInPage } from "./pages/SignInPage";
 import { RequireAuth } from "./components/RequireAuth";
+import { GapAnalyzerPage } from "./pages/GapAnalyzerPage";
 
 // The consistency workbench is code-split so it is downloaded only when a
 // signed-in user opens the route.
-const ConsistencyPage = lazy(() => import("./pages/ConsistencyPage"));
+const ConsistencyPage = lazy(() => import("./pages/ConsistencyPage").then((module) => ({ default: module.ConsistencyPage })));
 
 function RouteFallback() {
   return <p className="py-12 text-center text-sm text-text-secondary" role="status">Loading…</p>;
@@ -25,6 +26,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/validate" element={<ValidatePage />} />
+        <Route path="/gap-analyzer" element={<RequireAuth><GapAnalyzerPage /></RequireAuth>} />
         <Route path="/cadre-calculator" element={<CadreCalculatorPage />} />
         <Route path="/about" element={<AboutPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />

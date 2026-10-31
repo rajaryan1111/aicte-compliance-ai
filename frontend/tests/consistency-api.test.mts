@@ -1,72 +1,189 @@
-// 8 Node-run regression tests for the consistency API client
-// using stubTransport (injects fetchJson/baseUrl)
+import test, { after, before, mock } from "node:test";
+import assert from "node:assert/strict";
+import {
+  createConsistencyCheck,
+  createConsistencyFinding,
+  fetchApplicationRecord,
+  fetchApplications,
+  fetchConsistencyChecks,
+  fetchConsistencyFindings,
+  updateConsistencyFinding,
+} from "../app/src/lib/api.ts";
 
-import { stubTransport } from "@/tests/consistency-api.test-utils"
+const originalWindow = globalThis.window;
+before(() => {
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { setTimeout, clearTimeout },
+  });
+});
+after(() => {
+  Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
+});
 
-describe("consistency guards", () => {
-  it("accept persisted check and finding payloads and reject malformed ones", () => {
-    const result = stubTransport({ check: persistedCheck, finding: persistedFinding })
-    expect(result.checks).toBeDefined()
-  })
-  it("application page guard enforces the paginated tenant scope contract", () => {
-    const result = stubTransport({ page: persistedPage })
-    expect(result.page.items.length).toBeGreaterThan(0)
-  })
-  it("createConsistencyCheck posts to the auth-required collection route with the create payload", () => {
-    const result = stubTransport({ method: "POST", path: "/api/v1/consistency/" })
-    expect(result.status).toBe(201)
-  })
-  it("listConsistencyChecks forwards tenant-scope and status filters as query parameters", () => {
-    const result = stubTransport({ method: "GET", path: "/api/v1/consistency/?status_filter=pending" })
-    expect(result.checks.length).toBeGreaterThan(0)
-  })
-  it("422 responses surface FastAPI field errors under their field names", () => {
-    const result = stubTransport({ status: 422, body: { detail: ["field", "error"] } })
-    expect(result.errors["field"]).toBe("error")
-  })
-  it("401 and 404 map to the documented session and lookup errors", () => {
-    const result = stubTransport({ status: 401 })
-    expect(result.message).toBe("Session expired")
-    const result404 = stubTransport({ status: 404 })
-    expect(result404.message).toBe("Not found")
-  })
-  it("updateConsistencyFinding sends a PATCH containing only the supplied keys", () => {
-    const result = stubTransport({ method: "PATCH", path: "/api/v1/consistency/findings/1", body: { resolved: true } })
-    expect(result.resolved).toBe(true)
-  })
-  it("invalid_response is reported when a 2xx body fails the schema guards", () => {
-    const result = stubTransport({ status: 200, body: { id: -1 } })
-    expect(result.errors).toBeDefined()
-  })
-})
+const check = {
+  id: 21,
+  application_id: 8,
+  check_name: "Compare institution identifiers",
+  description: null,
+  related_field: "institution_id",
+  status: "pending",
+  created_at: "2026-10-31T02:00:00Z",
+  updated_at: "2026-10-31T02:00:00Z",
+};
 
-describe("consistency finding search", () => {
-  it("findings search composes with finding-code filters", () => {
-    const result = stubTransport({ method: "GET", path: "/api/v1/consistency/checks/1/findings?severity_filter=high" })
-    expect(result.findings.length).toBeGreaterThan(0)
-  })
-  it("finding search includes document, message, and code and does not mutate source", () => {
-    const source = [{ id: 1, field_name: "test", value_1: "a", value_2: "b", severity: "high", confidence: 0.9, description: "d", evidence: {}, resolved: false, created_at: "2024", updated_at: "2024" }]
-    const result = stubTransport({ method: "GET", path: "/api/v1/consistency/checks/1/findings" })
-    expect(result.findings).not.toBe(source)
-  })
-  it("CSV exports request, response, timestamps, evidence, and safe spreadsheet cells", () => {
-    const result = stubTransport({ method: "GET", path: "/api/v1/consistency/export" })
-    expect(result.csv).toBeDefined()
-  })
-  it("CSV protects formula initiators after leading spaces and handles zero findings", () => {
-    const result = stubTransport({ status: 200, body: { csv: "start\\n" } })
-    expect(result.csv).not.toMatch(/^\\s/)n  })
-  it("step validation checks context and document requirements at the relevant step", () => {
-    const result = stubTransport({ step: "step1", context: { document: 1 } })
-    expect(result.valid).toBe(true)
-  })
-  it("duplicate check matches backend trim-only, case-sensitive comparison", () => {
-    const result = stubTransport({ checkName: "Case", checkName2: "case" })
-    expect(result.isDuplicate).toBe(false)
-  })
-  it("final request validation reports all required fields without changing the request", () => {
-    const result = stubTransport({ checkName: "required", missing: true })
-    expect(result.hasMissing).toBe(true)
-  })
-})
+const finding = {
+  id: 34,
+  consistency_check_id: 21,
+  field_name: "institution_id",
+  value_1: "INST-A",
+  value_2: "INST-B",
+  severity: "high",
+  confidence: 0.9,
+  description: "The identifiers do not match.",
+  evidence: { source: "two application records" },
+  resolved: false,
+  created_at: "2026-10-31T02:00:00Z",
+  updated_at: "2026-10-31T02:00:00Z",
+};
+
+const application = {
+  id: 8,
+  institution_id: 4,
+  application_type: "eoa",
+  academic_year: "2026-2027",
+  status: "submitted",
+  created_at: "2026-10-30T02:00:00Z",
+  updated_at: "2026-10-31T02:00:00Z",
+};
+
+function mockJsonResponse(status: number, body: unknown) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+test("consistency list uses the authenticated API and validates its response", async (t) => {
+  const fetchMock = t.mock.method(globalThis, "fetch", async (input, init) => {
+    assert.match(String(input), /\/consistency\/$/);
+    assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer test-token");
+    return mockJsonResponse(200, [check]);
+  });
+
+  const result = await fetchConsistencyChecks("test-token");
+  assert.equal(fetchMock.mock.callCount(), 1);
+  assert.deepEqual(result, { ok: true, data: [check] });
+});
+
+test("application selection and details use tenant-scoped authenticated endpoints", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (input, init) => {
+    calls += 1;
+    assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer test-token");
+    if (calls === 1) {
+      assert.match(String(input), /\/api\/v1\/applications\?skip=0&limit=100$/);
+      return mockJsonResponse(200, { items: [application], total: 1, skip: 0, limit: 100 });
+    }
+    assert.match(String(input), /\/api\/v1\/applications\/8$/);
+    return mockJsonResponse(200, application);
+  });
+
+  assert.deepEqual(await fetchApplications("test-token"), {
+    ok: true,
+    data: { items: [application], total: 1, skip: 0, limit: 100 },
+  });
+  assert.deepEqual(await fetchApplicationRecord(8, "test-token"), { ok: true, data: application });
+});
+
+test("creating a check sends only the backend create schema", async (t) => {
+  const payload = {
+    application_id: 8,
+    check_name: "Compare institution identifiers",
+    description: "Compare persisted application records.",
+    related_field: "institution_id",
+  };
+  t.mock.method(globalThis, "fetch", async (_input, init) => {
+    assert.equal(init?.method, "POST");
+    assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer test-token");
+    assert.deepEqual(JSON.parse(String(init?.body)), payload);
+    return mockJsonResponse(201, check);
+  });
+
+  assert.deepEqual(await createConsistencyCheck(payload, "test-token"), { ok: true, data: check });
+});
+
+test("finding create and update use the documented route and fields", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (input, init) => {
+    calls += 1;
+    assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer test-token");
+    if (calls === 1) {
+      assert.match(String(input), /\/consistency\/checks\/21\/findings$/);
+      return mockJsonResponse(200, [finding]);
+    }
+    if (calls === 2) {
+      assert.match(String(input), /\/consistency\/findings$/);
+      assert.equal(init?.method, "POST");
+      assert.deepEqual(JSON.parse(String(init?.body)), {
+        consistency_check_id: 21,
+        field_name: "institution_id",
+        value_1: "INST-A",
+        value_2: "INST-B",
+        severity: "high",
+        confidence: 0.9,
+        description: "The identifiers do not match.",
+        evidence: { source: "two application records" },
+      });
+      return mockJsonResponse(201, finding);
+    }
+    assert.match(String(input), /\/consistency\/findings\/34$/);
+    assert.equal(init?.method, "PATCH");
+    assert.deepEqual(JSON.parse(String(init?.body)), { resolved: true });
+    return mockJsonResponse(200, { ...finding, resolved: true });
+  });
+
+  assert.deepEqual(await fetchConsistencyFindings(21, "test-token"), { ok: true, data: [finding] });
+  assert.deepEqual(await createConsistencyFinding({
+    consistency_check_id: 21,
+    field_name: "institution_id",
+    value_1: "INST-A",
+    value_2: "INST-B",
+    severity: "high",
+    confidence: 0.9,
+    description: "The identifiers do not match.",
+    evidence: { source: "two application records" },
+  }, "test-token"), { ok: true, data: finding });
+  assert.deepEqual(await updateConsistencyFinding(34, { resolved: true }, "test-token"), {
+    ok: true,
+    data: { ...finding, resolved: true },
+  });
+});
+
+test("unauthorized and concealed cross-institution responses remain errors", async (t) => {
+  let status = 401;
+  t.mock.method(globalThis, "fetch", async () => mockJsonResponse(status, { detail: "Request rejected." }));
+
+  const expired = await fetchConsistencyChecks("expired-token");
+  assert.equal(expired.ok, false);
+  if (!expired.ok) {
+    assert.equal(expired.status, 401);
+    assert.equal(expired.errors._server, "Your session expired. Sign in again.");
+  }
+
+  status = 404;
+  const concealed = await fetchConsistencyFindings(21, "test-token");
+  assert.equal(concealed.ok, false);
+  if (!concealed.ok) {
+    assert.equal(concealed.status, 404);
+    assert.match(concealed.errors._server, /not found or access is denied/i);
+  }
+
+  status = 403;
+  const forbidden = await fetchConsistencyChecks("test-token");
+  assert.equal(forbidden.ok, false);
+  if (!forbidden.ok) {
+    assert.equal(forbidden.status, 403);
+    assert.match(forbidden.errors._server, /does not have access/i);
+  }
+});

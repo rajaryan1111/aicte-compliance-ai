@@ -1,93 +1,51 @@
-# Implementation Plan — SIH26261
+# Implementation Plan — Three Connected Compliance Capabilities
 
-**Status:** staged plan; unresolved regulatory requirements are not settled.
+**Status:** Proposed, based on source audit of `origin/main` at `93b7850d3bf5af4a54d504f412986f61bc6ad723`. Documentation-only work is complete when reviewed; no implementation is authorized by this plan.
 
-## Phase 0 — Close correctness blockers
-- [ ] Verify official SIH problem statement, stage and deadline.
-- [ ] Retrieve the complete applicable 2026–27 Annexure-2.
-- [ ] Read the 1 April 2024 revised-scrutiny circular.
-- [ ] Check later AICTE amendments/corrigenda.
-- [ ] Confirm EOA-specific DSC and signatory requirements.
-- [ ] Resolve reuse-repository licensing/authorship; exclude its data and history.
-- [ ] Freeze a reviewed source register and versioned rule catalogue.
+## Existing functionality to extend
 
-**Exit gate:** every activated regulatory rule has a source, applicability, interpretation, effective period and tests.
+- **Gap analysis:** reuse authenticated applications/memberships, versioned private uploaded documents, scan/OCR processing, extracted fields, deterministic validation and rule engine, persisted validation runs/check results/findings, review workflow, audit packages and consistency observations. Missing: persisted requirement applicability and evidence mapping, broad structured/cross-document checks, model/RAG interpretation and requirement-backed metrics.
+- **Action planning:** reuse finding identity/review history, existing evidence upload/versioning, worker/outbox, RBAC and audit. Do not call `ReviewAction` a task or duplicate `Finding`. No tasks/assignees/due dates/evidence reviews/remediation notifications currently exist.
+- **Regulatory impact:** reuse source verification and approval governance, code rule catalogue, audit, worker/outbox and reassessment API. No official publication archive, immutable document version/clause model, clause diff/dependency graph or impact assessment currently exists.
 
-## Phase 1 — Secure foundation (P0)
-- Define application, institution, user/role, document/version, validation-run, rule-version, finding, reviewer-action and audit-event data models.
-- Implement server-side authentication and role-based authorization.
-- Enforce institution-level isolation on every relevant query and mutation.
-- Implement safe file upload: size/page limits, content checks, random storage names, safe temporary paths and explicit processing states.
-- Establish migrations, structured error responses and test fixtures.
-- Audit security-sensitive actions.
-- Replace misleading checklist-complete semantics when no trusted rule set was evaluated.
+`FEATURE_AUDIT_REPORT.md` was not present. `docs/canonical/truthful-baseline-audit.md` is an earlier audit; its no-auth/no-persistence/no-evaluator statements conflict with current code and have not been used as current fact. See `prd.md` for capability statuses and exact test/source references.
 
-**Exit gate:** access-control, tenant-isolation, upload-validation and failure-path tests pass.
+## Ordered delivery
 
-## Phase 2 — Deterministic validation (P0)
-- Add a versioned rule catalogue and source references.
-- Implement only reviewed rules.
-- Preserve document version, rule versions, evaluation timestamp and evidence for every finding.
-- Distinguish pass, missing, conditional/unevaluable, expired, unreadable, inconsistent, not applicable and human-review states.
-- Test date boundaries and rule changes.
+### Gate 0 — Product and regulatory decisions
 
-**Exit gate:** runs are reproducible and unresolved rules cannot automatically produce adverse decisions.
+Verify current official sources and close issues listed in `docs/research/`; decide requirement identity, applicable institution/program context, source/interpretation authority and any model/privacy policy. No statutory feature is considered ready while its sources/applicability remain unresolved.
 
-## Phase 3 — Document processing (P0)
-- Define an OCR adapter contract preserving raw text, normalized values, confidence, page, bounding box, engine/version and processing status.
-- Prefer embedded PDF text when safe and available; OCR scanned pages.
-- Compare OCR engines on labelled synthetic data before locking a version.
-- Never swallow processing exceptions or return an empty result as successful extraction.
-- Add synthetic institutional-document fixtures and field-level evaluation metrics.
+### Phase 1 — Shared data foundation
 
-**Exit gate:** success, partial success and failure are distinguishable; tests cover poor scans, corrupt files and ambiguous dates.
+**Depends on:** Gate 0; reviewed data model. **Deliver:** link requirements/applicability to current application context and evidence versions; add justified finding/source references while keeping `DocumentVersion`, `ValidationRun`, `Finding` canonical. Decide many-to-many association and version/retention behavior. **Likely files:** `backend/app/db/models.py`, repositories/services, Alembic, schemas, `docs/development/API_CONTRACT.md`; source evidence detail components in `frontend/app/src`. **API:** requirement/applicability retrieval and review, evidence mapping. **Tests:** migrations, tenant access, FK ownership, cardinality, immutable snapshots, old clients/contract. **Risks:** duplicate rule/requirement catalogues. **Done:** sources of truth and no-duplication design approved; migrations upgrade and rollback plan reviewed; cross-tenant negatives pass.
 
-## Phase 4 — Review workflow and auditability (P0)
-- Build applicant, reviewer and administrator journeys.
-- Reviewers inspect evidence, comment and record human outcomes.
-- Preserve status history and every rule version used.
-- Add tamper-evident audit-chain verification only if tested; do not call it immutable without external anchoring and operational controls.
+### Phase 2 — Gap Analyzer
 
-**Exit gate:** a synthetic application can be uploaded, validated, reviewed and audited end-to-end.
+**Depends on:** Phase 1. **Deliver:** applicability reason, evidence mapping, deterministic requirement validation and human review. Add optional AI/RAG only with approved model/provider and verified-source retrieval. **Files:** validation/rule services, finding schema/review API, frontend requirements/evidence/finding flows. **Migration/API/UI:** justified run/finding/evidence refs, proposed versioned assessment contracts. **Tests:** applicable/not applicable/unknown, missing/incomplete/invalid/expired/inconsistent, low confidence, source citations, provider failure, reproducibility, reviewer decisions and tenant isolation. **Risks:** overclaiming non-compliance. **Done:** Feature 1 criteria in `prd.md` satisfied; historical runs preserved; dashboard metrics live.
 
-## Phase 5 — Bounded authenticity checks (P1)
-- Validate PDF signatures with explicit trust-store configuration and distinct valid/tampered/untrusted/unsupported outcomes.
-- Mark synthetic-CA demo results visibly as synthetic.
-- Add hashes, duplicate detection and cautious metadata/visual indicators.
-- Use authorized issuer adapters only; no scraping, CAPTCHA bypass or assumed credentials.
+### Phase 3 — Action Planner
 
-## Phase 6 — Polish (P1/P2)
-- Dashboard, alerts, accessibility and performance measurement.
-- Optional infrastructure-evidence assistance only after core workflow is stable.
-- External integrations only after authorization, documentation and test credentials are confirmed.
+**Depends on:** reviewed actionable findings and evidence upload. **Deliver:** task persistence, assignment and reassignment policy, owner/department decision, dates/priorities, legal state machine, comments/history, corrective evidence review, revalidation and reviewer-controlled closure. Reuse outbox/worker for reminders only after channels/policy are selected. **Files:** new task service/repository/router/schema/migration; existing document upload, audit and revalidation extensions; task UI. **Tests:** legal transitions/concurrency, tenant+department scope, due/overdue edge cases, evidence rejection/retry, audit, revalidation and notification dedupe. **Risks:** false closure and notification noise. **Done:** Feature 2 criteria pass; evidence approved is distinct from compliance resolved.
 
-## Suggested three-person ownership
-- A — backend/security/data: API, auth, RBAC, tenant isolation, schema, migrations and audit.
-- B — document processing/rules: upload validation, OCR adapter, extraction evidence, deterministic rules and synthetic corpus.
-- C — frontend/reviewer workflow: applicant/reviewer/admin screens, evidence viewer, accessible states and demo script.
+### Phase 4 — Regulatory Change Impact
 
-Agree API contracts and the finding schema before parallel work. Integrate continuously on a feature branch; protect main and review a PR before merging.
+**Depends on:** source governance, immutable requirements, approved applicability. **Deliver:** source/doc version registry, clause extraction, ingestion idempotency, exact and structured diff, optional semantic suggestions, impact review/report and human-triggered reassessment. **Files:** source ingestion/extraction/impact services, worker/outbox, models/repositories/API, regulatory library/comparison UI. **Tests:** source verification, checksum and duplicate ingestion, version immutability, clause alignment and editorial/substantive cases, mapped impact evidence, approval/rejection, source/worker failure, tenant boundary. **Risks:** source identity errors, ambiguous amendments and false positive semantic diff. **Done:** Feature 3 criteria pass; no silent status/document invalidation.
 
-## Minimum acceptance gates
-- Backend authorization protects all privileged operations.
-- Institution-level isolation passes negative tests.
-- Invalid, oversized, malformed and unsupported files fail safely.
-- OCR failure is visible and never treated as pass.
-- Every active rule has source and version metadata.
-- Expiry and conditional rules have boundary tests.
-- External checks distinguish not attempted, unavailable, inconclusive, externally verified and simulated.
-- Reviewer decisions are human-attributed and auditable.
-- Historical runs retain document and rule versions.
-- Demo uses synthetic data and disclaims official AICTE status.
+### Phase 5 — End-to-end lifecycle
 
-## Research evidence update — 2026-10-23
-The report [official-source-verification-report.md](../research/official-source-verification-report.md) has been added under `docs/research/`. Phase 0 is still blocked; use this exact closure list before freezing rules:
-- [ ] Retrieve/read the complete 1 April 2024 revised-scrutiny document and reconcile its applicability.
-- [ ] Verify official publication, finality and effective date of the circulating 2026–27 addendum/corrigendum.
-- [ ] Check Annexure-2 §2.1 pagination and Clause 7.17 against the official handbook PDF.
-- [ ] Resolve the clause referring to NBA validity through 30 April 2025 for AY 2026–27.
-- [ ] Verify SIH26261's official problem statement, theme, constraints and deadline. The reported 28 October 2026 deadline is not confirmed.
-- [ ] Research AICTE API/authorized integration availability; currently not researched/confirmed, not a verified “no API” conclusion.
-- [ ] Resolve licensing/authorship and personal-data/history risks in fake-id-screening before any code/data reuse.
+**Depends on:** Phases 1–4. **Deliver:** approved change queues impacted reassessment; assessment creates traceable findings; reviewer action creates tasks; corrective evidence triggers new assessment and controlled closure; old versions remain visible. **Tests:** synthetic full journey, async retries/idempotency, failure recovery, permissions, historical reports, audit completeness, frontend accessibility and measured workload. **Done:** complete provenance path from official source to human resolution; user-facing dashboards match persisted data.
 
-The document list extracted from the base handbook remains provisional. Do not activate it or claim the EOA checklist is complete. No coding, dependency installation, implementation, merge or deployment is authorized by this research update.
+## Cross-cutting test/operational plan
+
+Unit rule/transition tests; service integration with DB/storage/worker; API schema and error tests; anonymous/role/cross-tenant/cross-department security tests; migration tests from deployed baseline; end-to-end synthetic workflow; regression tests for existing validation/review/consistency/document contracts. Use existing `backend/tests`, `backend/tests/integration`, frontend Node tests and CI conventions. Avoid real personal/institutional records without approval. Define latency, throughput, retention and availability targets only after workload, hosting tier and measurement are agreed.
+
+## Unresolved decisions and risks
+
+Official current source/application applicability, data model boundaries, owner of regulatory source approvals, source update/correction process, department scope, notification/escalation policy, external AI provider/retention/evaluation, version retention and service-level targets. Principal risks are rule misinterpretation, unsupported/weak OCR, cross-tenant exposure through new async jobs, status conflation, unverified regulatory ingestion and duplicate data models. Decision records belong in `memory.md` until a dedicated ADR convention is selected.
+
+## Feature 1 implementation status (2026-10-31)
+
+This addendum supersedes earlier phase/audit statements in this document where they describe Feature 1 as unimplemented or blocked locally. The branch now contains an authenticated application-scoped Gap Analyzer using approved rule versions, the existing validation engine, Document Vault versions and extracted fields, persisted evidence mappings/review history, requirement assessments, findings and saved run history. The page supports loading and selecting saved runs, requirement findings and source citations, mapping extracted evidence, reviewer decisions, and authorized original-version download. Missing evidence is not presented as proof of statutory non-compliance.
+
+Local verification: `python3 -m pytest backend/tests -q` → 497 passed, 21 skipped; frontend TypeScript/build passed; frontend tests 15 passed; lint exited 0 with existing warnings. Feature 1 still is not production-ready: Render is pinned to a stale branch without these routes, live PostgreSQL RLS inspection was blocked by IP allowlisting, and authenticated deployed workflow testing has not occurred. AI/RAG remains deferred pending provider/privacy approval; no institutional documents are sent to an external model. See `GAP_ANALYZER_FINAL_RELEASE_REPORT.md` and `GAP_ANALYZER_REDEPLOYMENT_HANDOFF.md`.

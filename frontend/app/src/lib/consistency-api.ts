@@ -1,176 +1,26 @@
-import type { ApiResult } from "./api";
-import { consistencyRequest, type ConsistencyRequestOptions } from "./consistency-transport.ts";
-
-export type ConsistencyStatus = "pending" | "discrepancy_detected" | "resolved";
-export interface ConsistencyCheckCreate {
-  application_id: number;
-  check_name: string;
-  description?: string | null;
-  related_field?: string | null;
-}
-export interface ConsistencyCheck {
-  id: number;
-  application_id: number;
-  check_name: string;
-  description: string | null;
-  related_field: string | null;
-  status: ConsistencyStatus;
-  created_at: string;
-  updated_at: string;
-}
-export interface ConsistencyFindingCreate {
-  consistency_check_id: number;
-  field_name: string;
-  value_1: string;
-  value_2: string;
-  severity: string;
-  confidence?: number | null;
-  description: string;
-  evidence?: Record<string, unknown> | null;
-}
-export interface ConsistencyFindingUpdate {
-  severity?: string;
-  description?: string;
-  evidence?: Record<string, unknown>;
-  resolved?: boolean;
-}
-export interface ConsistencyFinding {
-  id: number;
-  consistency_check_id: number;
-  field_name: string;
-  value_1: string;
-  value_2: string;
-  severity: string;
-  confidence: number | null;
-  description: string;
-  evidence: Record<string, unknown> | null;
-  resolved: boolean;
-  created_at: string;
-  updated_at: string;
-}
-export interface ApplicationSummary {
-  id: number;
-  institution_id: number;
-  application_type: string;
-  academic_year: string;
-  status: string;
-}
-export interface ApplicationPage {
-  items: ApplicationSummary[];
-  total: number;
-  skip: number;
-  limit: number;
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-const CONSISTENCY_STATUSES: readonly string[] = ["pending", "discrepancy_detected", "resolved"];
-export function isConsistencyCheck(value: unknown): value is ConsistencyCheck {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.id === "number" &&
-    value.id > 0 &&
-    typeof value.application_id === "number" &&
-    value.application_id > 0 &&
-    typeof value.check_name === "string" &&
-    (value.description === null || typeof value.description === "string") &&
-    (value.related_field === null || typeof value.related_field === "string") &&
-    typeof value.status === "string" &&
-    CONSISTENCY_STATUSES.includes(value.status) &&
-    typeof value.created_at === "string" &&
-    typeof value.updated_at === "string"
-  );
-}
-export function isConsistencyCheckList(value: unknown): value is ConsistencyCheck[] {
-  return Array.isArray(value) && value.every(isConsistencyCheck);
-}
-export function isConsistencyFinding(value: unknown): value is ConsistencyFinding {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.id === "number" &&
-    value.id > 0 &&
-    typeof value.consistency_check_id === "number" &&
-    value.consistency_check_id > 0 &&
-    typeof value.field_name === "string" &&
-    typeof value.value_1 === "string" &&
-    typeof value.value_2 === "string" &&
-    typeof value.severity === "string" &&
-    (value.confidence === null || typeof value.confidence === "number") &&
-    typeof value.description === "string" &&
-    (value.evidence === null || isRecord(value.evidence)) &&
-    typeof value.resolved === "boolean" &&
-    typeof value.created_at === "string" &&
-    typeof value.updated_at === "string"
-  );
-}
-export function isConsistencyFindingList(value: unknown): value is ConsistencyFinding[] {
-  return Array.isArray(value) && value.every(isConsistencyFinding);
-}
-export function isApplicationPage(value: unknown): value is ApplicationPage {
-  if (!isRecord(value)) return false;
-  if (!Array.isArray(value.items) || typeof value.total !== "number") return false;
-  return value.items.every(isRecord)
-    && value.items.every((item) =>
-      typeof item.id === "number" &&
-      typeof item.institution_id === "number" &&
-      typeof item.application_type === "string" &&
-      typeof item.academic_year === "string" &&
-      typeof item.status === "string");
-}
-export interface ConsistencyListFilters {
-  applicationId?: number;
-  statusFilter?: ConsistencyStatus;
-}
-export function fetchApplications(token: string, options: { skip?: number; limit?: number }) {
-  return consistencyRequest<ApplicationPage>(
-    "/api/v1/applications",
-    { skip: options.skip ?? 0, limit: options.limit ?? 50 },
-    token
-  );
-}
-export function createConsistencyCheck(check: ConsistencyCheckCreate, token: string) {
-  return consistencyRequest<ConsistencyCheck>(
-    "/api/v1/consistency/",
-    { method: "POST" },
-    check,
-    token
-  );
-}
-export function listConsistencyChecks(token: string, filters: ConsistencyListFilters, options: { skip?: number; limit?: number }) {
-  return consistencyRequest<ConsistencyCheck[]>(
-    "/api/v1/consistency/",
-    { method: "GET", query: { applicationId: filters.applicationId, statusFilter: filters.statusFilter, skip: options.skip ?? 0, limit: options.limit ?? 50 } },
-    token
-  );
-}
-export function getConsistencyCheck(token: string, checkId: number) {
-  return consistencyRequest<ConsistencyCheck>(
-    "/api/v1/consistency/" + checkId,
-    { method: "GET" },
-    token
-  );
-}
-export function listConsistencyFindings(token: string, checkId: number, options: { skip?: number; limit?: number }) {
-  return consistencyRequest<ConsistencyFinding[]>(
-    "/api/v1/consistency/checks/" + checkId + "/findings",
-    { method: "GET", query: { skip: options.skip ?? 0, limit: options.limit ?? 50 } },
-    token
-  );
-}
-export function createConsistencyFinding(finding: ConsistencyFindingCreate, token: string) {
-  return consistencyRequest<ConsistencyFinding>(
-    "/api/v1/consistency/findings",
-    { method: "POST" },
-    finding,
-    token
-  );
-}
-export function updateConsistencyFinding(id: number, update: ConsistencyFindingUpdate, token: string) {
-  return consistencyRequest<ConsistencyFinding>(
-    "/api/v1/consistency/findings/" + id,
-    { method: "PATCH" },
-    update,
-    token
-  );
-}
-export type { ConsistencyStatus };
+/**
+ * Backwards-compatible Consistency API module.
+ *
+ * The typed authenticated client is centralized in `api.ts` so all app
+ * features share the same URL, timeout, bearer token, and error handling.
+ */
+export {
+  createConsistencyCheck,
+  createConsistencyFinding,
+  fetchApplicationRecord,
+  fetchApplications,
+  fetchConsistencyCheck,
+  fetchConsistencyChecks,
+  fetchConsistencyFindings,
+  updateConsistencyFinding,
+} from "./api";
+export type {
+  ApplicationRecord as ApplicationSummary,
+  ApplicationRecordPage as ApplicationPage,
+  ConsistencyCheck,
+  ConsistencyCheckCreate,
+  ConsistencyFinding,
+  ConsistencyFindingCreate,
+  ConsistencyFindingUpdate,
+  ConsistencyStatus,
+} from "./api";

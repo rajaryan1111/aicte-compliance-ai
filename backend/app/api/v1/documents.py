@@ -48,6 +48,7 @@ from backend.app.schemas.document import (
     DocumentRead,
     DocumentUploadResponse,
     DocumentVersionRead,
+    ExtractedFieldRead,
     ProcessingJobRead,
     ProcessingJobStatusResponse,
 )
@@ -385,6 +386,31 @@ def list_document_versions(
 
     versions = DocumentRepository.list_versions(db, document_id)
     return [DocumentVersionRead.model_validate(v) for v in versions]
+
+
+@router.get(
+    "/{application_id}/documents/{document_id}/versions/{version_id}/fields",
+    response_model=list[ExtractedFieldRead],
+    summary="List extracted fields with source provenance for one authorized version",
+)
+def list_document_version_fields(
+    application_id: int,
+    document_id: int,
+    version_id: int,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> list[ExtractedFieldRead]:
+    app = db.get(Application, application_id)
+    if app is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found.")
+    verify_institution_membership(
+        db, current_user, app.institution_id, required_permission=PERMISSION_APPLICATION_READ
+    )
+    document = DocumentRepository.get_document(db, document_id)
+    version = DocumentRepository.get_version(db, version_id)
+    if document is None or document.application_id != app.id or version is None or version.document_id != document.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document version not found.")
+    return [ExtractedFieldRead.model_validate(field) for field in version.extracted_fields]
 
 
 @router.get(

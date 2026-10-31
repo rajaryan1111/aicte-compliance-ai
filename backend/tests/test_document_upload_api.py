@@ -482,3 +482,28 @@ def test_immutable_versioning_and_download_flow(client: TestClient, db_session: 
     assert r_dl.status_code == 200
     assert r_dl.content == VALID_PNG_BYTES
     assert "attachment" in r_dl.headers["content-disposition"]
+
+
+def test_list_extracted_fields_is_scoped_to_authorized_document_version(client: TestClient, db_session: Session):
+    user = create_user(db_session, "fields_reader")
+    institution = create_institution(db_session, "FIELDS-1")
+    application = create_application(db_session, institution.id)
+    assign_role(db_session, user.id, institution.id, ROLE_INSTITUTION_ADMIN)
+    from backend.app.db.models import Document, ExtractedField
+    doc = Document(application_id=application.id, document_type="fire_safety_certificate")
+    db_session.add(doc)
+    db_session.flush()
+    version = DocumentVersion(document_id=doc.id, version_number=1, storage_key="fields.pdf", sha256="f" * 64, media_type="application/pdf", byte_size=16)
+    db_session.add(version)
+    db_session.flush()
+    field = ExtractedField(document_version_id=version.id, field_name="certificate_number", raw_text="FIRE-123", normalized_value="FIRE-123", engine_name="test")
+    db_session.add(field)
+    db_session.commit()
+
+    url = f"/api/v1/applications/{application.id}/documents/{doc.id}/versions/{version.id}/fields"
+    response = client.get(url, headers=auth_header(user))
+    assert response.status_code == 200
+    assert response.json()[0]["raw_text"] == "FIRE-123"
+    assert response.json()[0]["page_number"] is None
+    assert client.get(f"/api/v1/applications/{application.id}/documents/{doc.id}/versions/999/fields", headers=auth_header(user)).status_code == 404
+    assert client.get(url).status_code == 401

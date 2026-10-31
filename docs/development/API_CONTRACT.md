@@ -16,8 +16,7 @@ they disagree, the difference is a defect in the contract — report it, do not 
 
 ## Implemented HTTP surface
 
-Verified by starting `backend.app.main:app` and calling the endpoints. Both routes are
-unauthenticated, which is acceptable only because no user data is stored anywhere.
+The base service routes below remain available. `/health` and legacy caller-supplied `/api/v1/validate` are unauthenticated; the latter only evaluates the caller-provided checklist and must not be treated as the institution-backed Gap Analyzer. Application, document, finding, and Gap Analyzer routes require authentication and enforce application membership/permissions.
 
 ### `GET /health` — implemented
 
@@ -233,3 +232,21 @@ earlier proposal:
 All example payloads in tests and docs use synthetic institution names
 (`SYNTH-…`, "Example Technical Institute"). No real institutional or personal data may be
 added to fixtures. `backend/tests/validation`-related tests are the reference examples.
+
+
+## Gap Analyzer application routes (implemented)
+
+These endpoints are mounted under `/api/v1/applications` and require a valid bearer token plus institution membership and the permission appropriate to the operation. Application IDs are resolved through the authenticated user’s memberships; document/version IDs are checked against that application. Cross-tenant or mismatched objects are concealed/rejected by the API.
+
+- `GET /{application_id}/gap-requirements` — active, approved and source-verified requirement versions with applicability/source metadata.
+- `GET /{application_id}/documents` — authorized Document Vault records/versions.
+- `GET /{application_id}/documents/{document_id}/versions/{version_id}/fields` — extracted fields for the application-owned version.
+- `GET /{application_id}/requirement-evidence-mappings` and `POST` on the same path — list/create mappings.
+- `PATCH /{application_id}/requirement-evidence-mappings/{mapping_id}` — reviewer decision, sufficiency, and rationale/history.
+- `POST /{application_id}/validate` — run the existing deterministic validation and save a new run.
+- `GET /{application_id}/validation-runs?skip=&limit=` — paginated assessment history.
+- `GET /{application_id}/gap-analysis?run_id=` — read saved requirement assessment/finding snapshot for a run (latest when omitted).
+- `GET /{application_id}/validation-runs/{run_id}/requirement-assessments` and `PATCH /{application_id}/validation-runs/{run_id}/requirement-assessments/{assessment_id}` — read/review saved assessments.
+- `GET /{application_id}/documents/{document_id}/versions/{version_id}/download` — authorized original document version.
+
+The exact schemas and permission dependencies are in `backend/app/api/v1/gap_analyzer.py`, `documents.py`, and `validation.py`; this list is not a substitute for the generated OpenAPI schema. The deployed Render service inspected for this report is stale and does not expose these paths.

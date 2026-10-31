@@ -17,6 +17,7 @@ import {
 import { Card, CardContent, CardTitle, CardDescription } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { ScopeNotice } from "@/components/ScopeNotice";
+import { useAuth } from "@/components/useAuth";
 
 const STATS = [
   { label: "AICTE Handbook Cycle", value: "2024–2027", detail: "Approval Process Guidelines" },
@@ -94,6 +95,7 @@ const GOVERNANCE_PILLARS = [
 
 export function DashboardPage() {
   const [activeTab, setActiveTab] = useState<"workflow" | "checks" | "governance">("workflow");
+  const { session } = useAuth();
 
   return (
     <div className="mx-auto max-w-6xl space-y-12 animate-fade-in">
@@ -130,6 +132,11 @@ export function DashboardPage() {
             >
               Handbook Guidelines & API
             </Link>
+            {session && (
+              <Link to="/consistency" className="text-sm font-semibold text-text-secondary underline underline-offset-4 transition-colors hover:text-text-heading">
+                Consistency Check
+              </Link>
+            )}
           </div>
         </div>
 
