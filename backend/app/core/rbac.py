@@ -20,6 +20,10 @@ PERMISSION_RULE_READ = "rule:read"
 PERMISSION_RULE_VERIFY = "rule:verify"
 PERMISSION_RULE_APPROVE = "rule:approve"
 PERMISSION_RETENTION_MANAGE = "retention:manage"
+PERMISSION_PLAN_READ = "plan:read"
+PERMISSION_PLAN_WRITE = "plan:write"
+#: Rescheduling moves institutional commitments, so it is narrower than ordinary plan edits.
+PERMISSION_PLAN_POLICY = "plan:policy"
 
 # Centralized role-to-permission mapping
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
@@ -31,6 +35,9 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         PERMISSION_AUDIT_PACKAGE_CREATE,
         PERMISSION_AUDIT_PACKAGE_READ,
         PERMISSION_RULE_READ,
+        PERMISSION_PLAN_READ,
+        PERMISSION_PLAN_WRITE,
+        PERMISSION_PLAN_POLICY,
     }),
     ROLE_SCRUTINY_OFFICER: frozenset({
         PERMISSION_APPLICATION_READ,
@@ -41,6 +48,8 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         PERMISSION_AUDIT_PACKAGE_READ,
         PERMISSION_RULE_READ,
         PERMISSION_RETENTION_MANAGE,
+        PERMISSION_PLAN_READ,
+        PERMISSION_PLAN_WRITE,
     }),
     ROLE_REGULATORY_DIRECTOR: frozenset({
         PERMISSION_APPLICATION_READ,
@@ -51,12 +60,14 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         PERMISSION_RULE_VERIFY,
         PERMISSION_RULE_APPROVE,
         PERMISSION_RETENTION_MANAGE,
+        PERMISSION_PLAN_READ,
     }),
     ROLE_AUDITOR: frozenset({
         PERMISSION_APPLICATION_READ,
         PERMISSION_REVIEW_READ,
         PERMISSION_AUDIT_PACKAGE_READ,
         PERMISSION_RULE_READ,
+        PERMISSION_PLAN_READ,
     }),
     ROLE_SUPER_ADMIN: frozenset({
         PERMISSION_APPLICATION_CREATE,
@@ -71,6 +82,9 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         PERMISSION_RULE_VERIFY,
         PERMISSION_RULE_APPROVE,
         PERMISSION_RETENTION_MANAGE,
+        PERMISSION_PLAN_READ,
+        PERMISSION_PLAN_WRITE,
+        PERMISSION_PLAN_POLICY,
     }),
 }
 

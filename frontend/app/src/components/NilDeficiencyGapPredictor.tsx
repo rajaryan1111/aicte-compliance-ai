@@ -3,6 +3,7 @@ import {
   computeReadinessScore,
   type ReadinessScoreResult,
 } from "@/lib/aicte-rules";
+import { lookupDocumentGuidance } from "@/lib/compliance-guidance";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "./Card";
 import { Button } from "./Button";
 import {
@@ -69,14 +70,14 @@ export function NilDeficiencyGapPredictor({
                 <Sparkles className="h-3.5 w-3.5" />
               </span>
               <p className="text-xs font-bold uppercase tracking-wider text-text-muted">
-                AICTE APH 2024–2027 Scrutiny Automation
+                Preliminary readiness · APH-informed guidance
               </p>
             </div>
             <CardTitle className="mt-1 text-xl font-bold text-text-heading">
-              Smart "Nil-Deficiency" Gap Predictor
+              Readiness &amp; statutory gap review
             </CardTitle>
             <CardDescription className="text-xs text-text-secondary">
-              Predicts Scrutiny Committee hearing outcome and provides statutory clause citations & mitigation undertakings.
+              A deterministic index over this checklist, with the clause reference and mitigation undertaking for each gap. Not an AICTE rating.
             </CardDescription>
           </div>
 
@@ -87,7 +88,7 @@ export function NilDeficiencyGapPredictor({
                 Readiness Score
               </span>
               <span className="text-xs font-medium text-text-secondary">
-                Nil-Deficiency Probability
+                Readiness index
               </span>
             </div>
             <div className="flex items-baseline gap-1">
@@ -111,9 +112,9 @@ export function NilDeficiencyGapPredictor({
             />
           </div>
           <div className="flex items-center justify-between text-[11px] font-semibold text-text-muted">
-            <span>Critical Deficit (0-64%)</span>
-            <span>Conditional (65-94%)</span>
-            <span>Nil-Deficiency Ready (95-100%)</span>
+            <span>Critical (0–64)</span>
+            <span>Conditional (65–94)</span>
+            <span>No gaps detected (95–100)</span>
           </div>
         </div>
       </CardHeader>
@@ -141,6 +142,30 @@ export function NilDeficiencyGapPredictor({
             <p className="text-xs leading-relaxed text-text-secondary">{result.summary}</p>
           </div>
         </div>
+
+        <details className="rounded-lg border border-border bg-bg-1 px-4 py-3">
+          <summary className="cursor-pointer text-xs font-bold uppercase tracking-wider text-text-muted">
+            How this index is calculated
+          </summary>
+          <ul className="mt-3 space-y-1.5 text-xs text-text-secondary">
+            {result.breakdown.map((entry) => (
+              <li key={entry.key} className="flex items-start justify-between gap-4 border-b border-border/60 pb-1.5 last:border-0">
+                <span className="leading-relaxed">{entry.detail}</span>
+                <span className={`shrink-0 font-mono font-semibold ${entry.points < 0 ? "text-error-text" : "text-text-heading"}`}>
+                  {entry.points > 0 ? `+${entry.points}` : entry.points}
+                </span>
+              </li>
+            ))}
+            <li className="flex items-start justify-between gap-4 pt-1 font-semibold text-text-heading">
+              <span>Index (clamped 0–100)</span>
+              <span className="font-mono">{result.score}</span>
+            </li>
+          </ul>
+          <p className="mt-3 text-[11px] leading-relaxed text-text-muted">
+            Weighting is a product judgement, not a regulation (−18 per missing or expired statutory document, −5 per certificate expiring within 60 days).
+            Scoring version <span className="font-mono">{result.scoringVersion}</span>. A gap in this checklist does not establish non-compliance, and a full checklist does not establish approval.
+          </p>
+        </details>
 
         {/* Identified Gaps & Statutory Clause Citations */}
         {result.findings.length > 0 ? (
@@ -182,7 +207,7 @@ export function NilDeficiencyGapPredictor({
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-bold text-text-heading text-xs sm:text-sm truncate">
-                              {item.document}
+                              {lookupDocumentGuidance(item.document)?.label.en ?? item.document}
                             </span>
                             <span
                               className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
@@ -279,7 +304,7 @@ export function NilDeficiencyGapPredictor({
           <div className="flex items-center gap-3 rounded-lg border border-success-border bg-success-bg/20 p-4 text-sm text-text-body">
             <ShieldCheck className="h-5 w-5 text-success-text shrink-0" />
             <p>
-              <strong>Complete Statutory Checklist Submitted:</strong> All mandatory approval documents are supplied with valid expiry dates. Zero statutory gaps detected for current academic cycle.
+              <strong>No checklist gaps detected:</strong> every required document in this request was submitted and has no supplied expiry date in the past. A complete checklist is still not an AICTE approval.
             </p>
           </div>
         )}

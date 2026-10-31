@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
@@ -34,9 +35,14 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def test_alembic_sequential_upgrade_on_postgres(require_live_postgres: str, live_postgres_engine: Engine) -> None:
+def test_alembic_sequential_upgrade_on_postgres(
+    require_live_postgres: str, live_postgres_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Verify that Alembic runs sequential migrations cleanly to head on real PostgreSQL."""
     cfg = Config(str(ALEMBIC_INI_PATH))
+    # env.py resolves the URL from DATABASE_URL so a production build cannot be redirected by the
+    # ini file; the test therefore has to point the environment at PostgreSQL, not just the config.
+    monkeypatch.setenv("DATABASE_URL", require_live_postgres)
     cfg.set_main_option("sqlalchemy.url", require_live_postgres)
     cfg.set_main_option("script_location", str(REPO_ROOT / "backend" / "alembic"))
 
@@ -47,9 +53,16 @@ def test_alembic_sequential_upgrade_on_postgres(require_live_postgres: str, live
     tables = inspector.get_table_names()
     assert "alembic_version" in tables
 
+    # Derive the expected head from the migration scripts instead of hard-coding a revision:
+    # a new revision must not fail this test, a database left behind must.
+    expected_head = ScriptDirectory.from_config(cfg).get_current_head()
     with live_postgres_engine.connect() as conn:
         rev = conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar()
-    assert rev == "i9d0e1f2a3b4", f"Expected head revision i9d0e1f2a3b4, found {rev}"
+    assert rev == expected_head, f"Expected head revision {expected_head}, found {rev}"
+
+    # The remediation migrations are the newest additions; prove they landed on PostgreSQL too.
+    for table in ("remediation_plans", "remediation_tasks", "remediation_deadline_changes"):
+        assert table in tables, f"Missing PostgreSQL table after upgrade: {table}"
 
 
 def test_all_canonical_tables_and_indexes_exist_in_postgres(live_postgres_engine: Engine) -> None:
@@ -78,6 +91,9 @@ def test_all_canonical_tables_and_indexes_exist_in_postgres(live_postgres_engine
         "verification_attempts",
         "rule_approvals",
         "retention_runs",
+        "remediation_plans",
+        "remediation_tasks",
+        "remediation_deadline_changes",
     }
     missing = expected_tables - tables
     assert not missing, f"Missing PostgreSQL tables: {missing}"
@@ -335,9 +351,12 @@ def test_postgres_transaction_rollback_guarantee(live_postgres_engine: Engine) -
         session.commit()
 
 
-def test_alembic_downgrade_and_reupgrade_on_postgres(require_live_postgres: str, live_postgres_engine: Engine) -> None:
+def test_alembic_downgrade_and_reupgrade_on_postgres(
+    require_live_postgres: str, live_postgres_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Verify that Alembic can downgrade to base and re-upgrade to head cleanly on real PostgreSQL."""
     cfg = Config(str(ALEMBIC_INI_PATH))
+    monkeypatch.setenv("DATABASE_URL", require_live_postgres)
     cfg.set_main_option("sqlalchemy.url", require_live_postgres)
     cfg.set_main_option("script_location", str(REPO_ROOT / "backend" / "alembic"))
 
@@ -349,6 +368,7 @@ def test_alembic_downgrade_and_reupgrade_on_postgres(require_live_postgres: str,
     tables = set(inspector.get_table_names())
     assert "rule_approvals" not in tables
     assert "retention_runs" not in tables
+    assert "remediation_deadline_changes" not in tables
 
     # Re-upgrade to head
     command.upgrade(cfg, "head")
@@ -357,3 +377,6 @@ def test_alembic_downgrade_and_reupgrade_on_postgres(require_live_postgres: str,
     tables_re = set(inspector_re.get_table_names())
     assert "rule_approvals" in tables_re
     assert "retention_runs" in tables_re
+    assert "remediation_plans" in tables_re
+    assert "remediation_tasks" in tables_re
+    assert "remediation_deadline_changes" in tables_re

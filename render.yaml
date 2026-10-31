@@ -10,7 +10,7 @@ services:
     rootDir: .
     buildCommand: |
       pip install -r backend/requirements.txt
-      cd backend && python -m alembic upgrade head
+      python -m alembic -c backend/alembic.ini upgrade head
     startCommand: uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL
