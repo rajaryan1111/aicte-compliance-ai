@@ -77,5 +77,3 @@ export function ConsistencyDetailView({ token, baseUrl }: ConsistenceDetailViewP
     </div>
   );
 }
-
-export function ConsistencyDetailView;
