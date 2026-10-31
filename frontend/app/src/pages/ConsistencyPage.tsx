@@ -114,4 +114,4 @@ export default function ConsistencyPage({ token, baseUrl }: ConsistencePageProps
   );
 }
 
-ConsistencyPage.tsx default-export workbench; tenant selector via fetchApplications auto-selects first app; status filter; create form; list view; routes /consistency + /consistency/:checkId behind RequireAuth + Suspense.
+ConsistencyPage.tsx default-export workbench; tenant selector via fetchApplications auto-selects first app; status filter; create form; list view; routes /consistency and /consistency/:checkId behind RequireAuth + Suspense.
