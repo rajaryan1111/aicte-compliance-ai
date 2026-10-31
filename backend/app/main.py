@@ -225,6 +225,9 @@ app.include_router(validation_router, prefix="/api/v1/applications", tags=["vali
 app.include_router(reviews_router, prefix="/api/v1", tags=["reviews"])
 app.include_router(audit_packages_router, prefix="/api/v1", tags=["audit-packages"])
 
+from backend.app.api.v1.consistency import router as consistency_router  # noqa: E402
+app.include_router(consistency_router)
+
 from backend.app.api.v1.compliance import router as compliance_router  # noqa: E402
 app.include_router(compliance_router, prefix="/api/v1/compliance", tags=["compliance"])
 
